@@ -251,8 +251,10 @@ async def _cleanmsg_flow(bot, user_id: int):
 
         # Toggle individual
         clean_txt = txt.replace("✅ ", "").replace("⬜ ", "").strip()
+        found = False
         for title, cid in id_map.items():
             if title in clean_txt or clean_txt in title:
+                found = True
                 if cid in selected_chats:
                     selected_chats.remove(cid)
                     sel_names.remove(title)
@@ -260,6 +262,28 @@ async def _cleanmsg_flow(bot, user_id: int):
                     selected_chats.append(cid)
                     sel_names.append(title)
                 break
+                
+        if not found:
+            custom_id = None
+            if clean_txt.startswith("-100") and clean_txt[1:].isdigit():
+                custom_id = int(clean_txt)
+            elif clean_txt.isdigit() or (clean_txt.startswith("-") and clean_txt[1:].isdigit()):
+                custom_id = int(clean_txt)
+            elif "t.me/c/" in clean_txt:
+                parts = clean_txt.split("t.me/c/")[1].split("/")
+                if parts[0].isdigit():
+                    custom_id = int(f"-100{parts[0]}")
+            elif "t.me/" in clean_txt:
+                username = clean_txt.split("t.me/")[1].split("/")[0].split("?")[0]
+                custom_id = username
+            
+            if custom_id:
+                if custom_id in selected_chats:
+                    selected_chats.remove(custom_id)
+                    sel_names.remove(str(custom_id))
+                else:
+                    selected_chats.append(custom_id)
+                    sel_names.append(str(custom_id))
 
     if not selected_chats:
         return await bot.send_message(

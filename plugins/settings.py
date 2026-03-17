@@ -17,7 +17,7 @@ async def settings(client, message):
         reply_markup=main_buttons()
     )
     
-@Client.on_callback_query(filters.regex(r'^settings'))
+@Client.on_callback_query(filters.regex(r'^settings#(?!lang$|cleanmsg$)'))
 async def settings_query(bot, query):
   user_id = query.from_user.id
   i, type = query.data.split("#")

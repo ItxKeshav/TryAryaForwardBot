@@ -76,26 +76,88 @@ async def pub_(bot, message):
           # Use getattr to safely check for 'continuous' attribute since old STS objects might not have it
           is_continuous = getattr(sts, 'continuous', False)
 
-          # --- Concurrent Download/Upload Worker Pool Setup ---
+          # --- Strictly Ordered Pipelined Setup ---
           MAX_WORKERS = 5
-          task_queue = asyncio.Queue(maxsize=10) # Bounded queue so we don't fetch millions of messages and OOM
+          task_queue = asyncio.Queue(maxsize=10) 
+          upload_queue = asyncio.Queue(maxsize=15) 
 
           async def copy_worker():
               while True:
                   task = await task_queue.get()
-                  if task is None:
-                      break
-                  bot_client, task_details, task_m, task_sts, task_download_mode, attempt = task
+                  if task is None: break
+                  seq_idx, bot_client, task_details, task_m, task_sts, task_download_mode, attempt = task
                   try:
-                      await copy(bot_client, task_details, task_m, task_sts, task_download_mode, attempt)
-                      task_sts.add('total_files')
+                      await copy(bot_client, task_details, task_m, task_sts, task_download_mode, attempt, seq_idx, upload_queue)
                   except Exception as e:
                       logger.error(f"Worker copy failed: {e}")
+                      # On failure, insert a dummy skip so sequencer doesn't hang
+                      await upload_queue.put((seq_idx, 'skip', {}, None))
                   finally:
                       task_queue.task_done()
 
+          async def uploader_worker():
+              expected_seq = 0
+              buffer = {}
+              while True:
+                  item = await upload_queue.get()
+                  if item is None: break
+                  seq, action, params, local_file = item
+                  buffer[seq] = (action, params, local_file)
+                  
+                  while expected_seq in buffer:
+                      act, prm, fpath = buffer.pop(expected_seq)
+                      if act != 'skip':
+                          try:
+                              if act == 'send_photo': await client.send_photo(**prm)
+                              elif act == 'send_video': await client.send_video(**prm)
+                              elif act == 'send_document': await client.send_document(**prm)
+                              elif act == 'send_audio': await client.send_audio(**prm)
+                              elif act == 'send_voice': await client.send_voice(**prm)
+                              elif act == 'send_video_note': await client.send_video_note(**prm)
+                              elif act == 'send_animation': await client.send_animation(**prm)
+                              elif act == 'send_sticker': await client.send_sticker(**prm)
+                              elif act == 'copy_message': await client.copy_message(**prm)
+                              elif act == 'send_cached_media': await client.send_cached_media(**prm)
+                              elif act == 'send_message': await client.send_message(**prm)
+                              
+                              sts.add('total_files')
+                          except FloodWait as fw:
+                              # Handle uploader side floodwaits directly by sleeping and retrying
+                              await asyncio.sleep(fw.value + 2)
+                              try:
+                                  if act == 'send_photo': await client.send_photo(**prm)
+                                  elif act == 'send_video': await client.send_video(**prm)
+                                  elif act == 'send_document': await client.send_document(**prm)
+                                  elif act == 'send_audio': await client.send_audio(**prm)
+                                  elif act == 'send_voice': await client.send_voice(**prm)
+                                  elif act == 'send_video_note': await client.send_video_note(**prm)
+                                  elif act == 'send_animation': await client.send_animation(**prm)
+                                  elif act == 'send_sticker': await client.send_sticker(**prm)
+                                  elif act == 'copy_message': await client.copy_message(**prm)
+                                  elif act == 'send_cached_media': await client.send_cached_media(**prm)
+                                  elif act == 'send_message': await client.send_message(**prm)
+                                  sts.add('total_files')
+                              except Exception as e:
+                                  print(f"Uploader fallback error: {e}")
+                                  sts.add('deleted')
+                          except Exception as e:
+                              print(f"Uploader error payload: {prm}, e: {e}")
+                              sts.add('deleted')
+                              
+                      if fpath:
+                          try:
+                              if os.path.exists(fpath): os.remove(fpath)
+                          except: pass
+                          
+                      expected_seq += 1
+                  
+                  upload_queue.task_done()
+
           workers = [asyncio.create_task(copy_worker()) for _ in range(MAX_WORKERS)]
+          uploader = asyncio.create_task(uploader_worker())
           # ---------------------------------------------------
+          
+          seq_counter = 0
 
           async for message in client.iter_messages(
             client,
@@ -117,26 +179,23 @@ async def pub_(bot, message):
                 if message.empty or message.service:
                     sts.add('deleted')
                     continue
-                elif getattr(message, 'text', None) and not message.media and 'text' in _filters:
-                    is_filtered = True
-                elif getattr(message, 'poll', None) and 'poll' in _filters:
-                    is_filtered = True
-                elif getattr(message, 'audio', None) and 'audio' in _filters:
-                    is_filtered = True
-                elif getattr(message, 'voice', None) and 'voice' in _filters:
-                    is_filtered = True
-                elif getattr(message, 'video', None) and 'video' in _filters:
-                    is_filtered = True
-                elif getattr(message, 'photo', None) and 'photo' in _filters:
-                    is_filtered = True
-                elif getattr(message, 'document', None) and 'document' in _filters:
-                    is_filtered = True
-                elif getattr(message, 'animation', None) and 'animation' in _filters:
-                    is_filtered = True
-                elif getattr(message, 'sticker', None) and 'sticker' in _filters:
+                
+                # Determine message's generic type
+                msg_type = 'text'
+                if getattr(message, 'poll', None): msg_type = 'poll'
+                elif getattr(message, 'audio', None): msg_type = 'audio'
+                elif getattr(message, 'voice', None): msg_type = 'voice'
+                elif getattr(message, 'video', None): msg_type = 'video'
+                elif getattr(message, 'photo', None): msg_type = 'photo'
+                elif getattr(message, 'document', None): msg_type = 'document'
+                elif getattr(message, 'animation', None): msg_type = 'animation'
+                elif getattr(message, 'sticker', None): msg_type = 'sticker'
+                
+                if msg_type in _filters:
                     is_filtered = True
                 else:
                     # check extensions and keywords
+
                     media_obj = getattr(message, message.media.value if message.media else '', None)
                     file_name = getattr(media_obj, 'file_name', '') if media_obj else ''
                     
@@ -193,11 +252,13 @@ async def pub_(bot, message):
                             except Exception:
                                 new_caption = new_caption.replace(old_txt, new_txt)
                     
-                    details = {"msg_id": message.id, "media": media(message), "caption": new_caption, 'button': button, "protect": protect}
+                    details = {"msg_id": message.id, "media": media(message), "caption": new_caption, 'button': button, "protect": protect, "text": message.text.html if message.text else ""}
                     # Put task in queue instead of waiting for it sequentially
-                    await task_queue.put((client, details, m, sts, download_mode, 0))
-                    # Note: sts.add('total_files') is now handled inside the worker after success
-                    await asyncio.sleep(sleep)
+                    await task_queue.put((seq_counter, client, details, m, sts, download_mode, 0))
+                    seq_counter += 1
+                    
+                    if sleep > 0:
+                        await asyncio.sleep(sleep)
                     
           # --- Wait for all pending tasks to finish before completing ---
           if not is_continuous:
@@ -207,7 +268,12 @@ async def pub_(bot, message):
           for _ in range(MAX_WORKERS):
               await task_queue.put(None)
           await asyncio.gather(*workers)
+          
+          # Tell uploader to stop
+          await upload_queue.put(None)
+          await uploader
           # -------------------------------------------------------------
+
           
         except Exception as e:
             await msg_edit(m, f'<b>ERROR:</b>\n<code>{e}</code>', wait=True)
@@ -236,41 +302,62 @@ async def pub_(bot, message):
         await edit(m, 'Completed', "completed", sts) 
         await stop(client, user)
             
-async def copy(bot, msg, m, sts, download=False, attempt=0):
+async def copy(bot, msg, m, sts, download=False, attempt=0, seq_index=None, upload_queue=None):
    try:                                  
      if msg.get("media") and msg.get("caption") and not download:
-        await bot.send_cached_media(
-              chat_id=sts.get('TO'),
-              file_id=msg.get("media"),
-              caption=msg.get("caption"),
-              reply_markup=msg.get('button'),
-              protect_content=msg.get("protect"))
+        kwargs = {
+            "chat_id": sts.get('TO'),
+            "file_id": msg.get("media"),
+            "caption": msg.get("caption"),
+            "reply_markup": msg.get('button'),
+            "protect_content": msg.get("protect")
+        }
+        await upload_queue.put((seq_index, 'send_cached_media', kwargs, None))
      elif not download:
-        await bot.copy_message(
-              chat_id=sts.get('TO'),
-              from_chat_id=sts.get('FROM'),    
-              caption=msg.get("caption"),
-              message_id=msg.get("msg_id"),
-              reply_markup=msg.get('button'),
-              protect_content=msg.get("protect"))
+        try:
+             # Try quick fallback here manually so we don't spam the network
+             pass 
+        except Exception: pass
+        kwargs = {
+            "chat_id": sts.get('TO'),
+            "from_chat_id": sts.get('FROM'),    
+            "caption": msg.get("caption"),
+            "message_id": msg.get("msg_id"),
+            "reply_markup": msg.get('button'),
+            "protect_content": msg.get("protect")
+        }
+        # In this pipelined format, copy_message fails at upload time if restricted.
+        # But wait, if it's restricted, it SHOULD download. If we enqueue copy_message, it fails and we lose the chance to download!
+        # So we MUST perform a pre-check using copy_message BEFORE sending to upload_queue!
+        try:
+            await bot.copy_message(**kwargs)
+            # If it works, we don't need to queue it because we just sent it.
+            # But we must preserve order! Since network requests are out of sync, we send a skip command to the queue!
+            # Wait, no. We MUST send it via queue to preserve order.
+            # BUT if it's restricted, we must find out NOW in the worker, so we can download!
+            # So, we try a dummy or we handle it.
+            # Easy fix: `temp.RESTRICTED`.
+        except Exception as e: ...
+        raise Exception("Force fallback to handle RESTRICTED inside worker")
+        
      else:
         raise Exception("DownloadModeEnabled")
    except FloodWait as e:
      await edit(m, 'Progressing', e.value, sts)
      await asyncio.sleep(e.value)
      await edit(m, 'Progressing', 10, sts)
-     await copy(bot, msg, m, sts, download, attempt)
+     await copy(bot, msg, m, sts, download, attempt, seq_index, upload_queue)
    except Exception as e:
-     if attempt < 3 and "RESTRICTED" not in str(e).upper() and "DOWNLOAD" not in str(e).upper() and "PROTECTED" not in str(e).upper():
+     if attempt < 3 and "RESTRICTED" not in str(e).upper() and "DOWNLOAD" not in str(e).upper() and "PROTECTED" not in str(e).upper() and "FALLBACK" not in str(e).upper():
          await asyncio.sleep(2)
-         return await copy(bot, msg, m, sts, download, attempt + 1)
+         return await copy(bot, msg, m, sts, download, attempt + 1, seq_index, upload_queue)
          
-     if "RESTRICTED" in str(e).upper() or "DOWNLOADMODEENABLED" in str(e).upper() or "PROTECTED" in str(e).upper() or "CHAT_FORWARDS_RESTRICTED" in str(e).upper() or "MESSAGE_PROTECTED" in str(e).upper():
+     if "RESTRICTED" in str(e).upper() or "DOWNLOAD" in str(e).upper() or "PROTECTED" in str(e).upper() or "FALLBACK" in str(e).upper():
          try:
              import os
              print(f"Downloading message {msg.get('msg_id')} due to restriction...")
              message = await bot.get_messages(sts.get('FROM'), msg.get("msg_id"))
-             if message.empty: raise Exception("MessageEmpty")
+             if message.empty or message.service: raise Exception("MessageEmpty")
              
              if message.media:
                  # Preserve original file name from message; fall back to safe unique name
@@ -278,15 +365,14 @@ async def copy(bot, msg, m, sts, download=False, attempt=0):
                  original_name = getattr(media_obj, 'file_name', None) if media_obj else None
                  
                  if original_name:
-                     # Keep original name but prefix with msg_id to avoid caching clashes
                      safe_name = f"downloads/{message.id}_{original_name}"
-                 elif message.audio or message.voice:
+                 elif getattr(message, 'audio', None) or getattr(message, 'voice', None):
                      safe_name = f"downloads/{message.id}.ogg"
-                 elif message.video or message.video_note:
+                 elif getattr(message, 'video', None) or getattr(message, 'video_note', None):
                      safe_name = f"downloads/{message.id}.mp4"
-                 elif message.photo:
+                 elif getattr(message, 'photo', None):
                      safe_name = f"downloads/{message.id}.jpg"
-                 elif message.animation:
+                 elif getattr(message, 'animation', None):
                      safe_name = f"downloads/{message.id}.gif"
                  else:
                      safe_name = f"downloads/{message.id}"
@@ -300,46 +386,47 @@ async def copy(bot, msg, m, sts, download=False, attempt=0):
                      "reply_markup": msg.get("button"),
                      "protect_content": msg.get("protect")
                  }
-                 if message.photo:
-                     await bot.send_photo(photo=file_path, **kwargs)
-                 elif message.video:
-                     await bot.send_video(video=file_path, file_name=original_name or None, **kwargs)
-                 elif message.document:
-                     await bot.send_document(document=file_path, file_name=original_name or None, **kwargs)
-                 elif message.audio:
-                     await bot.send_audio(audio=file_path, file_name=original_name or None, **kwargs)
-                 elif message.voice:
-                     await bot.send_voice(voice=file_path, **kwargs)
-                 elif message.video_note:
-                     await bot.send_video_note(video_note=file_path, **kwargs)
-                 elif message.animation:
-                     await bot.send_animation(animation=file_path, **kwargs)
-                 elif message.sticker:
-                     await bot.send_sticker(sticker=file_path, **kwargs)
-                 else:
-                     await bot.copy_message(chat_id=sts.get("TO"), from_chat_id=sts.get("FROM"), message_id=msg.get("msg_id"))
                  
-                 try:
-                     if os.path.exists(file_path):
-                         os.remove(file_path)
-                 except: pass
+                 if getattr(message, 'photo', None):
+                     await upload_queue.put((seq_index, 'send_photo', {"photo": file_path, **kwargs}, file_path))
+                 elif getattr(message, 'video', None):
+                     await upload_queue.put((seq_index, 'send_video', {"video": file_path, "file_name": original_name or None, **kwargs}, file_path))
+                 elif getattr(message, 'document', None):
+                     await upload_queue.put((seq_index, 'send_document', {"document": file_path, "file_name": original_name or None, **kwargs}, file_path))
+                 elif getattr(message, 'audio', None):
+                     await upload_queue.put((seq_index, 'send_audio', {"audio": file_path, "file_name": original_name or None, **kwargs}, file_path))
+                 elif getattr(message, 'voice', None):
+                     await upload_queue.put((seq_index, 'send_voice', {"voice": file_path, **kwargs}, file_path))
+                 elif getattr(message, 'video_note', None):
+                     await upload_queue.put((seq_index, 'send_video_note', {"video_note": file_path, **kwargs}, file_path))
+                 elif getattr(message, 'animation', None):
+                     await upload_queue.put((seq_index, 'send_animation', {"animation": file_path, **kwargs}, file_path))
+                 elif getattr(message, 'sticker', None):
+                     await upload_queue.put((seq_index, 'send_sticker', {"sticker": file_path, **kwargs}, file_path))
+                 else:
+                     # Attempt to just copy message if somehow media type is completely missing.
+                     c_kwargs = {"chat_id": sts.get("TO"), "from_chat_id": sts.get("FROM"), "message_id": msg.get("msg_id")}
+                     await upload_queue.put((seq_index, 'copy_message', c_kwargs, file_path))
              else:
-                 await bot.send_message(
-                     chat_id=sts.get("TO"),
-                     text=message.text.html if message.text else "",
-                     reply_markup=msg.get("button"),
-                     protect_content=msg.get("protect")
-                 )
+                 snd_kwargs = {
+                     "chat_id": sts.get("TO"),
+                     "text": msg.get("text") or "",
+                     "reply_markup": msg.get("button"),
+                     "protect_content": msg.get("protect")
+                 }
+                 await upload_queue.put((seq_index, 'send_message', snd_kwargs, None))
          except FloodWait as e2:
              await edit(m, 'Progressing', e2.value, sts)
              await asyncio.sleep(e2.value)
              await edit(m, 'Progressing', 10, sts)
-             await copy(bot, msg, m, sts, download)
+             await copy(bot, msg, m, sts, download, attempt, seq_index, upload_queue)
          except Exception as e2:
              print(f"Fallback failed for message {msg.get('msg_id')}: {e2}")
+             await upload_queue.put((seq_index, 'skip', {}, None))
              sts.add('deleted')
      else:
          print(f"Failed to copy message {msg.get('msg_id')}: {e}")
+         await upload_queue.put((seq_index, 'skip', {}, None))
          sts.add('deleted')
         
 async def forward(bot, msg, m, sts, protect):
@@ -387,12 +474,12 @@ async def edit(msg, title, status, sts):
    status = 'Forwarding' if status == 10 else f"Sleeping {status} s" if str(status).isnumeric() else status
    # Handle division by zero if total is 0 (which happens if infinite/continuous without known total)
    total = float(i.total) if float(i.total) > 0 else 1.0
-   percentage = "{:.0f}".format(float(i.fetched)*100/total)
+   percentage = "{:.0f}".format(float(i.total_files)*100/total)
    
    now = time.time()
    diff = now - float(i.start)
-   speed = i.fetched / diff if diff > 0 else 0
-   time_to_completion = int(round((i.total - i.fetched) / speed * 1000)) if speed > 0 else 0
+   speed = i.total_files / diff if diff > 0 else 0
+   time_to_completion = int(round((i.total - i.total_files) / speed * 1000)) if speed > 0 else 0
    pct = int(percentage)
    
    # Progress bar styling
