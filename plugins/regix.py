@@ -141,8 +141,31 @@ async def pub_(bot, message):
                                   print(f"Uploader fallback error: {e}")
                                   sts.add('deleted')
                           except Exception as e:
-                              print(f"Uploader error payload: {prm}, e: {e}")
-                              sts.add('deleted')
+                              # Handle uploader fallback for restricted content gracefully
+                              # If the user forwarded a restricted public channel without Download Mode,
+                              # copy_message fails here. We download/upload sequentially for them to save them.
+                              if "RESTRICTED" in str(e).upper() or "PROTECTED" in str(e).upper():
+                                  try:
+                                      import os
+                                      fallback_msg = await client.get_messages(prm.get('from_chat_id'), prm.get('message_id'))
+                                      if fallback_msg.media:
+                                          safe_name = f"downloads/{fallback_msg.id}"
+                                          dp = await client.download_media(fallback_msg, file_name=safe_name)
+                                          if getattr(fallback_msg, 'photo', None): await client.send_photo(chat_id=prm.get('chat_id'), photo=dp, caption=prm.get('caption'))
+                                          elif getattr(fallback_msg, 'video', None): await client.send_video(chat_id=prm.get('chat_id'), video=dp, caption=prm.get('caption'))
+                                          elif getattr(fallback_msg, 'document', None): await client.send_document(chat_id=prm.get('chat_id'), document=dp, caption=prm.get('caption'))
+                                          elif getattr(fallback_msg, 'audio', None): await client.send_audio(chat_id=prm.get('chat_id'), audio=dp, caption=prm.get('caption'))
+                                          elif getattr(fallback_msg, 'voice', None): await client.send_voice(chat_id=prm.get('chat_id'), voice=dp, caption=prm.get('caption'))
+                                          if os.path.exists(dp): os.remove(dp)
+                                      else:
+                                          await client.send_message(chat_id=prm.get('chat_id'), text=fallback_msg.text.html if fallback_msg.text else "")
+                                      sts.add('total_files')
+                                  except Exception as e2:
+                                      print(f"Uploader fallback error: {e2}")
+                                      sts.add('deleted')
+                              else:
+                                  print(f"Uploader error payload: {prm}, e: {e}")
+                                  sts.add('deleted')
                               
                       if fpath:
                           try:
@@ -314,10 +337,6 @@ async def copy(bot, msg, m, sts, download=False, attempt=0, seq_index=None, uplo
         }
         await upload_queue.put((seq_index, 'send_cached_media', kwargs, None))
      elif not download:
-        try:
-             # Try quick fallback here manually so we don't spam the network
-             pass 
-        except Exception: pass
         kwargs = {
             "chat_id": sts.get('TO'),
             "from_chat_id": sts.get('FROM'),    
@@ -326,20 +345,7 @@ async def copy(bot, msg, m, sts, download=False, attempt=0, seq_index=None, uplo
             "reply_markup": msg.get('button'),
             "protect_content": msg.get("protect")
         }
-        # In this pipelined format, copy_message fails at upload time if restricted.
-        # But wait, if it's restricted, it SHOULD download. If we enqueue copy_message, it fails and we lose the chance to download!
-        # So we MUST perform a pre-check using copy_message BEFORE sending to upload_queue!
-        try:
-            await bot.copy_message(**kwargs)
-            # If it works, we don't need to queue it because we just sent it.
-            # But we must preserve order! Since network requests are out of sync, we send a skip command to the queue!
-            # Wait, no. We MUST send it via queue to preserve order.
-            # BUT if it's restricted, we must find out NOW in the worker, so we can download!
-            # So, we try a dummy or we handle it.
-            # Easy fix: `temp.RESTRICTED`.
-        except Exception as e: ...
-        raise Exception("Force fallback to handle RESTRICTED inside worker")
-        
+        await upload_queue.put((seq_index, 'copy_message', kwargs, None))
      else:
         raise Exception("DownloadModeEnabled")
    except FloodWait as e:
