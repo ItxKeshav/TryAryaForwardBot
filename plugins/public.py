@@ -185,6 +185,23 @@ async def run(bot, message):
 
     reverse_order = True if "New to Old" in order_msg.text else False
 
+    # ── Smart Order toggle ──────────────────────────────────────────────────
+    smart_btn = ReplyKeyboardMarkup([
+        [KeyboardButton("✅ Smart Order ON"), KeyboardButton("❌ Smart Order OFF")]
+    ], resize_keyboard=True, one_time_keyboard=True)
+    smart_msg = await bot.ask(
+        message.chat.id,
+        "<b>🧠 Smart Order</b>\n\nShould the bot automatically fix any out-of-order messages from the source channel?\n\n"
+        "• <b>ON</b> — Bot collects messages in batches of 10 and sorts them by ID before sending (fixes minor source-level mismatches like 42,43,45,44 → 42,43,44,45)\n"
+        "• <b>OFF</b> — Messages are forwarded exactly as received (faster)\n\n"
+        "<i>Recommended: ON if your source channel sometimes has files out of order.</i>",
+        reply_markup=smart_btn
+    )
+    if smart_msg.text.startswith('/'):
+        await message.reply(await t(user_id, 'CANCEL'), reply_markup=ReplyKeyboardRemove())
+        return
+    smart_order = "OFF" not in smart_msg.text  # True = ON
+
     skipno = await bot.ask(message.chat.id, await t(user_id, 'SKIP_MSG'), reply_markup=ReplyKeyboardRemove())
     if skipno.text.startswith('/'):
         await message.reply(await t(user_id, 'CANCEL'))
@@ -218,6 +235,7 @@ async def run(bot, message):
     mode_lbl  = "🔁 Live (continuous)" if continuous else "📦 Batch"
     skip_lbl  = skipno.text if skipno.text.isdigit() else "0"
     filter_str = (', '.join(f'❌{t}' for t in disabled_types) or '✅ All allowed')
+    smart_lbl = "🧠 ON" if smart_order else "⚡ OFF (raw)"
 
     if acc_is_bot:
         hints = (
@@ -257,6 +275,7 @@ async def run(bot, message):
         f"<b>┌──────❮ ⚙️ 𝐒𝐞𝐭𝐭𝐢𝐧𝐠𝐬 ❯────────────</b>\n"
         f"<b>│</b> ⊸ <b>Mode:</b> {mode_lbl}\n"
         f"<b>│</b> ⊸ <b>Order:</b> {order_lbl}\n"
+        f"<b>│</b> ⊸ <b>Smart Order:</b> {smart_lbl}\n"
         f"<b>│</b> ⊸ <b>Status:</b> {fwd_mode}\n"
         f"<b>│</b> ⊸ <b>Caption:</b> {caption_m}\n"
         f"<b>│</b> ⊸ <b>Transfer:</b> {dl_mode}\n"
@@ -275,6 +294,6 @@ async def run(bot, message):
     )
     STS(forward_id).store(chat_id, toid, int(skipno.text) if skipno.text.isdigit() else 0,
                           int(last_msg_id), continuous=continuous,
-                          reverse_order=reverse_order, bot_id=selected_bot_id)
+                          reverse_order=reverse_order, bot_id=selected_bot_id, smart_order=smart_order)
 
 

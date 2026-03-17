@@ -12,10 +12,11 @@ class STS:
     def verify(self):
         return self.data.get(self.id)
     
-    def store(self, From, to, skip, limit, continuous=False, reverse_order=False, bot_id=None):
+    def store(self, From, to, skip, limit, continuous=False, reverse_order=False, bot_id=None, smart_order=True):
         self.data[self.id] = {"FROM": From, 'TO': to, 'total_files': 0, 'skip': skip, 'limit': limit,
                       'fetched': skip, 'filtered': 0, 'deleted': 0, 'duplicate': 0, 'total': limit,
-                      'start': 0, 'continuous': continuous, 'reverse_order': reverse_order, 'bot_id': bot_id}
+                      'start': 0, 'continuous': continuous, 'reverse_order': reverse_order, 'bot_id': bot_id,
+                      'smart_order': smart_order}
         self.get(full=True)
         return STS(self.id)
         
@@ -65,4 +66,4 @@ class STS:
         if configs['file_size'] != 0:
             size = [configs['file_size'], configs['size_limit']]
         return bot, configs['caption'], configs['forward_tag'], {'download': configs.get('download', False), 'chat_id': k.FROM, 'limit': k.limit, 'offset': k.skip, 'filters': filters,
-                'keywords': configs['keywords'], 'media_size': size, 'extensions': configs['extension'], 'skip_duplicate': duplicate, 'duration': configs.get('duration', 1), 'reverse_order': getattr(k, 'reverse_order', False)}, configs['protect'], button
+                'keywords': configs['keywords'], 'media_size': size, 'extensions': configs['extension'], 'skip_duplicate': duplicate, 'duration': configs.get('duration', 1), 'reverse_order': getattr(k, 'reverse_order', False), 'smart_order': getattr(k, 'smart_order', True)}, configs['protect'], button

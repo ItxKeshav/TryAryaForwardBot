@@ -181,15 +181,19 @@ async def pub_(bot, message):
           # ---------------------------------------------------
           
           seq_counter = 0
+          smart_order = data.get('smart_order', True)
+          # SMART ORDER: batch size is 10 — large enough to catch most source mismatches
+          SORT_WINDOW = 10 if smart_order else 1
           sort_buffer = []
           
           async def flush_buffer():
               nonlocal seq_counter, sort_buffer
               if not sort_buffer: return
               
-              # Sort the chunk strictly by message ID to fix source-level mismatches 
-              # (e.g. 1, 3, 2, 5, 4 becomes 1, 2, 3, 4, 5)
-              sort_buffer.sort(key=lambda item: item[0].id)
+              if smart_order:
+                  # Sort the collected window strictly by Telegram message ID
+                  # e.g. source sends [42, 43, 45, 44, 46] → buffer sorts to [42, 43, 44, 45, 46]
+                  sort_buffer.sort(key=lambda item: item[0].id)
               
               for message, forward_tag, new_caption, protect, download_mode, sleep in sort_buffer:
                   sts.add('fetched')
@@ -279,13 +283,12 @@ async def pub_(bot, message):
                     sts.add('filtered')
                     continue
 
-                # Queue the message into the sorting buffer
+                # Compute caption & replacements for this message before buffering
                 _filters = data.get('filters', [])
                 new_caption = custom_caption(message, caption)
                 if (message.audio or message.video or message.photo or message.document) and 'rm_caption' in _filters:
                     new_caption = ""
 
-                # Apply Replacements
                 replacements = data.get('replacements', {})
                 if replacements and new_caption:
                     for old_txt, new_txt in replacements.items():
@@ -296,11 +299,11 @@ async def pub_(bot, message):
                 
                 sort_buffer.append((message, forward_tag, new_caption, protect, download_mode, sleep))
                 
-                # Flush buffer dynamically (Wait until we gather 5 items or hit the end)
-                if len(sort_buffer) >= 5 or is_continuous:
+                # Flush only when we have a full SORT_WINDOW batch (or immediately if smart is OFF)
+                if len(sort_buffer) >= SORT_WINDOW:
                     await flush_buffer()
                     
-          # --- Flush anything remaining in buffer ---
+          # --- Flush remaining messages that didn't fill a complete window ---
           await flush_buffer()
                     
           # --- Wait for all pending tasks to finish before completing ---
