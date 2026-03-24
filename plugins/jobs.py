@@ -534,10 +534,19 @@ async def _render_jobs_list(bot, user_id: int, message_or_query):
             fwd = j.get("forwarded", 0)
             err = f" <code>[{j.get('error','')}]</code>" if j.get("status") == "error" else ""
             bp  = _batch_progress(j)
+            
+            # Use last_seen_id compared to batch_start_id as fetched
+            batch_start = j.get("batch_start_id", 0)
+            last_seen = j.get("last_seen_id", 0)
+            fetched = last_seen - batch_start if (batch_start and last_seen >= batch_start) else j.get("forwarded", 0)
+
             dest2 = f" + {j.get('to_title_2','?')}" if j.get("to_chat_2") else ""
+            
+            job_name = j.get("name", f"Live Job {j['job_id'][-6:]}")
             lines.append(
-                f"{st} <b>{j.get('from_title','?')} → {j.get('to_title','?')}{dest2}</b>"
-                f"  <code>[{j['job_id'][-6:]}]</code>  ✅{fwd}{bp}{err}"
+                f"{st} <b>{job_name}</b>\n"
+                f"  └ <i>{j.get('from_title','?')} → {j.get('to_title','?')}{dest2}</i>\n"
+                f"  └ <code>[{j['job_id'][-6:]}]</code>  ✅{fwd}  ⬇️{fetched}{bp}{err}\n"
             )
         text = "\n".join(lines)
 
@@ -552,6 +561,7 @@ async def _render_jobs_list(bot, user_id: int, message_or_query):
             else:
                 row.append(InlineKeyboardButton(f"▶️ Start [{short}]", callback_data=f"job#start#{jid}"))
             row.append(InlineKeyboardButton(f"ℹ️ [{short}]", callback_data=f"job#info#{jid}"))
+            row.append(InlineKeyboardButton(f"✏️ Name [{short}]", callback_data=f"job#rename#{jid}"))
             row.append(InlineKeyboardButton(f"🗑 [{short}]",  callback_data=f"job#del#{jid}"))
             btns_list.append(row)
 
@@ -583,7 +593,22 @@ async def jobs_cmd(bot, message):
 
 @Client.on_callback_query(filters.regex(r'^job#list$'))
 async def job_list_cb(bot, query):
+    await query.answer()
     await _render_jobs_list(bot, query.from_user.id, query)
+
+@Client.on_callback_query(filters.regex(r'^job#rename#'))
+async def job_rename_cb(bot, query):
+    user_id = query.from_user.id
+    job_id = query.data.split("#", 2)[2]
+    await query.message.delete()
+    
+    r = await _ask(bot, user_id,
+        "<b>✏️ Edit Live Job Name</b>\n\nSend a new name for this job:",
+        reply_markup=ReplyKeyboardMarkup([[KeyboardButton("/cancel")]], resize_keyboard=True, one_time_keyboard=True))
+    if "/cancel" not in r.text.lower():
+        await db.db[COLL].update_one({"job_id": job_id}, {"$set": {"name": r.text.strip()[:100]}})
+        await bot.send_message(user_id, f"✅ Live Job renamed to <b>{r.text.strip()[:100]}</b>", reply_markup=ReplyKeyboardRemove())
+    await _render_jobs_list(bot, user_id, r)
 
 
 @Client.on_callback_query(filters.regex(r'^job#info#'))
@@ -625,8 +650,9 @@ async def job_info_cb(bot, query):
         size_lbl += f"\n<b>Max duration:</b> {mins}m {secs}s"
 
     text = (
-        f"<b>📋 Job Info</b>\n\n"
+        f"<b>📋 Live Job Info</b>\n\n"
         f"<b>ID:</b> <code>{job_id[-6:]}</code>\n"
+        f"<b>Name:</b> {job.get('name', 'Default')}\n"
         f"<b>Status:</b> {st} {job.get('status','?')}\n"
         f"<b>Source:</b> {job.get('from_title','?')}\n"
         f"<b>Dest 1:</b> {job.get('to_title','?')}{topic_lbl}"
@@ -749,7 +775,19 @@ async def _ask_topic(bot, user_id: int, dest_label: str) -> int | None:
 
 
 async def _create_job_flow(bot, user_id: int):
-    # ── Step 1: Account ─────────────────────────────────────────────────────
+    # ── Step 1: Name ────────────────────────────────────────────────────────
+    name_r = await _ask(bot, user_id,
+        "<b>📋 Create Live Job — Step 1/7</b>\n\n"
+        "Send a name for this job, or press 'Default' to use a random name.",
+        reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Default")], [KeyboardButton("/cancel")]], resize_keyboard=True, one_time_keyboard=True))
+    if "/cancel" in name_r.text:
+        return await bot.send_message(user_id, "<b>Cancelled.</b>", reply_markup=ReplyKeyboardRemove())
+    
+    job_name = name_r.text.strip()[:100]
+    if job_name.lower() == "default":
+        job_name = None
+
+    # ── Step 2: Account ─────────────────────────────────────────────────────
     accounts = await db.get_bots(user_id)
     if not accounts:
         return await bot.send_message(user_id,
@@ -762,7 +800,7 @@ async def _create_job_flow(bot, user_id: int):
     acc_btns.append([KeyboardButton("/cancel")])
 
     acc_r = await bot.ask(user_id,
-        "<b>📋 Create Live Job — Step 1/6</b>\n\n"
+        "<b>📋 Create Live Job — Step 2/7</b>\n\n"
         "Choose which account to use:\n"
         "<i>(Userbot required for private chats)</i>",
         reply_markup=ReplyKeyboardMarkup(acc_btns, resize_keyboard=True, one_time_keyboard=True))
@@ -777,9 +815,9 @@ async def _create_job_flow(bot, user_id: int):
     sel_acc = (await db.get_bot(user_id, acc_id)) if acc_id else accounts[0]
     is_bot  = sel_acc.get("is_bot", True)
 
-    # ── Step 2: Source ───────────────────────────────────────────────────────
+    # ── Step 3: Source ───────────────────────────────────────────────────────
     src_r = await _ask(bot, user_id,
-        "<b>Step 2/6 — Source Chat</b>\n\n"
+        "<b>Step 3/7 — Source Chat</b>\n\n"
         "Send one of:\n"
         "• <code>@username</code> or channel link\n"
         "• Numeric ID (e.g. <code>-1001234567890</code>)\n"
@@ -816,7 +854,7 @@ async def _create_job_flow(bot, user_id: int):
         except Exception:
             from_title = str(from_chat)
 
-    # ── Step 3: First Destination ────────────────────────────────────────────
+    # ── Step 4: First Destination ────────────────────────────────────────────
     channels = await db.get_user_channels(user_id)
     if not channels:
         return await bot.send_message(user_id,
@@ -824,15 +862,15 @@ async def _create_job_flow(bot, user_id: int):
             reply_markup=ReplyKeyboardRemove())
 
     to_chat, to_title, cancelled = await _ask_dest(bot, user_id, channels,
-        "<b>Step 3/6 — Primary Destination</b>\n\nWhere should new messages be forwarded?")
+        "<b>Step 4/7 — Primary Destination</b>\n\nWhere should new messages be forwarded?")
     if cancelled or not to_chat:
         return
 
     to_thread = await _ask_topic(bot, user_id, "Primary Destination")
 
-    # ── Step 4: Second Destination (Optional) ──────────────────────────────
+    # ── Step 5: Second Destination (Optional) ──────────────────────────────
     to_chat_2, to_title_2, cancelled2 = await _ask_dest(bot, user_id, channels,
-        "<b>Step 4/6 — Second Destination (Optional)</b>\n\n"
+        "<b>Step 5/7 — Second Destination (Optional)</b>\n\n"
         "Messages will be sent to <b>both</b> destinations when a new message arrives.\n"
         "Press 'Skip' if you only need one destination.",
         optional=True)
@@ -843,9 +881,9 @@ async def _create_job_flow(bot, user_id: int):
     if to_chat_2:
         to_thread_2 = await _ask_topic(bot, user_id, "Second Destination")
 
-    # ── Step 5: Batch Mode ───────────────────────────────────────────────────
+    # ── Step 6: Batch Mode ───────────────────────────────────────────────────
     batch_r = await _ask(bot, user_id,
-        "<b>Step 5/6 — Batch Mode (Copy Old Messages First)</b>\n\n"
+        "<b>Step 6/7 — Batch Mode (Copy Old Messages First)</b>\n\n"
         "Do you want to copy existing (old) messages before going live?\n\n"
         "• <b>ON</b> — first copies old messages, then watches for new ones\n"
         "• <b>OFF</b> — only watches for NEW messages from now on (current behavior)\n\n"
@@ -892,7 +930,7 @@ async def _create_job_flow(bot, user_id: int):
 
     # ── Step 6: Size / Duration Limit ───────────────────────────────────────
     limit_r = await _ask(bot, user_id,
-        "<b>Step 6/6 — Per-Job Size Limit</b>\n\n"
+        "<b>Step 7/7 — Per-Job Size/Duration Limit</b>\n\n"
         "Set a maximum file size and/or duration for this job.\n"
         "Files above the limit will be <b>silently skipped</b>.\n\n"
         "<b>Format options:</b>\n"
@@ -928,6 +966,7 @@ async def _create_job_flow(bot, user_id: int):
     job = {
         "job_id":             job_id,
         "user_id":            user_id,
+        "name":               job_name if job_name else f"Live Job {job_id[-6:]}",
         "account_id":         sel_acc["id"],
         "from_chat":          from_chat,
         "from_title":         from_title,

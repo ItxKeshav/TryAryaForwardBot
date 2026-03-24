@@ -411,11 +411,16 @@ async def _render_mj_list(bot, user_id: int, msg_or_query):
             fwd  = j.get("forwarded", 0)
             cur  = j.get("current_id", "?")
             end  = j.get("end_id", 0) or "∞"
+            start_id = j.get("start_id", 1)
+            fetched = cur - start_id if isinstance(cur, int) and isinstance(start_id, int) and cur >= start_id else 0
             err  = f" <code>[{j.get('error','')}]</code>" if j.get("status") == "error" else ""
             d2   = f" + {j.get('to_title_2','?')}" if j.get("to_chat_2") else ""
+            default_name = f"Multi Job {j['job_id'][-6:]}"
+            name = j.get("name", default_name)
             lines.append(
-                f"{st} <b>{j.get('from_title','?')} → {j.get('to_title','?')}{d2}</b>"
-                f"  <code>[{j['job_id'][-6:]}]</code>  ✅{fwd}  📍{cur}/{end}{err}"
+                f"{st} <b>{name}</b>\n"
+                f"  └ <i>{j.get('from_title','?')} → {j.get('to_title','?')}{d2}</i>\n"
+                f"  └ <code>[{j['job_id'][-6:]}]</code>  ✅{fwd}  ⬇️{fetched}  📍{cur}/{end}{err}\n"
             )
         text = "\n".join(lines)
 
@@ -434,6 +439,7 @@ async def _render_mj_list(bot, user_id: int, msg_or_query):
             else:
                 row.append(InlineKeyboardButton(f"▶️ [{short}]", callback_data=f"mj#start#{jid}"))
             row.append(InlineKeyboardButton(f"ℹ️ [{short}]", callback_data=f"mj#info#{jid}"))
+            row.append(InlineKeyboardButton(f"✏️ Name [{short}]", callback_data=f"mj#rename#{jid}"))
             row.append(InlineKeyboardButton(f"🗑 [{short}]",  callback_data=f"mj#del#{jid}"))
             btns_list.append(row)
 
@@ -465,7 +471,22 @@ async def multijob_cmd(bot, message):
 
 @Client.on_callback_query(filters.regex(r'^mj#list$'))
 async def mj_list_cb(bot, query):
+    await query.answer()
     await _render_mj_list(bot, query.from_user.id, query)
+
+@Client.on_callback_query(filters.regex(r'^mj#rename#'))
+async def mj_rename_cb(bot, query):
+    user_id = query.from_user.id
+    job_id = query.data.split("#", 2)[2]
+    await query.message.delete()
+    
+    r = await _mj_ask(bot, user_id,
+        "<b>✏️ Edit Multi Job Name</b>\n\nSend a new name for this job:",
+        reply_markup=ReplyKeyboardMarkup([[KeyboardButton("/cancel")]], resize_keyboard=True, one_time_keyboard=True))
+    if "/cancel" not in r.text.lower():
+        await db.db[COLL].update_one({"job_id": job_id}, {"$set": {"name": r.text.strip()[:100]}})
+        await bot.send_message(user_id, f"✅ Multi Job renamed to <b>{r.text.strip()[:100]}</b>", reply_markup=ReplyKeyboardRemove())
+    await _render_mj_list(bot, user_id, r)
 
 
 @Client.on_callback_query(filters.regex(r'^mj#new$'))
@@ -483,11 +504,16 @@ async def mj_info_cb(bot, query):
         return await query.answer("Job not found!", show_alert=True)
 
     import datetime
-    created = datetime.datetime.fromtimestamp(job.get("created", 0)).strftime("%d %b %Y · %H:%M")
-    st      = _mj_emoji(job.get("status", "stopped"))
-    end     = job.get("end_id", 0) or "∞ (all)"
-    thread_lbl  = f"\n<b>Topic Thread:</b> <code>{job.get('to_thread_id')}</code>" if job.get("to_thread_id") else ""
-    dest2_lbl   = ""
+    created   = datetime.datetime.fromtimestamp(job.get("created", 0)).strftime("%d %b %Y %H:%M")
+    st        = _mj_emoji(job.get("status", "stopped"))
+    thread_id = job.get("to_thread_id")
+    topic_lbl = f"\n<b>Topic Thread:</b> <code>{thread_id}</code>" if thread_id else ""
+    
+    start_id = job.get("start_id", 1)
+    cur = job.get("current_id", "?")
+    fetched = cur - start_id if isinstance(cur, int) and isinstance(start_id, int) and cur >= start_id else 0
+
+    dest2_lbl = ""
     if job.get("to_chat_2"):
         t2 = job.get("to_thread_id_2")
         tp2 = f" [Thread {t2}]" if t2 else ""
@@ -496,13 +522,14 @@ async def mj_info_cb(bot, query):
     text = (
         f"<b>⚡ Multi Job Info</b>\n\n"
         f"<b>ID:</b> <code>{job_id[-6:]}</code>\n"
+        f"<b>Name:</b> {job.get('name', 'Default')}\n"
         f"<b>Status:</b> {st} {job.get('status','?')}\n"
         f"<b>Source:</b> {job.get('from_title','?')}\n"
-        f"<b>Dest 1:</b> {job.get('to_title','?')}{thread_lbl}"
+        f"<b>Dest 1:</b> {job.get('to_title','?')}{topic_lbl}"
         f"{dest2_lbl}\n"
-        f"<b>Range:</b> {job.get('start_id',1)} → {end}\n"
-        f"<b>Current ID:</b> <code>{job.get('current_id','?')}</code>\n"
-        f"<b>Forwarded:</b> {job.get('forwarded',0)}\n"
+        f"<b>Fetched messages:</b> {fetched}\n"
+        f"<b>Forwarded:</b> {job.get('forwarded', 0)}\n"
+        f"<b>Current ID progress:</b> {job.get('current_id', '?')} / {job.get('end_id', 0) or '∞'}\n"
         f"<b>Created:</b> {created}\n"
     )
     if job.get("error"):
@@ -646,7 +673,19 @@ async def _create_mj_flow(bot, user_id: int):
     if old and not old.done():
         old.cancel()
 
-    # ── Step 1: Account ───────────────────────────────────────────────────────
+    # ── Step 1: Name ──────────────────────────────────────────────────────────
+    name_r = await _mj_ask(bot, user_id,
+        "<b>⚡ Create Multi Job — Step 1/6</b>\n\n"
+        "Send a name for this job, or press 'Default' to use a random name.",
+        reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Default")], [KeyboardButton("/cancel")]], resize_keyboard=True, one_time_keyboard=True))
+    if "/cancel" in name_r.text:
+        return await bot.send_message(user_id, "<b>Cancelled.</b>", reply_markup=ReplyKeyboardRemove())
+    
+    job_name = name_r.text.strip()[:100]
+    if job_name.lower() == "default":
+        job_name = None
+
+    # ── Step 2: Account ───────────────────────────────────────────────────────
     accounts = await db.get_bots(user_id)
     if not accounts:
         return await bot.send_message(user_id,
@@ -659,7 +698,7 @@ async def _create_mj_flow(bot, user_id: int):
     acc_btns.append([KeyboardButton("/cancel")])
 
     acc_r = await _mj_ask(bot, user_id,
-        "<b>⚡ Create Multi Job — Step 1/5</b>\n\n"
+        "<b>⚡ Create Multi Job — Step 2/6</b>\n\n"
         "Choose which account to use:\n"
         "<i>(Userbot required for private/restricted channels)</i>",
         reply_markup=ReplyKeyboardMarkup(acc_btns, resize_keyboard=True, one_time_keyboard=True))
@@ -674,9 +713,9 @@ async def _create_mj_flow(bot, user_id: int):
     sel_acc = (await db.get_bot(user_id, acc_id)) if acc_id else accounts[0]
     is_bot  = sel_acc.get("is_bot", True)
 
-    # ── Step 2: Source ────────────────────────────────────────────────────────
+    # ── Step 3: Source ────────────────────────────────────────────────────────
     src_r = await _mj_ask(bot, user_id,
-        "<b>Step 2/5 — Source Chat</b>\n\n"
+        "<b>Step 3/6 — Source Chat</b>\n\n"
         "Send one of:\n"
         "• <code>@username</code> or channel link\n"
         "• Numeric ID (e.g. <code>-1001234567890</code>)\n"
@@ -715,7 +754,7 @@ async def _create_mj_flow(bot, user_id: int):
         except Exception:
             from_title = str(from_chat)
 
-    # ── Step 3: Primary Destination ───────────────────────────────────────────
+    # ── Step 4: Primary Destination ───────────────────────────────────────────
     channels = await db.get_user_channels(user_id)
     if not channels:
         return await bot.send_message(user_id,
@@ -723,15 +762,15 @@ async def _create_mj_flow(bot, user_id: int):
             reply_markup=ReplyKeyboardRemove())
 
     to_chat, to_title, cancelled = await _mj_ask_dest(bot, user_id, channels,
-        "<b>Step 3/5 — Primary Destination</b>\n\nWhere should messages be sent?")
+        "<b>Step 4/6 — Primary Destination</b>\n\nWhere should messages be sent?")
     if cancelled or not to_chat:
         return
 
     to_thread = await _mj_ask_topic(bot, user_id, "Primary Destination")
 
-    # ── Step 4: Second Destination (Optional) ─────────────────────────────────
+    # ── Step 5: Second Destination (Optional) ─────────────────────────────────
     to_chat_2, to_title_2, cancelled2 = await _mj_ask_dest(bot, user_id, channels,
-        "<b>Step 4/5 — Second Destination (Optional)</b>\n\n"
+        "<b>Step 5/6 — Second Destination (Optional)</b>\n\n"
         "Messages will be sent to <b>both</b> destinations simultaneously.\n"
         "Press 'Skip' if you only need one destination.",
         optional=True)
@@ -742,9 +781,9 @@ async def _create_mj_flow(bot, user_id: int):
     if to_chat_2:
         to_thread_2 = await _mj_ask_topic(bot, user_id, "Second Destination")
 
-    # ── Step 5: Message Range ─────────────────────────────────────────────────
+    # ── Step 6: Message Range ─────────────────────────────────────────────────
     range_r = await _mj_ask(bot, user_id,
-        "<b>Step 5/5 — Message Range</b>\n\n"
+        "<b>Step 6/6 — Message Range</b>\n\n"
         "Choose which messages to copy:\n\n"
         "• Send <b>ALL</b> to copy from the very first message\n"
         "• Send a <b>start ID</b> (e.g. <code>100</code>) to start from that message\n"
@@ -774,6 +813,7 @@ async def _create_mj_flow(bot, user_id: int):
     job = {
         "job_id":         job_id,
         "user_id":        user_id,
+        "name":           job_name if job_name else f"Multi Job {job_id[-6:]}",
         "account_id":     sel_acc["id"],
         "from_chat":      from_chat,
         "from_title":     from_title,
