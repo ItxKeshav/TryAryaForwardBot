@@ -377,7 +377,6 @@ async def _run_job(job_id: str, user_id: int):
                 else:
                     consecutive_empty = 0
 
-                fwd_count = 0
                 for msg in valid:
                     # Re-check stop between every message
                     fresh2 = await _get_job(job_id)
@@ -385,15 +384,17 @@ async def _run_job(job_id: str, user_id: int):
                         return
 
                     if not _passes_filters(msg, disabled_types):
+                        await _update_job(job_id, batch_cursor=msg.id + 1)
                         continue
                     if not _passes_size_limit(msg, max_size_mb, max_dur_secs):
                         logger.debug(f"[Job {job_id}] Batch: skipping msg {msg.id} (size/duration limit)")
+                        await _update_job(job_id, batch_cursor=msg.id + 1)
                         continue
 
                     try:
                         await _forward_message(client, msg, to_chat, remove_caption, cap_tpl, forward_tag,
                                                to_thread, to_chat_2, to_thread_2, replacements)
-                        fwd_count += 1
+                        await _inc_forwarded(job_id, 1)
                     except FloodWait as fw:
                         await asyncio.sleep(fw.value + 1)
                     except asyncio.CancelledError:
@@ -401,12 +402,11 @@ async def _run_job(job_id: str, user_id: int):
                     except Exception as e:
                         logger.debug(f"[Job {job_id}] Batch fwd error for {msg.id}: {e}")
 
+                    await _update_job(job_id, batch_cursor=msg.id + 1)
                     await asyncio.sleep(sleep_secs)
 
                 batch_cursor = chunk_end + 1
                 await _update_job(job_id, batch_cursor=batch_cursor)
-                if fwd_count > 0:
-                    await _inc_forwarded(job_id, fwd_count)
 
             # Batch complete — mark done, advance last_seen past the batch
             await _update_job(job_id, batch_done=True, batch_cursor=batch_end,
@@ -472,19 +472,20 @@ async def _run_job(job_id: str, user_id: int):
                 await asyncio.sleep(15)
                 continue
 
-            fwd_count = 0
             for msg in new_msgs:
                 if not _passes_filters(msg, disabled_types):
                     last_seen = max(last_seen, msg.id)
+                    await _update_job(job_id, last_seen_id=last_seen)
                     continue
                 if not _passes_size_limit(msg, max_size_mb, max_dur_secs):
                     logger.debug(f"[Job {job_id}] Live: skipping msg {msg.id} (size/duration limit)")
                     last_seen = max(last_seen, msg.id)
+                    await _update_job(job_id, last_seen_id=last_seen)
                     continue
                 try:
                     await _forward_message(client, msg, to_chat, remove_caption, cap_tpl, forward_tag,
                                            to_thread, to_chat_2, to_thread_2)
-                    fwd_count += 1
+                    await _inc_forwarded(job_id, 1)
                 except FloodWait as fw:
                     await asyncio.sleep(fw.value + 1)
                 except asyncio.CancelledError:
@@ -492,12 +493,11 @@ async def _run_job(job_id: str, user_id: int):
                 except Exception as e:
                     logger.debug(f"[Job {job_id}] Forward error: {e}")
                 last_seen = max(last_seen, msg.id)
+                await _update_job(job_id, last_seen_id=last_seen)
                 await asyncio.sleep(1)
 
             if new_msgs:
                 await _update_job(job_id, last_seen_id=last_seen)
-            if fwd_count > 0:
-                await _inc_forwarded(job_id, fwd_count)
 
             sleep_secs = configs.get("duration", 5) or 5
             await asyncio.sleep(max(5, sleep_secs))
@@ -572,7 +572,7 @@ async def _render_jobs_list(bot, user_id: int, message_or_query):
             "👇 Create your first job below!</i>"
         )
         btns = InlineKeyboardMarkup([[
-            InlineKeyboardButton("➕ Create New Job", callback_data="job#new")
+            InlineKeyboardButton("➕ Cʀᴇᴀᴛᴇ Nᴇᴡ Jᴏʙ", callback_data="job#new")
         ]])
     else:
         lines = ["<b>📋 Your Live Jobs</b>\n"]
@@ -595,7 +595,9 @@ async def _render_jobs_list(bot, user_id: int, message_or_query):
                 f"  └ <i>{j.get('from_title','?')} → {j.get('to_title','?')}{dest2}</i>\n"
                 f"  └ <code>[{j['job_id'][-6:]}]</code>  ✅{fwd}  ⬇️{fetched}{bp}{err}\n"
             )
-        text = "\n".join(lines)
+        import datetime
+        now_str = datetime.datetime.now().strftime("%I:%M:%S %p")
+        text = "\n".join(lines) + f"\n\n<i>Last refreshed: {now_str}</i>"
 
         btns_list = []
         for j in jobs:
@@ -604,16 +606,16 @@ async def _render_jobs_list(bot, user_id: int, message_or_query):
             short = jid[-6:]
             row = []
             if st == "running":
-                row.append(InlineKeyboardButton(f"⏹ Stop [{short}]", callback_data=f"job#stop#{jid}"))
+                row.append(InlineKeyboardButton(f"⏹ Sᴛᴏᴘ [{short}]", callback_data=f"job#stop#{jid}"))
             else:
-                row.append(InlineKeyboardButton(f"▶️ Start [{short}]", callback_data=f"job#start#{jid}"))
-            row.append(InlineKeyboardButton(f"ℹ️ [{short}]", callback_data=f"job#info#{jid}"))
-            row.append(InlineKeyboardButton(f"✏️ Name [{short}]", callback_data=f"job#rename#{jid}"))
-            row.append(InlineKeyboardButton(f"🗑 [{short}]",  callback_data=f"job#del#{jid}"))
+                row.append(InlineKeyboardButton(f"▶️ Sᴛᴀʀᴛ [{short}]", callback_data=f"job#start#{jid}"))
+            row.append(InlineKeyboardButton(f"ℹ️ Iɴғᴏ [{short}]", callback_data=f"job#info#{jid}"))
+            row.append(InlineKeyboardButton(f"✏️ Nᴀᴍᴇ [{short}]", callback_data=f"job#rename#{jid}"))
+            row.append(InlineKeyboardButton(f"🗑 Dᴇʟᴇᴛᴇ [{short}]",  callback_data=f"job#del#{jid}"))
             btns_list.append(row)
 
-        btns_list.append([InlineKeyboardButton("➕ Create New Job", callback_data="job#new")])
-        btns_list.append([InlineKeyboardButton("🔄 Refresh",        callback_data="job#list")])
+        btns_list.append([InlineKeyboardButton("➕ Cʀᴇᴀᴛᴇ Nᴇᴡ Jᴏʙ", callback_data="job#new")])
+        btns_list.append([InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ",        callback_data="job#list")])
         btns = InlineKeyboardMarkup(btns_list)
 
     try:
@@ -712,7 +714,7 @@ async def job_info_cb(bot, query):
         text += f"\n<b>⚠️ Error:</b> <code>{job['error']}</code>"
 
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup([[
-        InlineKeyboardButton("↩ Back", callback_data="job#list")
+        InlineKeyboardButton("↩ Bᴀᴄᴋ", callback_data="job#list")
     ]]))
 
 

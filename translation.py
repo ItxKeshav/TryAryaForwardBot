@@ -113,20 +113,32 @@ class Translation(object):
   BOT_DETAILS = "<b><u>📄 BOT DETAILS</b></u>\n\n<b>➣ NAME:</b> <code>{}</code>\n<b>➣ BOT ID:</b> <code>{}</code>\n<b>➣ USERNAME:</b> @{}"
   USER_DETAILS = "<b><u>📄 USERBOT DETAILS</b></u>\n\n<b>➣ NAME:</b> <code>{}</code>\n<b>➣ USER ID:</b> <code>{}</code>\n<b>➣ USERNAME:</b> @{}"  
          
-  TEXT = """<b>╭──────❰ ✦ 𝐀𝐮𝐭𝐨 𝐅𝐨𝐫𝐰𝐚𝐫𝐝𝐞𝐫 ✦ ❱──────╮
+  TEXT_BATCH = """<b>╭──────❰ ✦ 𝐀𝐮𝐭𝐨 𝐅𝐨𝐫𝐰𝐚𝐫𝐝𝐞𝐫 ✦ ❱──────╮
 ┃
-┣⊸ ◈ 𝐅𝐞𝐭𝐜𝐡𝐞𝐝     : <code>{}</code>
-┣⊸ ◈ 𝐅𝐨𝐫𝐰𝐚𝐫𝐝𝐞𝐝   : <code>{}</code>
-┣⊸ ◈ 𝐃𝐮𝐩𝐥𝐢𝐜𝐚𝐭𝐞   : <code>{}</code>
-┣⊸ ◈ 𝐒𝐤𝐢𝐩𝐩𝐞𝐝     : <code>{}</code>
-┣⊸ ◈ 𝐃𝐞𝐥𝐞𝐭𝐞𝐝     : <code>{}</code>
+┣⊸ ◈ Fᴇᴛᴄʜᴇᴅ     : <code>{}</code>
+┣⊸ ◈ Fᴏʀᴡᴀʀᴅᴇᴅ   : <code>{}</code>
+┣⊸ ◈ Dᴜᴘʟɪᴄᴀᴛᴇ   : <code>{}</code>
+┣⊸ ◈ Sᴋɪᴘᴘᴇᴅ     : <code>{}</code>
+┣⊸ ◈ Dᴇʟᴇᴛᴇᴅ     : <code>{}</code>
 ┃
-┣⊸ ◈ 𝐒𝐭𝐚𝐭𝐮𝐬      : <code>{}</code>
-┣⊸ ◈ 𝐄𝐓𝐀         : <code>{}</code>
+┣⊸ ◈ Sᴛᴀᴛᴜs      : <code>{}</code>
+┣⊸ ◈ ETA         : <code>{}</code>
 ┃
 ╰────────────────────────────────╯</b>"""
 
-  TEXT1 = TEXT
+  TEXT_LIVE = """<b>╭──────❰ ✦ 𝐀𝐮𝐭𝐨 𝐅𝐨𝐫𝐰𝐚𝐫𝐝𝐞𝐫 ✦ ❱──────╮
+┃
+┣⊸ ◈ Fᴇᴛᴄʜᴇᴅ     : <code>{}</code>
+┣⊸ ◈ Fᴏʀᴡᴀʀᴅᴇᴅ   : <code>{}</code>
+┣⊸ ◈ Dᴜᴘʟɪᴄᴀᴛᴇ   : <code>{}</code>
+┣⊸ ◈ Sᴋɪᴘᴘᴇᴅ     : <code>{}</code>
+┣⊸ ◈ Dᴇʟᴇᴛᴇᴅ     : <code>{}</code>
+┃
+┣⊸ ◈ Sᴛᴀᴛᴜs      : <code>{}</code>
+┃
+╰────────────────────────────────╯</b>"""
+
+  TEXT1 = TEXT_BATCH
 
   DUPLICATE_TEXT = """<b>╭──────❰ ✦ 𝐔𝐧𝐞𝐪𝐮𝐢𝐟𝐲 𝐒𝐭𝐚𝐭𝐮𝐬 ✦ ❱──────╮
 ┃

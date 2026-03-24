@@ -18,7 +18,8 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQ
 CLIENT = CLIENT()
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-TEXT = Translation.TEXT
+TEXT_BATCH = Translation.TEXT_BATCH
+TEXT_LIVE = Translation.TEXT_LIVE
 
 @Client.on_callback_query(filters.regex(r'^start_public'))
 async def pub_(bot, message):
@@ -529,18 +530,30 @@ async def forward(bot, msg, m, sts, protect):
       print(f"Failed to forward messages {msg}: {e}")
       sts.add('deleted')
 
-PROGRESS = """
-📈 Percetage: {0} %
+PROGRESS_BATCH = """
+📈 ᴘᴇʀᴄᴇɴᴛᴀɢᴇ: {0} %
 
-♻️ Feched: {1}
+♻️ Fᴇᴛᴄʜᴇᴅ: {1}
 
-♻️ Fowarded: {2}
+♻️ Fᴏʀᴡᴀʀᴅᴇᴅ: {2}
 
-♻️ Remaining: {3}
+♻️ Rᴇᴍᴀɪɴɪɴɢ: {3}
 
-♻️ Stataus: {4}
+♻️ Sᴛᴀᴛᴜs: {4}
 
 ⏳️ ETA: {5}
+"""
+
+PROGRESS_LIVE = """
+📈 ᴘᴇʀᴄᴇɴᴛᴀɢᴇ: {0} %
+
+♻️ Fᴇᴛᴄʜᴇᴅ: {1}
+
+♻️ Fᴏʀᴡᴀʀᴅᴇᴅ: {2}
+
+♻️ Rᴇᴍᴀɪɴɪɴɢ: {3}
+
+♻️ Sᴛᴀᴛᴜs: {4}
 """
 
 async def msg_edit(msg, text, button=None, wait=None):
@@ -584,25 +597,28 @@ async def edit(msg, title, status, sts):
    estimated_total_time = TimeFormatter(milliseconds=time_to_completion)
    estimated_total_time = estimated_total_time if estimated_total_time != '' else '0 s'
 
-   # 7 formatting slots in TEXT now: fetched, total_files, duplicate, skip, deleted, status, ETA
-   text = TEXT.format(i.fetched, i.total_files, i.duplicate, i.skip, i.deleted, status, estimated_total_time)
+   is_continuous = getattr(sts, 'continuous', False)
+   if is_continuous:
+       text = TEXT_LIVE.format(i.fetched, i.total_files, i.duplicate, i.skip, i.deleted, status)
+   else:
+       text = TEXT_BATCH.format(i.fetched, i.total_files, i.duplicate, i.skip, i.deleted, status, estimated_total_time)
    
    if status in ["cancelled", "completed"]:
       # Completed state button override with Support text
       button = [[
-          InlineKeyboardButton('✦ 𝐒𝐮𝐩𝐩𝐨𝐫𝐭 ✦', url='https://t.me/+1p2hcQ4ZaupjNjI1'),
-          InlineKeyboardButton('✦ 𝐔𝐩𝐝𝐚𝐭𝐞𝐬 ✦', url='https://t.me/MeJeetX')
+          InlineKeyboardButton('💬 Sᴜᴘᴘᴏʀᴛ Gʀᴏᴜᴘ', url='https://t.me/+1p2hcQ4ZaupjNjI1'),
+          InlineKeyboardButton('📢 Uᴘᴅᴀᴛᴇs', url='https://t.me/MeJeetX')
       ]]
    else:
       if temp.PAUSE.get(user_id) == True:
           button.append([
-              InlineKeyboardButton('▶ ʀᴇsᴜᴍᴇ', 'resume_frwd'), 
-              InlineKeyboardButton('• ᴄᴀɴᴄᴇʟ', 'terminate_frwd')
+              InlineKeyboardButton('▶️ Rᴇsᴜᴍᴇ', 'resume_frwd'), 
+              InlineKeyboardButton('⛔ Cᴀɴᴄᴇʟ', 'terminate_frwd')
           ])
       else:
           button.append([
-              InlineKeyboardButton('⏸ ᴘᴀᴜsᴇ', 'pause_frwd'), 
-              InlineKeyboardButton('• ᴄᴀɴᴄᴇʟ', 'terminate_frwd')
+              InlineKeyboardButton('⏸ Pᴀᴜsᴇ', 'pause_frwd'), 
+              InlineKeyboardButton('⛔ Cᴀɴᴄᴇʟ', 'terminate_frwd')
           ])
       
    await msg_edit(msg, text, InlineKeyboardMarkup(button))
@@ -681,7 +697,7 @@ def TimeFormatter(milliseconds: int) -> str:
     return tmp[:-2]
 
 def retry_btn(id):
-    return InlineKeyboardMarkup([[InlineKeyboardButton('♻️ RETRY ♻️', f"start_public_{id}")]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton('♻️ Rᴇᴛʀʏ ♻️', f"start_public_{id}")]])
 
 @Client.on_callback_query(filters.regex(r'^terminate_frwd$'))
 async def terminate_frwding(bot, m):
@@ -710,9 +726,13 @@ async def status_msg(bot, msg):
     else:
        fetched, forwarded = sts.get('fetched'), sts.get('total_files')
        remaining = fetched - forwarded 
-    est_time = TimeFormatter(milliseconds=est_time)
-    est_time = est_time if (est_time != '' or status not in ['completed', 'cancelled']) else '0 s'
-    return await msg.answer(PROGRESS.format(percentage, fetched, forwarded, remaining, status, est_time), show_alert=True)
+    is_continuous = getattr(sts, 'continuous', False)
+    if is_continuous:
+       return await msg.answer(PROGRESS_LIVE.format(percentage, fetched, forwarded, remaining, status), show_alert=True)
+    else:
+       est_time = TimeFormatter(milliseconds=est_time)
+       est_time = est_time if (est_time != '' or status not in ['completed', 'cancelled']) else '0 s'
+       return await msg.answer(PROGRESS_BATCH.format(percentage, fetched, forwarded, remaining, status, est_time), show_alert=True)
                   
 @Client.on_callback_query(filters.regex(r'^close_btn$'))
 async def close(bot, update):

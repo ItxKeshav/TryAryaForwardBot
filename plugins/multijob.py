@@ -346,7 +346,6 @@ async def _run_multijob(job_id: str, user_id: int):
             await _mj_update(job_id, consecutive_empty=0)
 
             # Forward each valid message
-            fwd_count = 0
             for msg in valid:
                 await pause_ev.wait()
 
@@ -355,19 +354,22 @@ async def _run_multijob(job_id: str, user_id: int):
                     return
 
                 if not _passes_filters(msg, disabled_types):
+                    current = msg.id + 1
+                    await _mj_update(job_id, current_id=current)
                     continue
 
                 await _mj_forward(client, msg, to_chat, remove_caption, cap_tpl, forward_tag,
                                    to_thread, to_chat_2, to_thread_2, replacements)
-                fwd_count += 1
+                
+                current = msg.id + 1
+                await _mj_update(job_id, current_id=current)
+                await _mj_inc(job_id, 1)
+                
                 await asyncio.sleep(sleep_secs)
 
             # Advance cursor
             current = valid[-1].id + 1
             await _mj_update(job_id, current_id=current)
-            if fwd_count:
-                await _mj_inc(job_id, fwd_count)
-
     except asyncio.CancelledError:
         logger.info(f"[MultiJob {job_id}] Cancelled")
         await _mj_update(job_id, status="stopped")
@@ -436,7 +438,7 @@ async def _render_mj_list(bot, user_id: int, msg_or_query):
             "👇 Create your first Multi Job below!</i>"
         )
         btns = InlineKeyboardMarkup([[
-            InlineKeyboardButton("➕ Create Multi Job", callback_data="mj#new")
+            InlineKeyboardButton("➕ Cʀᴇᴀᴛᴇ Mᴜʟᴛɪ Jᴏʙ", callback_data="mj#new")
         ]])
     else:
         lines = ["<b>⚡ Your Multi Jobs</b>\n"]
@@ -456,7 +458,9 @@ async def _render_mj_list(bot, user_id: int, msg_or_query):
                 f"  └ <i>{j.get('from_title','?')} → {j.get('to_title','?')}{d2}</i>\n"
                 f"  └ <code>[{j['job_id'][-6:]}]</code>  ✅{fwd}  ⬇️{fetched}  📍{cur}/{end}{err}\n"
             )
-        text = "\n".join(lines)
+        import datetime
+        now_str = datetime.datetime.now().strftime("%I:%M:%S %p")
+        text = "\n".join(lines) + f"\n\n<i>Last refreshed: {now_str}</i>"
 
         btns_list = []
         for j in jobs:
@@ -465,20 +469,20 @@ async def _render_mj_list(bot, user_id: int, msg_or_query):
             short = jid[-6:]
             row = []
             if st == "running":
-                row.append(InlineKeyboardButton(f"⏸ [{short}]", callback_data=f"mj#pause#{jid}"))
-                row.append(InlineKeyboardButton(f"⏹ [{short}]", callback_data=f"mj#stop#{jid}"))
+                row.append(InlineKeyboardButton(f"⏸ Pᴀᴜsᴇ [{short}]", callback_data=f"mj#pause#{jid}"))
+                row.append(InlineKeyboardButton(f"⏹ Sᴛᴏᴘ [{short}]", callback_data=f"mj#stop#{jid}"))
             elif st == "paused":
-                row.append(InlineKeyboardButton(f"▶️ [{short}]", callback_data=f"mj#resume#{jid}"))
-                row.append(InlineKeyboardButton(f"⏹ [{short}]", callback_data=f"mj#stop#{jid}"))
+                row.append(InlineKeyboardButton(f"▶️ Rᴇsᴜᴍᴇ [{short}]", callback_data=f"mj#resume#{jid}"))
+                row.append(InlineKeyboardButton(f"⏹ Sᴛᴏᴘ [{short}]", callback_data=f"mj#stop#{jid}"))
             else:
-                row.append(InlineKeyboardButton(f"▶️ [{short}]", callback_data=f"mj#start#{jid}"))
-            row.append(InlineKeyboardButton(f"ℹ️ [{short}]", callback_data=f"mj#info#{jid}"))
-            row.append(InlineKeyboardButton(f"✏️ Name [{short}]", callback_data=f"mj#rename#{jid}"))
-            row.append(InlineKeyboardButton(f"🗑 [{short}]",  callback_data=f"mj#del#{jid}"))
+                row.append(InlineKeyboardButton(f"▶️ Sᴛᴀʀᴛ [{short}]", callback_data=f"mj#start#{jid}"))
+            row.append(InlineKeyboardButton(f"ℹ️ Iɴғᴏ [{short}]", callback_data=f"mj#info#{jid}"))
+            row.append(InlineKeyboardButton(f"✏️ Nᴀᴍᴇ [{short}]", callback_data=f"mj#rename#{jid}"))
+            row.append(InlineKeyboardButton(f"🗑 Dᴇʟᴇᴛᴇ [{short}]",  callback_data=f"mj#del#{jid}"))
             btns_list.append(row)
 
-        btns_list.append([InlineKeyboardButton("➕ Create Multi Job", callback_data="mj#new")])
-        btns_list.append([InlineKeyboardButton("🔄 Refresh",           callback_data="mj#list")])
+        btns_list.append([InlineKeyboardButton("➕ Cʀᴇᴀᴛᴇ Mᴜʟᴛɪ Jᴏʙ", callback_data="mj#new")])
+        btns_list.append([InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ",           callback_data="mj#list")])
         btns = InlineKeyboardMarkup(btns_list)
 
     try:
@@ -570,7 +574,7 @@ async def mj_info_cb(bot, query):
         text += f"\n<b>⚠️ Error:</b> <code>{job['error']}</code>"
 
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup([[
-        InlineKeyboardButton("↩ Back", callback_data="mj#list")
+        InlineKeyboardButton("↩ Bᴀᴄᴋ", callback_data="mj#list")
     ]]))
 
 

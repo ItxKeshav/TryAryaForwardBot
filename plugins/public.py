@@ -56,14 +56,14 @@ async def run(bot, message):
 
         # Ask for mode: Batch vs Live
         mode_btn = ReplyKeyboardMarkup([
-            [KeyboardButton("Batch"), KeyboardButton("Live")]
+            [KeyboardButton("Bᴀᴛᴄʜ"), KeyboardButton("Lɪᴠᴇ")]
         ], resize_keyboard=True, one_time_keyboard=True)
         mode_msg = await bot.ask(message.chat.id, await t(user_id, 'SAVED_MSG_MODE'), reply_markup=mode_btn)
         if mode_msg.text.startswith('/'):
             await message.reply(await t(user_id, 'CANCEL'), reply_markup=ReplyKeyboardRemove())
             return
 
-        if "live" in mode_msg.text.lower() or "2" in mode_msg.text:
+        if "live" in mode_msg.text.lower() or "lɪᴠᴇ" in mode_msg.text.lower() or "2" in mode_msg.text:
             continuous = True
             last_msg_id = 1000000
         else:
@@ -99,13 +99,13 @@ async def run(bot, message):
             if chat_id.lstrip('-').isdigit():
                 chat_id = int(chat_id)
             mode_btn = ReplyKeyboardMarkup([
-                [KeyboardButton("Batch"), KeyboardButton("Live")]
+                [KeyboardButton("Bᴀᴛᴄʜ"), KeyboardButton("Lɪᴠᴇ")]
             ], resize_keyboard=True, one_time_keyboard=True)
             mode_msg = await bot.ask(message.chat.id, await t(user_id, 'SAVED_MSG_MODE'), reply_markup=mode_btn)
             if mode_msg.text.startswith('/'):
                 await message.reply(await t(user_id, 'CANCEL'), reply_markup=ReplyKeyboardRemove())
                 return
-            if "live" in mode_msg.text.lower() or "2" in mode_msg.text:
+            if "live" in mode_msg.text.lower() or "lɪᴠᴇ" in mode_msg.text.lower() or "2" in mode_msg.text:
                 continuous = True
                 last_msg_id = 10000000
             else:
@@ -176,18 +176,18 @@ async def run(bot, message):
     # ------------------------------------------------
 
     order_btn = ReplyKeyboardMarkup([
-        [KeyboardButton("Old to New"), KeyboardButton("New to Old")]
+        [KeyboardButton("Oʟᴅ ᴛᴏ Nᴇᴡ"), KeyboardButton("Nᴇᴡ ᴛᴏ Oʟᴅ")]
     ], resize_keyboard=True, one_time_keyboard=True)
     order_msg = await bot.ask(message.chat.id, await t(user_id, 'choose_order'), reply_markup=order_btn)
     if order_msg.text.startswith('/'):
         await message.reply(await t(user_id, 'CANCEL'), reply_markup=ReplyKeyboardRemove())
         return
 
-    reverse_order = True if "New to Old" in order_msg.text else False
+    reverse_order = True if "New to Old" in order_msg.text or "Nᴇᴡ ᴛᴏ Oʟᴅ" in order_msg.text else False
 
     # ── Smart Order toggle ──────────────────────────────────────────────────
     smart_btn = ReplyKeyboardMarkup([
-        [KeyboardButton("✅ Smart Order ON"), KeyboardButton("❌ Smart Order OFF")]
+        [KeyboardButton("✅ Sᴍᴀʀᴛ Oʀᴅᴇʀ ON"), KeyboardButton("❌ Sᴍᴀʀᴛ Oʀᴅᴇʀ OFF")]
     ], resize_keyboard=True, one_time_keyboard=True)
     smart_msg = await bot.ask(
         message.chat.id,
@@ -200,7 +200,7 @@ async def run(bot, message):
     if smart_msg.text.startswith('/'):
         await message.reply(await t(user_id, 'CANCEL'), reply_markup=ReplyKeyboardRemove())
         return
-    smart_order = "OFF" not in smart_msg.text  # True = ON
+    smart_order = "OFF" not in smart_msg.text and "ᴏғғ" not in smart_msg.text.lower()  # True = ON
 
     skipno = await bot.ask(message.chat.id, await t(user_id, 'SKIP_MSG'), reply_markup=ReplyKeyboardRemove())
     if skipno.text.startswith('/'):
@@ -208,8 +208,8 @@ async def run(bot, message):
         return
     forward_id = f"{user_id}-{skipno.id}"
     buttons = [[
-        InlineKeyboardButton('Yes', callback_data=f"start_public_{forward_id}"),
-        InlineKeyboardButton('No', callback_data="close_btn")
+        InlineKeyboardButton('Yᴇs', callback_data=f"start_public_{forward_id}"),
+        InlineKeyboardButton('Nᴏ', callback_data="close_btn")
     ]]
     reply_markup = InlineKeyboardMarkup(buttons)
 
@@ -239,15 +239,17 @@ async def run(bot, message):
 
     if acc_is_bot:
         hints = (
-            f"<b>│</b> ⚠️ <b>{acc_name}</b> (@{acc_username}) must be <b>admin</b> in TARGET\n"
-            f"<b>│</b> ⚠️ If SOURCE is private, bot must be <b>admin</b> there too\n"
-            f"<b>└──────────────────────────────────</b>\n"
+            f"<blockquote expandable>"
+            f"⚠️ {acc_name} (@{acc_username}) ᴍᴜsᴛ ʙᴇ Aᴅᴍɪɴ ɪɴ ᴛᴀʀɢᴇᴛ\n"
+            f"⚠️ Iғ sᴏᴜʀᴄᴇ ɪs ᴘʀɪᴠᴀᴛᴇ, ʙᴏᴛ ᴍᴜsᴛ ʙᴇ Aᴅᴍɪɴ ᴛʜᴇʀᴇ ᴛᴏᴏ\n"
+            f"</blockquote>\n"
         )
     else:
         hints = (
-            f"<b>│</b> ⚠️ Userbot <b>{acc_name}</b> must be a <b>member</b> of SOURCE\n"
-            f"<b>│</b> ⚠️ Userbot must be <b>admin</b> in TARGET channel\n"
-            f"<b>└──────────────────────────────────</b>\n"
+            f"<blockquote expandable>"
+            f"⚠️ Usᴇʀʙᴏᴛ {acc_name} ᴍᴜsᴛ ʙᴇ ᴀ Mᴇᴍʙᴇʀ ᴏғ sᴏᴜʀᴄᴇ\n"
+            f"⚠️ Usᴇʀʙᴏᴛ ᴍᴜsᴛ ʙᴇ Aᴅᴍɪɴ ɪɴ ᴛᴀʀɢᴇᴛ ᴄʜᴀɴɴᴇʟ\n"
+            f"</blockquote>\n"
         )
 
     # Calculate if this needs the SLOW MODE warning
@@ -257,12 +259,18 @@ async def run(bot, message):
     warning_box = ""
     if not acc_is_bot or needs_download or reverse_order:
         warning_box = (
-            f"<b>┌─────❮ ⚠️ 𝐒𝐋𝐎𝐖 𝐌𝐎𝐃𝐄 𝐖𝐀𝐑𝐍𝐈𝐍𝐆 ❯─────</b>\n"
-            f"<b>│</b> ⊸ Forwarding will be slow (Telegram restrictions)\n"
-            f"<b>│</b> ⊸ Bot relies on parsing or downloading/re-uploading\n"
-            f"<b>│</b> ⊸ High data usage & slower speeds expected. Be patient.\n"
-            f"<b>└──────────────────────────────────</b>\n\n"
+            f"<blockquote expandable>"
+            f"⚠️ Sʟᴏᴡ Mᴏᴅᴇ Wᴀʀɴɪɴɢ\n"
+            f"⊸ Fᴏʀᴡᴀʀᴅɪɴɢ ᴡɪʟʟ ʙᴇ sʟᴏᴡ (Tᴇʟᴇɢʀᴀᴍ ʀᴇsᴛʀɪᴄᴛɪᴏɴs)\n"
+            f"⊸ Bᴏᴛ ʀᴇʟɪᴇs ᴏɴ ᴘᴀʀsɪɴɢ ᴏʀ ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ/ʀᴇ-ᴜᴘʟᴏᴀᴅɪɴɢ\n"
+            f"⊸ Hɪɢʜ ᴅᴀᴛᴀ ᴜsᴀɢᴇ & sʟᴏᴡᴇʀ sᴘᴇᴇᴅs ᴇxᴘᴇᴄᴛᴇᴅ. Bᴇ ᴘᴀᴛɪᴇɴᴛ.\n"
+            f"</blockquote>\n"
         )
+
+    if continuous:
+        hints_block = warning_box
+    else:
+        hints_block = hints
 
     check_text = (
         f"<b>╭──────❰ ⚠️ 𝐃𝐎𝐔𝐁𝐋𝐄 𝐂𝐇𝐄𝐂𝐊 ❱──────╮</b>\n"
@@ -281,9 +289,8 @@ async def run(bot, message):
         f"<b>│</b> ⊸ <b>Transfer:</b> {dl_mode}\n"
         f"<b>│</b> ⊸ <b>Filters:</b> {filter_str}\n"
         f"<b>└──────────────────────────────────</b>\n\n"
-        f"{warning_box}"
         f"<b>┌──────❮ 💡 𝐑𝐞𝐦𝐢𝐧𝐝𝐞𝐫𝐬 ❯───────────</b>\n"
-        f"{hints}\n"
+        f"{hints_block}"
         f"<b>╰─── 𝐈𝐟 𝐯𝐞𝐫𝐢𝐟𝐢𝐞𝐝, 𝐜𝐥𝐢𝐜𝐤 𝐘𝐞𝐬 𝐁𝐞𝐥𝐨𝐰 ───╯</b>"
     )
 
