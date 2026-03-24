@@ -437,9 +437,10 @@ async def _render_mj_list(bot, user_id: int, msg_or_query):
             "✅ Survives bot restarts\n\n"
             "👇 Create your first Multi Job below!</i>"
         )
-        btns = InlineKeyboardMarkup([[
-            InlineKeyboardButton("➕ Cʀᴇᴀᴛᴇ Mᴜʟᴛɪ Jᴏʙ", callback_data="mj#new")
-        ]])
+        btns = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ Cʀᴇᴀᴛᴇ Mᴜʟᴛɪ Jᴏʙ", callback_data="mj#new")],
+            [InlineKeyboardButton("⫷ Bᴀᴄᴋ", callback_data="back")]
+        ])
     else:
         lines = ["<b>⚡ Your Multi Jobs</b>\n"]
         for j in jobs:
@@ -483,6 +484,7 @@ async def _render_mj_list(bot, user_id: int, msg_or_query):
 
         btns_list.append([InlineKeyboardButton("➕ Cʀᴇᴀᴛᴇ Mᴜʟᴛɪ Jᴏʙ", callback_data="mj#new")])
         btns_list.append([InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ",           callback_data="mj#list")])
+        btns_list.append([InlineKeyboardButton("⫷ Bᴀᴄᴋ", callback_data="back")])
         btns = InlineKeyboardMarkup(btns_list)
 
     try:

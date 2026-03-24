@@ -571,9 +571,10 @@ async def _render_jobs_list(bot, user_id: int, message_or_query):
             "✅ Per-job size limit\n\n"
             "👇 Create your first job below!</i>"
         )
-        btns = InlineKeyboardMarkup([[
-            InlineKeyboardButton("➕ Cʀᴇᴀᴛᴇ Nᴇᴡ Jᴏʙ", callback_data="job#new")
-        ]])
+        btns = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ Cʀᴇᴀᴛᴇ Nᴇᴡ Jᴏʙ", callback_data="job#new")],
+            [InlineKeyboardButton("⫷ Bᴀᴄᴋ", callback_data="back")]
+        ])
     else:
         lines = ["<b>📋 Your Live Jobs</b>\n"]
         for j in jobs:
@@ -616,6 +617,7 @@ async def _render_jobs_list(bot, user_id: int, message_or_query):
 
         btns_list.append([InlineKeyboardButton("➕ Cʀᴇᴀᴛᴇ Nᴇᴡ Jᴏʙ", callback_data="job#new")])
         btns_list.append([InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ",        callback_data="job#list")])
+        btns_list.append([InlineKeyboardButton("⫷ Bᴀᴄᴋ", callback_data="back")])
         btns = InlineKeyboardMarkup(btns_list)
 
     try:

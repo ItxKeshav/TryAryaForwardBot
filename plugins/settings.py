@@ -603,7 +603,7 @@ async def filters_buttons(user_id):
        InlineKeyboardButton('✅' if filters.get('rm_caption', False) else '❌',
                     callback_data=f'settings#updatefilter-rm_caption-{filters.get("rm_caption", False)}')
        ],[
-       InlineKeyboardButton('⫷ back',
+       InlineKeyboardButton('⫷ Bᴀᴄᴋ',
                     callback_data="settings#main")
        ]]
   return InlineKeyboardMarkup(buttons) 
@@ -639,7 +639,7 @@ async def next_filters_buttons(user_id):
        InlineKeyboardButton('♦️ keywords ♦️',
                     callback_data='settings#get_keyword')
        ],[
-       InlineKeyboardButton('⫷ back', 
+       InlineKeyboardButton('⫷ Bᴀᴄᴋ', 
                     callback_data="settings#main")
        ]]
   return InlineKeyboardMarkup(buttons) 
