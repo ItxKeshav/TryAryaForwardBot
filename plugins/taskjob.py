@@ -45,6 +45,45 @@ _pause_events: dict[str, asyncio.Event] = {}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Safe ask() helper — immune to pyrofork stale-listener bugs
+# A dict maps user_id → asyncio.Future so only ONE handler is needed globally.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# user_id → Future that resolves with the next Message from that user
+_waiting: dict[int, asyncio.Future] = {}
+
+
+@Client.on_message(filters.private, group=-10)
+async def _taskjob_input_router(bot, message):
+    """Catch all private messages and route them to any waiting _ask() futures."""
+    uid = message.from_user.id if message.from_user else None
+    if uid and uid in _waiting:
+        fut = _waiting.pop(uid)
+        if not fut.done():
+            fut.set_result(message)
+
+
+async def _ask(bot, user_id: int, text: str, reply_markup=None, timeout: int = 300):
+    """
+    Send `text` to `user_id`, then wait for their next private message.
+    Uses a module-level Future dict — none of pyrofork's listener machinery involved.
+    """
+    loop = asyncio.get_event_loop()
+    fut: asyncio.Future = loop.create_future()
+    # Cancel any stale future that may be lingering from a previous run
+    old = _waiting.pop(user_id, None)
+    if old and not old.done():
+        old.cancel()
+    _waiting[user_id] = fut
+    await bot.send_message(user_id, text, reply_markup=reply_markup)
+    try:
+        return await asyncio.wait_for(fut, timeout=timeout)
+    except asyncio.TimeoutError:
+        _waiting.pop(user_id, None)
+        raise
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # DB helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -623,12 +662,11 @@ async def _create_taskjob_flow(bot, user_id: int):
     )] for a in accounts]
     acc_btns.append([KeyboardButton("/cancel")])
 
-    acc_r = await bot.ask(user_id,
+    acc_r = await _ask(bot, user_id,
         "<b>📦 Create Task Job — Step 1/4</b>\n\n"
         "Choose the account to use for this task:\n"
         "<i>(Userbot required for private/restricted channels)</i>",
-        reply_markup=ReplyKeyboardMarkup(acc_btns, resize_keyboard=True, one_time_keyboard=True),
-        filters=filters.user(user_id))
+        reply_markup=ReplyKeyboardMarkup(acc_btns, resize_keyboard=True, one_time_keyboard=True))
 
     if "/cancel" in acc_r.text:
         return await acc_r.reply("<b>Cancelled.</b>", reply_markup=ReplyKeyboardRemove())
@@ -641,15 +679,14 @@ async def _create_taskjob_flow(bot, user_id: int):
     is_bot  = sel_acc.get("is_bot", True)
 
     # ── Step 2: Source Chat ──────────────────────────────────────────────────
-    src_r = await bot.ask(user_id,
+    src_r = await _ask(bot, user_id,
         "<b>Step 2/4 — Source Channel</b>\n\n"
         "Send the source channel:\n"
         "• <code>@username</code>\n"
         "• Channel link (e.g. <code>https://t.me/c/12345/1</code>)\n"
         "• Numeric ID (e.g. <code>-1001234567890</code>)\n\n"
         "<i>This is the private channel you want to copy FROM.</i>",
-        reply_markup=ReplyKeyboardRemove(),
-        filters=filters.user(user_id))
+        reply_markup=ReplyKeyboardRemove())
 
     if src_r.text.strip().startswith("/cancel"):
         return await src_r.reply("<b>Cancelled.</b>")
@@ -672,14 +709,13 @@ async def _create_taskjob_flow(bot, user_id: int):
         from_title = str(from_chat)
 
     # ── Step 3: Start ID and End ID ─────────────────────────────────────────
-    range_r = await bot.ask(user_id,
+    range_r = await _ask(bot, user_id,
         "<b>Step 3/4 — Message Range</b>\n\n"
         "Choose how many messages to copy:\n\n"
         "• Send <b>ALL</b> to copy all messages from the beginning\n"
         "• Send a <b>start message ID</b> (e.g. <code>100</code>) to begin from that point\n"
         "• Send <b>start_id:end_id</b> (e.g. <code>100:500</code>) to copy a specific range\n\n"
-        "<i>The job will run continuously until all messages in the range are copied.</i>",
-        filters=filters.user(user_id))
+        "<i>The job will run continuously until all messages in the range are copied.</i>")
 
     if "/cancel" in range_r.text:
         return await range_r.reply("<b>Cancelled.</b>")
@@ -709,10 +745,9 @@ async def _create_taskjob_flow(bot, user_id: int):
     ch_btns = [[KeyboardButton(ch['title'])] for ch in channels]
     ch_btns.append([KeyboardButton("/cancel")])
 
-    ch_r = await bot.ask(user_id,
+    ch_r = await _ask(bot, user_id,
         "<b>Step 4/4 — Target Channel</b>\n\nChoose where to forward messages:",
-        reply_markup=ReplyKeyboardMarkup(ch_btns, resize_keyboard=True, one_time_keyboard=True),
-        filters=filters.user(user_id))
+        reply_markup=ReplyKeyboardMarkup(ch_btns, resize_keyboard=True, one_time_keyboard=True))
 
     if "/cancel" in ch_r.text:
         return await ch_r.reply("<b>Cancelled.</b>", reply_markup=ReplyKeyboardRemove())
