@@ -81,9 +81,11 @@ async def pub_(bot, message):
           # Workers are only needed for DOWNLOAD mode (large file transfers).
           # For simple copy_message / send_cached_media, we bypass the pipeline
           # and send directly + sequentially to guarantee correct ordering.
-          MAX_WORKERS = 5
-          task_queue = asyncio.Queue(maxsize=50) 
-          upload_queue = asyncio.Queue(maxsize=50)
+          # Using 2 workers provides parallelism while preserving order via the
+          # sequence-numbered uploader queue. 5 sometimes overwhelms Telegram rate limits.
+          MAX_WORKERS = 2
+          task_queue = asyncio.Queue(maxsize=100)  # Larger buffer prevents blocking 
+          upload_queue = asyncio.Queue(maxsize=100)
 
           async def copy_worker():
               while True:

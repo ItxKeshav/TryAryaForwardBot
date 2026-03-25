@@ -151,18 +151,18 @@ async def _forward_message(
     to_chat_2: int = None, thread_id_2: int = None,
     replacements: dict = None
 ):
-    """Copy message to 1 or 2 destinations. Falls back to forward_messages for locked chats."""
+    """Copy message to 1 or 2 destinations. Falls back to download/re-upload if restricted."""
     from plugins.regix import custom_caption
     import re
+    import asyncio
+    import os
 
-    # Compute caption
     new_caption = None
     new_text = None
     is_text_replaced = False
 
     if msg.media:
         new_caption = custom_caption(msg, cap_tpl, apply_smart_clean=remove_caption)
-            
         if replacements and new_caption:
             for old_txt, new_txt_str in replacements.items():
                 try: new_caption = re.sub(old_txt, new_txt_str, new_caption, flags=re.IGNORECASE)
@@ -182,79 +182,92 @@ async def _forward_message(
         if new_caption is not None:
             kw["caption"] = new_caption
 
+        # ── Attempt 1: copy_message 
+        is_restricted = False
         for attempt in range(3):
             try:
                 if forward_tag:
-                    await client.forward_messages(
-                        chat_id=chat, from_chat_id=msg.chat.id,
-                        message_ids=msg.id, **kw
-                    )
+                    await client.forward_messages(chat_id=chat, from_chat_id=msg.chat.id, message_ids=msg.id, **kw)
                 else:
                     if is_text_replaced and not msg.media:
                         await client.send_message(chat_id=chat, text=new_text, **kw)
                     else:
-                        await client.copy_message(
-                            chat_id=chat, from_chat_id=msg.chat.id,
-                            message_id=msg.id, **kw
-                        )
-                return True # Success
+                        await client.copy_message(chat_id=chat, from_chat_id=msg.chat.id, message_id=msg.id, **kw)
+                return True
             except FloodWait as fw:
                 await asyncio.sleep(fw.value + 2)
                 continue
-            except Exception as forward_exc:
-                err = str(forward_exc).upper()
-                if "RESTRICTED" not in err and "PROTECTED" not in err:
-                    if "TIMEOUT" in err or "CONNECTION" in err:
-                        await asyncio.sleep(5)
-                        continue # Retry on connectivity/timeout
-                    try:
-                        if not forward_tag:
-                            await client.forward_messages(chat_id=chat, from_chat_id=msg.chat.id, message_ids=msg.id, **kw)
-                        else:
-                            if is_text_replaced and not msg.media:
-                                await client.send_message(chat_id=chat, text=new_text, **kw)
-                            else:
-                                await client.copy_message(chat_id=chat, from_chat_id=msg.chat.id, message_id=msg.id, **kw)
-                        return True
-                    except Exception as e:
-                        logger.debug(f"[Job forward] Failed to {chat}: {e}")
-                        return False
-
-                # --- Fallback to Download/Re-upload for restricted sources ---
-                try:
-                    media_obj = getattr(msg, msg.media.value, None) if msg.media else None
-                    original_name = getattr(media_obj, 'file_name', None) if media_obj else None
-                    if msg.media:
-                        safe_name = f"downloads/{msg.id}_{original_name}" if original_name else f"downloads/{msg.id}"
-                        fp = await client.download_media(msg, file_name=safe_name)
-                        if not fp: raise Exception("DownloadFailed")
-                        
-                        up_kw = {"chat_id": chat, "caption": kw.get("caption", msg.caption or "")}
-                        if thread: up_kw["message_thread_id"] = thread
-                        
-                        if msg.photo:      await client.send_photo(photo=fp, **up_kw)
-                        elif msg.video:    await client.send_video(video=fp, file_name=original_name, **up_kw)
-                        elif msg.document: await client.send_document(document=fp, file_name=original_name, **up_kw)
-                        elif msg.audio:    await client.send_audio(audio=fp, file_name=original_name, **up_kw)
-                        elif msg.voice:    await client.send_voice(voice=fp, **up_kw)
-                        elif msg.animation: await client.send_animation(animation=fp, **up_kw)
-                        elif msg.sticker:  await client.send_sticker(sticker=fp, **up_kw)
-                        
-                        import os
-                        if os.path.exists(fp): os.remove(fp)
-                    else:
-                        await client.send_message(chat_id=chat, text=new_text if new_text is not None else (msg.text.html if msg.text else ""), **kw)
-                    return True
-                except FloodWait as fw:
-                    await asyncio.sleep(fw.value + 2)
+            except Exception as e:
+                err = str(e).upper()
+                if "RESTRICTED" in err or "PROTECTED" in err or "FALLBACK" in err:
+                    is_restricted = True
+                    break
+                if "TIMEOUT" in err or "CONNECTION" in err:
+                    await asyncio.sleep(5)
+                    continue 
+                if attempt < 2:
+                    await asyncio.sleep(2)
                     continue
-                except Exception as fallback_e:
-                    f_err = str(fallback_e).upper()
-                    if "TIMEOUT" in f_err or "CONNECTION" in f_err:
-                        await asyncio.sleep(5)
-                        continue # Retry download
-                    logger.debug(f"[Job forward] Fallback failed to {chat}: {fallback_e}")
-                    return False
+                return False
+
+        if not is_restricted:
+            return False
+
+        # ── Attempt 2: download + re-upload 
+        for attempt in range(5):
+            try:
+                fp = None
+                media_obj = getattr(msg, msg.media.value, None) if msg.media else None
+                original_name = getattr(media_obj, 'file_name', None) if media_obj else None
+                if msg.media:
+                    safe_name = f"downloads/{msg.id}_{original_name}" if original_name else f"downloads/{msg.id}"
+                    
+                    # Internal retry for download
+                    for dl_attempt in range(5):
+                        try:
+                            fp = await client.download_media(msg, file_name=safe_name)
+                            if fp: break
+                        except FloodWait as fw:
+                            await asyncio.sleep(fw.value + 2)
+                        except Exception as dl_e:
+                            if "TIMEOUT" in str(dl_e).upper() or "CONNECTION" in str(dl_e).upper():
+                                await asyncio.sleep(5)
+                                continue
+                            if dl_attempt < 4:
+                                await asyncio.sleep(3)
+                                continue
+                            break
+                    
+                    if not fp: raise Exception("DownloadFailed")
+                    
+                    up_kw = {"chat_id": chat, "caption": new_caption if new_caption is not None else (msg.caption or "")}
+                    if thread: up_kw["message_thread_id"] = thread
+                    
+                    if getattr(msg, 'photo', None): await client.send_photo(photo=fp, **up_kw)
+                    elif getattr(msg, 'video', None): await client.send_video(video=fp, file_name=original_name, **up_kw)
+                    elif getattr(msg, 'document', None): await client.send_document(document=fp, file_name=original_name, **up_kw)
+                    elif getattr(msg, 'audio', None): await client.send_audio(audio=fp, file_name=original_name, **up_kw)
+                    elif getattr(msg, 'voice', None): await client.send_voice(voice=fp, **up_kw)
+                    elif getattr(msg, 'animation', None): await client.send_animation(animation=fp, **up_kw)
+                    elif getattr(msg, 'sticker', None): await client.send_sticker(sticker=fp, **up_kw)
+                    
+                    if os.path.exists(fp): os.remove(fp)
+                    return True
+                else:
+                    await client.send_message(chat_id=chat, text=new_text if new_text is not None else (msg.text.html if msg.text else ""), **kw)
+                    return True
+            except FloodWait as fw:
+                await asyncio.sleep(fw.value + 2)
+                continue
+            except Exception as e2:
+                f_err = str(e2).upper()
+                if "TIMEOUT" in f_err or "CONNECTION" in f_err:
+                    await asyncio.sleep(5)
+                    continue 
+                if attempt < 4:
+                    await asyncio.sleep(3)
+                    continue
+                return False
         return False
 
     await _send_one(to_chat, thread_id)
@@ -263,9 +276,6 @@ async def _forward_message(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Find current latest message ID (called once on job init)
-# ══════════════════════════════════════════════════════════════════════════════
-
 async def _get_latest_id(client, chat_id, is_bot: bool) -> int:
     try:
         if not is_bot:

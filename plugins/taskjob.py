@@ -29,6 +29,7 @@ from .test import CLIENT, start_clone_bot
 from pyrogram import Client, filters
 from config import Config
 from pyrogram.errors import FloodWait
+from plugins.regix import custom_caption
 from pyrogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup,
     KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
@@ -151,91 +152,110 @@ def _passes_filters(msg, disabled_types: list) -> bool:
 # Send one message sequentially (copy_message with fallback)
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _send_one(client, msg, to_chat: int, remove_caption: bool, caption_tpl: str | None, forward_tag: bool = False, thread_id: int = None):
-    """Send a single message via copy_message. Falls back to download/re-upload if restricted."""
-    from plugins.regix import custom_caption
 
-    caption = None
-    if msg.media:
-        caption = custom_caption(msg, caption_tpl, apply_smart_clean=remove_caption)
+# ══════════════════════════════════════════════════════════════════════════════
+# Ordered Pipeline Logic
+# ══════════════════════════════════════════════════════════════════════════════
 
-    kw = {"message_thread_id": thread_id} if thread_id else {}
-    if caption is not None:
-        kw["caption"] = caption
-
-    # ── Attempt 1: copy_message ──────────────────────────────────────────────
-    for attempt in range(3):
+async def _dl_worker(worker_id, dl_queue, up_queue, client, to_chat, thread_id):
+    """Worker that safely handles parallel downloads while keeping exactly 2 limit."""
+    while True:
+        task = await dl_queue.get()
+        if task is None: break
+        seq_idx, msg, caption, forward_tag, remove_caption = task
+        
         try:
-            if forward_tag:
-                await client.forward_messages(
-                    chat_id=to_chat, from_chat_id=msg.chat.id, message_ids=msg.id, **kw
-                )
-            else:
-                await client.copy_message(
-                    chat_id=to_chat, from_chat_id=msg.chat.id, message_id=msg.id, **kw
-                )
-            return True
-        except FloodWait as fw:
-            await asyncio.sleep(fw.value + 2)
-            continue
-        except Exception as e:
-            err = str(e).upper()
-            if "RESTRICTED" not in err and "PROTECTED" not in err:
-                if "TIMEOUT" in err or "CONNECTION" in err:
-                    await asyncio.sleep(5)
-                    continue # Retry on connectivity/timeout
+            # ── Attempt 1: copy_message (if restricted, raises exception)
+            for attempt in range(3):
                 try:
-                    if not forward_tag:
+                    kw = {"message_thread_id": thread_id} if thread_id else {}
+                    if caption is not None: kw["caption"] = caption
+                    
+                    if forward_tag:
                         await client.forward_messages(chat_id=to_chat, from_chat_id=msg.chat.id, message_ids=msg.id, **kw)
                     else:
                         await client.copy_message(chat_id=to_chat, from_chat_id=msg.chat.id, message_id=msg.id, **kw)
-                    return True
-                except Exception:
-                    pass
-                return False
-            # ── Attempt 2: download + re-upload ─────────────────────────────────
-            try:
-                media_obj = getattr(msg, msg.media.value, None) if msg.media else None
-                original_name = getattr(media_obj, 'file_name', None) if media_obj else None
-                if msg.media:
-                    safe_name = f"downloads/{msg.id}_{original_name}" if original_name else f"downloads/{msg.id}"
-                    fp = await client.download_media(msg, file_name=safe_name)
-                    if not fp:
-                        raise Exception("DownloadFailed")
-                    up_kw = {
-                        "chat_id": to_chat,
-                        "caption": caption if caption is not None else (msg.caption or ""),
-                    }
-                    if thread_id: up_kw["message_thread_id"] = thread_id
-                    
-                    if msg.photo:      await client.send_photo(photo=fp, **up_kw)
-                    elif msg.video:    await client.send_video(video=fp, file_name=original_name, **up_kw)
-                    elif msg.document: await client.send_document(document=fp, file_name=original_name, **up_kw)
-                    elif msg.audio:    await client.send_audio(audio=fp, file_name=original_name, **up_kw)
-                    elif msg.voice:    await client.send_voice(voice=fp, **up_kw)
-                    elif msg.animation: await client.send_animation(animation=fp, **up_kw)
-                    elif msg.sticker:  await client.send_sticker(sticker=fp, **up_kw)
-                    if os.path.exists(fp): os.remove(fp)
-                    return True
-                else:
-                    await client.send_message(chat_id=to_chat, text=msg.text or "")
-                    return True
-            except FloodWait as fw:
-                await asyncio.sleep(fw.value + 2)
-                continue
-            except Exception as e2:
-                f_err = str(e2).upper()
-                if "TIMEOUT" in f_err or "CONNECTION" in f_err:
-                    await asyncio.sleep(5)
-                    continue # Retry download
-                logger.debug(f"[TaskJob] send_one fallback failed: {e2}")
-                return False
-    return False
+                    # Success
+                    await up_queue.put((seq_idx, 'done', None, None))
+                    break
+                except FloodWait as fw:
+                    await asyncio.sleep(fw.value + 2)
+                    continue
+                except Exception as e:
+                    err = str(e).upper()
+                    if "RESTRICTED" not in err and "PROTECTED" not in err and "FALLBACK" not in err:
+                        if "TIMEOUT" in err or "CONNECTION" in err:
+                            await asyncio.sleep(5)
+                            continue 
+                        # Immediate retry for unknown temporary error
+                        if attempt < 2:
+                            await asyncio.sleep(2)
+                            continue
+                        # If totally fails after 3 normal attempts, fail it
+                        print(f"TaskJob copy_message hard fail: {e}")
+                        await up_queue.put((seq_idx, 'skip', None, None))
+                        break
 
+                    # ── Attempt 2: download + re-upload ─────────────────────────────
+                    # Must be restricted/protected, do download:
+                    fp = None
+                    media_obj = getattr(msg, msg.media.value, None) if msg.media else None
+                    original_name = getattr(media_obj, 'file_name', None) if media_obj else None
+                    if msg.media:
+                        safe_name = f"downloads/{msg.id}_{original_name}" if original_name else f"downloads/{msg.id}"
+                        # Retry system: 5 retries for large files downloading
+                        for dl_attempt in range(5):
+                            try:
+                                fp = await client.download_media(msg, file_name=safe_name)
+                                if fp: break
+                            except FloodWait as fw:
+                                await asyncio.sleep(fw.value + 2)
+                            except Exception as e2:
+                                if "TIMEOUT" in str(e2).upper() or "CONNECTION" in str(e2).upper():
+                                    await asyncio.sleep(5)
+                                    continue
+                                if dl_attempt < 4:
+                                    await asyncio.sleep(3)
+                                    continue
+                                print(f"TaskJob download hard fail for {msg.id}: {e2}")
+                                break
+                        
+                        if not fp:
+                            await up_queue.put((seq_idx, 'skip', None, None))
+                            break
+                        
+                        up_kw = {"chat_id": to_chat, "caption": caption if caption is not None else (msg.caption or "")}
+                        if thread_id: up_kw["message_thread_id"] = thread_id
+                        
+                        if getattr(msg, 'photo', None):
+                            await up_queue.put((seq_idx, 'send_photo', {"photo": fp, **up_kw}, fp))
+                        elif getattr(msg, 'video', None):
+                            await up_queue.put((seq_idx, 'send_video', {"video": fp, "file_name": original_name or None, **up_kw}, fp))
+                        elif getattr(msg, 'document', None):
+                            await up_queue.put((seq_idx, 'send_document', {"document": fp, "file_name": original_name or None, **up_kw}, fp))
+                        elif getattr(msg, 'audio', None):
+                            await up_queue.put((seq_idx, 'send_audio', {"audio": fp, "file_name": original_name or None, **up_kw}, fp))
+                        elif getattr(msg, 'voice', None):
+                            await up_queue.put((seq_idx, 'send_voice', {"voice": fp, **up_kw}, fp))
+                        elif getattr(msg, 'animation', None):
+                            await up_queue.put((seq_idx, 'send_animation', {"animation": fp, **up_kw}, fp))
+                        elif getattr(msg, 'sticker', None):
+                            await up_queue.put((seq_idx, 'send_sticker', {"sticker": fp, **up_kw}, fp))
+                        else:
+                            await up_queue.put((seq_idx, 'skip', None, fp))
+                        break # exit attempt loop
+                    else:
+                        # Re-send text message
+                        snd_kwargs = {"chat_id": to_chat, "text": msg.text or ""}
+                        if thread_id: snd_kwargs["message_thread_id"] = thread_id
+                        await up_queue.put((seq_idx, 'send_message', snd_kwargs, None))
+                        break
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Core runner
-# ══════════════════════════════════════════════════════════════════════════════
+        except Exception as general_err:
+            print(f"TaskJob Worker general error: {general_err}")
+            await up_queue.put((seq_idx, 'skip', None, None))
+        finally:
+            dl_queue.task_done()
 
 BATCH_SIZE = 200  # IDs per get_messages call
 
@@ -353,26 +373,95 @@ async def _run_task_job(job_id: str, user_id: int):
 
             await _tj_update(job_id, consecutive_empty=0)
 
-            # ── Send each message sequentially ────────────────────────────
+            # ── Pipeline Execution (Strict Order) ────────────────────────────
+            MAX_WORKERS = 2
+            dl_queue = asyncio.Queue(maxsize=100)
+            up_queue = asyncio.Queue(maxsize=100)
+            
+            workers = [asyncio.create_task(_dl_worker(i, dl_queue, up_queue, client, to_chat, None)) for i in range(MAX_WORKERS)]
+            
+            # Feed messages to the dl_queue
             fwd_count = 0
+            seq_counter = 0
+            
             for msg in valid:
-                # Pause check between messages
                 await pause_ev.wait()
-
-                # Stop check between messages
                 fresh2 = await _tj_get(job_id)
                 if not fresh2 or fresh2.get("status") in ("stopped",):
+                    for _ in workers: await dl_queue.put(None)
                     return
-
+                
                 if not _passes_filters(msg, disabled_types):
                     continue
 
-                ok = await _send_one(client, msg, to_chat, remove_caption, cap_tpl)
-                if ok:
-                    fwd_count += 1
-                    await _tj_inc(job_id)
+                caption = None
+                if getattr(msg, 'media', None):
+                    caption = custom_caption(msg, cap_tpl, apply_smart_clean=remove_caption)
 
-                await asyncio.sleep(sleep_secs)
+                await dl_queue.put((seq_counter, msg, caption, forward_tag, remove_caption))
+                seq_counter += 1
+
+            # Tell workers to stop cleanly
+            for _ in workers: await dl_queue.put(None)
+
+            # Sequential Uploader logic (awaits ordered completion from up_queue buffer)
+            expected_seq = 0
+            buffer = {}
+            running_uploads = seq_counter
+            
+            # Add small delay (0.1s minimum) for stability
+            effective_sleep = max(0.2, sleep_secs)
+            
+            while expected_seq < running_uploads:
+                # Get completed payloads seamlessly
+                item = await up_queue.get()
+                seq, act, prm, fpath = item
+                buffer[seq] = (act, prm, fpath)
+                
+                while expected_seq in buffer:
+                    act, prm, fpath = buffer.pop(expected_seq)
+                    
+                    if act not in ('skip', 'done'):
+                        for up_attempt in range(4):
+                            try:
+                                if act == 'send_photo': await client.send_photo(**prm)
+                                elif act == 'send_video': await client.send_video(**prm)
+                                elif act == 'send_document': await client.send_document(**prm)
+                                elif act == 'send_audio': await client.send_audio(**prm)
+                                elif act == 'send_voice': await client.send_voice(**prm)
+                                elif act == 'send_animation': await client.send_animation(**prm)
+                                elif act == 'send_sticker': await client.send_sticker(**prm)
+                                elif act == 'send_message': await client.send_message(**prm)
+                                fwd_count += 1
+                                await _tj_inc(job_id)
+                                break
+                            except FloodWait as fw:
+                                await asyncio.sleep(fw.value + 2)
+                            except Exception as eup:
+                                eup_err = str(eup).upper()
+                                if "TIMEOUT" in eup_err or "CONNECTION" in eup_err:
+                                    await asyncio.sleep(5)
+                                    continue
+                                print(f"Upload fail for {expected_seq}: {eup}")
+                                break
+                    elif act == 'done':
+                        # the copy_message in worker succeeded initially
+                        fwd_count += 1
+                        await _tj_inc(job_id)
+
+                    # Cleanup file correctly
+                    if fpath:
+                        try:
+                            import os
+                            if os.path.exists(fpath): os.remove(fpath)
+                        except: pass
+                    
+                    expected_seq += 1
+                    up_queue.task_done()
+                    # Apply minimal stabilizing sleep exactly after upload attempt
+                    await asyncio.sleep(effective_sleep)
+
+            await asyncio.gather(*workers)
 
             # ── Advance cursor ─────────────────────────────────────────────
             if valid:
