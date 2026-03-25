@@ -37,6 +37,7 @@ _CLIENT = CLIENT()
 _mg_tasks: dict[str, asyncio.Task] = {}
 _mg_paused: dict[str, asyncio.Event] = {}
 _mg_waiter: dict[int, asyncio.Future] = {}
+_mg_global_lock = asyncio.Lock()
 
 
 # ─── Future-based ask ────────────────────────────────────────────────────────
@@ -113,7 +114,7 @@ def _tm(s):
 
 def _emoji(st):
     return {"downloading":"⬇️","merging":"🔀","uploading":"⬆️","done":"✅",
-            "error":"⚠️","stopped":"🔴","paused":"⏸"}.get(st, "❓")
+            "error":"⚠️","stopped":"🔴","paused":"⏸","queued":"⏳"}.get(st, "❓")
 
 def _check_ffmpeg():
     return shutil.which("ffmpeg") is not None
@@ -158,9 +159,9 @@ def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", cover=No
                 f.write(f"file '{fp.replace(chr(39), chr(39)+chr(92)+chr(39)+chr(39))}'\n")
 
         # Try lossless
-        cmd = ["ffmpeg","-y","-f","concat","-safe","0","-i",lst,"-c","copy"]
+        cmd = ["ffmpeg","-y","-threads","1","-f","concat","-safe","0","-i",lst,"-c","copy"]
         if cover and os.path.exists(cover) and mtype == "audio":
-            cmd = ["ffmpeg","-y","-f","concat","-safe","0","-i",lst,
+            cmd = ["ffmpeg","-y","-threads","1","-f","concat","-safe","0","-i",lst,
                    "-i",cover,"-map","0:a","-map","1:0","-c:a","copy",
                    "-id3v2_version","3","-metadata:s:v","title=Album cover",
                    "-metadata:s:v","comment=Cover (front)"]
@@ -173,13 +174,13 @@ def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", cover=No
             return True, ""
 
         # Re-encode
-        cmd2 = ["ffmpeg","-y","-f","concat","-safe","0","-i",lst]
+        cmd2 = ["ffmpeg","-y","-threads","1","-f","concat","-safe","0","-i",lst]
         if cover and os.path.exists(cover): cmd2.extend(["-i", cover])
         if mtype == "video":
-            cmd2.extend(["-c:v","libx264","-preset","medium","-crf","18",
-                         "-c:a","aac","-b:a","320k","-movflags","+faststart"])
+            cmd2.extend(["-c:v","libx264","-preset","fast","-crf","24",
+                         "-c:a","aac","-b:a","128k","-movflags","+faststart"])
         else:
-            cmd2.extend(["-c:a","libmp3lame","-b:a","320k","-ar","44100"])
+            cmd2.extend(["-c:a","libmp3lame","-b:a","192k","-ar","44100"])
             if cover and os.path.exists(cover):
                 cmd2.extend(["-map","0:a","-map","1:0","-id3v2_version","3",
                              "-metadata:s:v","title=Album cover",
@@ -230,7 +231,13 @@ async def _run_job(jid, uid, bot):
         resume_id  = job.get("current_id", start_id)
         dl_count   = job.get("downloaded", 0)
 
-        await _db_up(jid, status="downloading", error="")
+        await _db_up(jid, status="queued", error="")
+
+        # ── Global queue: only 1 merge running at a time ──
+        async with _mg_global_lock:
+            fresh = await _db_get(jid)
+            if not fresh or fresh.get("status") in ("stopped", "paused"): return
+            await _db_up(jid, status="downloading", error="")
 
         # Cover check
         cover = os.path.join(wdir, "cover.jpg")
@@ -252,8 +259,7 @@ async def _run_job(jid, uid, bot):
             # Pause
             if not ev.is_set():
                 await _db_up(jid, status="paused", current_id=current)
-                await ev.wait()
-                await _db_up(jid, status="downloading")
+                return  # Exit to release global lock; resume will restart
 
             # Stop
             fresh = await _db_get(jid)
@@ -317,6 +323,8 @@ async def _run_job(jid, uid, bot):
                     dl_count += 1
                     await _db_up(jid, downloaded=dl_count, current_id=msg.id,
                                  total_dl_bytes=dl_bytes)
+                    
+                    await asyncio.sleep(0.5)  # Smart delay to reduce memory/CPU load
 
                     now = time.time()
                     if now - last_edit >= 3:
@@ -451,7 +459,10 @@ async def _run_job(jid, uid, bot):
         _mg_tasks.pop(jid, None)
         _mg_paused.pop(jid, None)
         try:
-            if os.path.exists(wdir): shutil.rmtree(wdir, ignore_errors=True)
+            if os.path.exists(wdir):
+                fresh = await _db_get(jid)
+                if not fresh or fresh.get("status") not in ("paused", "stopped", "queued"):
+                    shutil.rmtree(wdir, ignore_errors=True)
         except: pass
         if client:
             try: await client.stop()
@@ -765,6 +776,14 @@ async def _create_flow(bot, uid, mtype="audio"):
             return await bot.send_message(uid, "<b>❌ Could not detect channel.</b>")
         if sid > eid: sid, eid = eid, sid
         total = eid - sid + 1
+
+        # Hard limit to prevent RAM exhaustion
+        if total > 120:
+            return await bot.send_message(uid, 
+                f"<b>❌ Too many files ({total}).</b>\n\n"
+                f"To prevent server crashes, maximum allowed is <b>120 files</b> per merge. "
+                f"Please split your request into smaller ranges.",
+                reply_markup=ReplyKeyboardRemove())
 
         # Step 4: Destination
         channels = await db.get_user_channels(uid)
