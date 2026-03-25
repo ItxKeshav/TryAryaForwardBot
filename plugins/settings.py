@@ -473,38 +473,58 @@ async def main_buttons(user_id=None):
       except Exception:
           pass
 
-  mode_icon = "📤" if mode == 'forward' else "🔀"
-  mode_label = "Forward Mode" if mode == 'forward' else "Merger Mode"
-
-  buttons = [[
-       InlineKeyboardButton(f'{mode_icon} {mode_label}',
-                    callback_data='settings#toggle_mode')
-       ],[
-       InlineKeyboardButton('🤖 Aᴄᴄᴏᴜɴᴛs',
-                    callback_data=f'settings#accounts'),
-       InlineKeyboardButton('🏷 Cʜᴀɴɴᴇʟs',
-                    callback_data=f'settings#channels')
-       ],[
-       InlineKeyboardButton('🖋️ Cᴀᴘᴛɪᴏɴ',
-                    callback_data=f'settings#caption'),
-       InlineKeyboardButton('🗃 MᴏɴɢᴏDB',
-                    callback_data=f'settings#database')
-       ],[
-       InlineKeyboardButton('🕵‍♀ Fɪʟᴛᴇʀs 🕵‍♀',
-                    callback_data=f'settings#filters'),
-       InlineKeyboardButton('⏹ Bᴜᴛᴛᴏɴ',
-                    callback_data=f'settings#button')
-       ],[
-       InlineKeyboardButton('Exᴛʀᴀ Sᴇᴛᴛɪɴɢs 🧪',
-                    callback_data='settings#nextfilters'),
-       InlineKeyboardButton('🗑 Cʟᴇᴀɴ MSG',
-                    callback_data='settings#cleanmsg')
-       ],[
-       InlineKeyboardButton('🌐 Language / भाषा',
-                    callback_data='settings#lang')
-       ],[
-       InlineKeyboardButton('⫷ Bᴀᴄᴋ', callback_data='back')
-       ]]
+  if mode == 'merger':
+      # ── MERGER MODE UI ─────────────────────────────────────────────────
+      buttons = [[
+           InlineKeyboardButton('🔀 Merger Mode ✅',
+                        callback_data='settings#toggle_mode')
+           ],[
+           InlineKeyboardButton('🤖 Aᴄᴄᴏᴜɴᴛs',
+                        callback_data='settings#accounts'),
+           InlineKeyboardButton('🏷 Cʜᴀɴɴᴇʟs',
+                        callback_data='settings#channels')
+           ],[
+           InlineKeyboardButton('🎵 Audio Merge',
+                        callback_data='merge#audio_menu'),
+           InlineKeyboardButton('🎬 Video Merge',
+                        callback_data='merge#video_menu')
+           ],[
+           InlineKeyboardButton('🌐 Language / भाषा',
+                        callback_data='settings#lang')
+           ],[
+           InlineKeyboardButton('⫷ Bᴀᴄᴋ', callback_data='back')
+           ]]
+  else:
+      # ── FORWARD MODE UI (original) ─────────────────────────────────────
+      buttons = [[
+           InlineKeyboardButton('📤 Forward Mode ✅',
+                        callback_data='settings#toggle_mode')
+           ],[
+           InlineKeyboardButton('🤖 Aᴄᴄᴏᴜɴᴛs',
+                        callback_data='settings#accounts'),
+           InlineKeyboardButton('🏷 Cʜᴀɴɴᴇʟs',
+                        callback_data='settings#channels')
+           ],[
+           InlineKeyboardButton('🖋️ Cᴀᴘᴛɪᴏɴ',
+                        callback_data='settings#caption'),
+           InlineKeyboardButton('🗃 MᴏɴɢᴏDB',
+                        callback_data='settings#database')
+           ],[
+           InlineKeyboardButton('🕵‍♀ Fɪʟᴛᴇʀs 🕵‍♀',
+                        callback_data='settings#filters'),
+           InlineKeyboardButton('⏹ Bᴜᴛᴛᴏɴ',
+                        callback_data='settings#button')
+           ],[
+           InlineKeyboardButton('Exᴛʀᴀ Sᴇᴛᴛɪɴɢs 🧪',
+                        callback_data='settings#nextfilters'),
+           InlineKeyboardButton('🗑 Cʟᴇᴀɴ MSG',
+                        callback_data='settings#cleanmsg')
+           ],[
+           InlineKeyboardButton('🌐 Language / भाषा',
+                        callback_data='settings#lang')
+           ],[
+           InlineKeyboardButton('⫷ Bᴀᴄᴋ', callback_data='back')
+           ]]
   return InlineKeyboardMarkup(buttons)
 
 

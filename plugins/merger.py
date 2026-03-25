@@ -1,20 +1,18 @@
 """
-Merger Plugin — v2
+Merger Plugin — v3
 ==================
-Merges media files (ANY audio/video format) from a source channel range
-into one combined file using FFmpeg.
-
-Supported audio: MP3, AAC, OGG, FLAC, ALAC, WAV, AIFF, M4A, WMA, OPUS
-Supported video: MP4, MKV, AVI, WEBM, MOV, FLV, TS
+Merges media files from a source channel range into one combined file using FFmpeg.
 
 Features:
-  • Strict ordering — files merged exactly as they appear in the channel
-  • No format skipping — ALL media files in range are merged
-  • Full metadata editing — title, artist, album, genre, year, track, composer, etc.
-  • Destination channel — sends merged file to selected destination
-  • Multi merge — multiple merge jobs simultaneously
-  • Progress bar — real-time download/upload progress with speed + ETA
-  • Lossless when possible, high-quality re-encode when codecs differ
+  • Separate Audio Merge and Video Merge sections
+  • Start / Stop / Resume controls (resumes from where stopped)
+  • Detailed info page with download time, merge time, upload time, ETA
+  • Full metadata editing including cover/thumbnail artwork
+  • Destination channel support
+  • Multi merge — multiple jobs simultaneously
+  • Progress bar with real-time speed + ETA
+  • No format skipping — ALL media files merged in strict order
+  • Lossless when possible, high-quality re-encode as fallback
 
 Commands:
   /merge  — Open the Merger manager UI
@@ -39,13 +37,13 @@ from pyrogram.types import (
 logger = logging.getLogger(__name__)
 _CLIENT = CLIENT()
 
-# ─── In-memory task registry ─────────────────────────────────────────────────
+# ─── In-memory registries ────────────────────────────────────────────────────
 _merge_tasks: dict[str, asyncio.Task] = {}
-
-# ─── Future-based ask() ──────────────────────────────────────────────────────
+_merge_paused: dict[str, asyncio.Event] = {}   # set=running, clear=paused
 _merge_waiting: dict[int, asyncio.Future] = {}
 
 
+# ─── Future-based ask() ──────────────────────────────────────────────────────
 @Client.on_message(filters.private, group=-14)
 async def _merge_input_router(bot, message):
     uid = message.from_user.id if message.from_user else None
@@ -55,9 +53,9 @@ async def _merge_input_router(bot, message):
             fut.set_result(message)
 
 
-async def _merge_ask(bot, user_id: int, text: str, reply_markup=None, timeout: int = 300):
+async def _merge_ask(bot, user_id, text, reply_markup=None, timeout=300):
     loop = asyncio.get_event_loop()
-    fut: asyncio.Future = loop.create_future()
+    fut = loop.create_future()
     old = _merge_waiting.pop(user_id, None)
     if old and not old.done():
         old.cancel()
@@ -73,77 +71,50 @@ async def _merge_ask(bot, user_id: int, text: str, reply_markup=None, timeout: i
 # ══════════════════════════════════════════════════════════════════════════════
 # DB helpers
 # ══════════════════════════════════════════════════════════════════════════════
-
 COLL = "mergejobs"
 
-
-async def _mg_save(job: dict):
+async def _mg_save(job):
     await db.db[COLL].replace_one({"job_id": job["job_id"]}, job, upsert=True)
 
-
-async def _mg_get(job_id: str):
+async def _mg_get(job_id):
     return await db.db[COLL].find_one({"job_id": job_id})
 
-
-async def _mg_list(user_id: int):
+async def _mg_list(user_id):
     return [j async for j in db.db[COLL].find({"user_id": user_id})]
 
-
-async def _mg_delete(job_id: str):
+async def _mg_delete(job_id):
     await db.db[COLL].delete_one({"job_id": job_id})
 
-
-async def _mg_update(job_id: str, **kwargs):
-    await db.db[COLL].update_one({"job_id": job_id}, {"$set": kwargs})
+async def _mg_update(job_id, **kw):
+    await db.db[COLL].update_one({"job_id": job_id}, {"$set": kw})
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Progress bar helpers
+# Formatting helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _progress_bar(current, total, width=20):
-    """Generate a text progress bar."""
-    if total <= 0:
-        return "[" + "░" * width + "] 0%"
-    pct = min(100, int(current / total * 100))
-    filled = int(width * current / total)
-    bar = "█" * filled + "░" * (width - filled)
-    return f"[{bar}] {pct}%"
+def _bar(cur, tot, w=20):
+    if tot <= 0: return "[" + "░" * w + "] 0%"
+    pct = min(100, int(cur / tot * 100))
+    f = int(w * cur / tot)
+    return f"[{'█' * f}{'░' * (w - f)}] {pct}%"
 
+def _sz(b):
+    if b < 1024: return f"{b} B"
+    if b < 1048576: return f"{b/1024:.1f} KB"
+    if b < 1073741824: return f"{b/1048576:.1f} MB"
+    return f"{b/1073741824:.2f} GB"
 
-def _format_size(bytes_val):
-    """Format bytes into human-readable size."""
-    if bytes_val < 1024:
-        return f"{bytes_val} B"
-    elif bytes_val < 1024 * 1024:
-        return f"{bytes_val / 1024:.1f} KB"
-    elif bytes_val < 1024 * 1024 * 1024:
-        return f"{bytes_val / (1024 * 1024):.1f} MB"
-    else:
-        return f"{bytes_val / (1024 * 1024 * 1024):.2f} GB"
+def _spd(bps):
+    if bps < 1024: return f"{bps:.0f} B/s"
+    if bps < 1048576: return f"{bps/1024:.1f} KB/s"
+    return f"{bps/1048576:.1f} MB/s"
 
-
-def _format_speed(bytes_per_sec):
-    """Format speed into human-readable."""
-    if bytes_per_sec < 1024:
-        return f"{bytes_per_sec:.0f} B/s"
-    elif bytes_per_sec < 1024 * 1024:
-        return f"{bytes_per_sec / 1024:.1f} KB/s"
-    else:
-        return f"{bytes_per_sec / (1024 * 1024):.1f} MB/s"
-
-
-def _format_time(seconds):
-    """Format seconds into human-readable duration."""
-    seconds = max(0, int(seconds))
-    if seconds < 60:
-        return f"{seconds}s"
-    elif seconds < 3600:
-        return f"{seconds // 60}m {seconds % 60}s"
-    else:
-        h = seconds // 3600
-        m = (seconds % 3600) // 60
-        return f"{h}h {m}m"
+def _tm(s):
+    s = max(0, int(s))
+    if s < 60: return f"{s}s"
+    if s < 3600: return f"{s//60}m {s%60}s"
+    return f"{s//3600}h {(s%3600)//60}m"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -151,199 +122,103 @@ def _format_time(seconds):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _check_ffmpeg():
-    """Return True if ffmpeg is available on the system."""
     return shutil.which("ffmpeg") is not None
 
-
-def _get_media_info(file_path):
-    """Detect media type, codec, and duration using ffprobe."""
+def _get_media_info(fp):
     info = {"type": "audio", "codec": "", "duration": 0}
     try:
-        result = subprocess.run(
+        r = subprocess.run(
             ["ffprobe", "-v", "quiet", "-show_entries",
              "stream=codec_type,codec_name", "-show_entries",
-             "format=duration", "-of", "csv=p=0", file_path],
-            capture_output=True, text=True, timeout=30
-        )
-        lines = result.stdout.strip().split("\n")
-        for line in lines:
+             "format=duration", "-of", "csv=p=0", fp],
+            capture_output=True, text=True, timeout=30)
+        for line in r.stdout.strip().split("\n"):
             parts = line.strip().split(",")
             if len(parts) >= 2:
-                if parts[1] == "video":
-                    info["type"] = "video"
-                    info["codec"] = parts[0]
-                elif parts[1] == "audio" and not info.get("codec"):
-                    info["codec"] = parts[0]
+                if parts[1] == "video": info["type"] = "video"; info["codec"] = parts[0]
+                elif parts[1] == "audio" and not info.get("codec"): info["codec"] = parts[0]
             elif len(parts) == 1:
-                try:
-                    info["duration"] = float(parts[0])
-                except (ValueError, TypeError):
-                    pass
-    except Exception:
-        pass
-    # Fallback: use extension
+                try: info["duration"] = float(parts[0])
+                except: pass
+    except: pass
     if not info["codec"]:
-        ext = os.path.splitext(file_path)[1].lower()
-        if ext in (".mp4", ".mkv", ".avi", ".webm", ".mov", ".flv", ".ts"):
-            info["type"] = "video"
+        ext = os.path.splitext(fp)[1].lower()
+        if ext in (".mp4",".mkv",".avi",".webm",".mov",".flv",".ts"): info["type"] = "video"
         info["codec"] = ext.lstrip(".")
     return info
 
 
-def _merge_files_ffmpeg(file_list, output_path, metadata=None, media_type="audio"):
-    """
-    Merge files using FFmpeg.
-    Strategy:
-      1. Try lossless concat demuxer (-c copy) first
-      2. If that fails (codec mismatch), re-encode at highest quality
-    Returns (success, error_message).
-    """
+def _merge_ffmpeg(file_list, output_path, metadata=None, media_type="audio", cover_path=None):
+    """Merge files. Try lossless first, fallback to re-encode."""
     list_path = output_path + ".list.txt"
     try:
         with open(list_path, "w", encoding="utf-8") as f:
             for fp in file_list:
-                safe = fp.replace("'", "'\\''")
-                f.write(f"file '{safe}'\n")
+                f.write(f"file '{fp.replace(chr(39), chr(39)+chr(92)+chr(39)+chr(39))}'\n")
 
-        # ── Strategy 1: Lossless concat ──────────────────────────────────
-        cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-               "-i", list_path, "-c", "copy"]
+        # Strategy 1: lossless concat
+        cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy"]
+        if cover_path and os.path.exists(cover_path) and media_type == "audio":
+            cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+                   "-i", cover_path, "-map", "0:a", "-map", "1:0",
+                   "-c:a", "copy", "-id3v2_version", "3",
+                   "-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)"]
         if metadata:
-            for key, val in metadata.items():
-                if val:
-                    cmd.extend(["-metadata", f"{key}={val}"])
+            for k, v in metadata.items():
+                if v: cmd.extend(["-metadata", f"{k}={v}"])
         cmd.append(output_path)
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
-
-        if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+        if r.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             return True, ""
 
-        # ── Strategy 2: High-quality re-encode ───────────────────────────
-        logger.warning(f"Concat copy failed, re-encoding: {result.stderr[-300:]}")
-
-        cmd_re = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path]
-
+        # Strategy 2: high-quality re-encode
+        logger.warning(f"Concat copy failed, re-encoding...")
+        cmd2 = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path]
+        if cover_path and os.path.exists(cover_path):
+            cmd2.extend(["-i", cover_path])
         if media_type == "video":
-            cmd_re.extend([
-                "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-                "-c:a", "aac", "-b:a", "320k",
-                "-movflags", "+faststart"
-            ])
+            cmd2.extend(["-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                         "-c:a", "aac", "-b:a", "320k", "-movflags", "+faststart"])
         else:
-            # Audio: use 320k MP3 for maximum compatibility + quality
-            cmd_re.extend(["-c:a", "libmp3lame", "-b:a", "320k", "-ar", "44100"])
-
+            cmd2.extend(["-c:a", "libmp3lame", "-b:a", "320k", "-ar", "44100"])
+            if cover_path and os.path.exists(cover_path):
+                cmd2.extend(["-map", "0:a", "-map", "1:0",
+                             "-id3v2_version", "3",
+                             "-metadata:s:v", "title=Album cover",
+                             "-metadata:s:v", "comment=Cover (front)"])
         if metadata:
-            for key, val in metadata.items():
-                if val:
-                    cmd_re.extend(["-metadata", f"{key}={val}"])
-        cmd_re.append(output_path)
+            for k, v in metadata.items():
+                if v: cmd2.extend(["-metadata", f"{k}={v}"])
+        cmd2.append(output_path)
 
-        result2 = subprocess.run(cmd_re, capture_output=True, text=True, timeout=14400)
-        if result2.returncode != 0:
-            return False, result2.stderr[-500:]
-
+        r2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=14400)
+        if r2.returncode != 0:
+            return False, r2.stderr[-500:]
         return True, ""
     except subprocess.TimeoutExpired:
         return False, "FFmpeg timed out"
     except Exception as e:
         return False, str(e)
     finally:
-        if os.path.exists(list_path):
-            os.remove(list_path)
+        if os.path.exists(list_path): os.remove(list_path)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Progress tracking for downloads/uploads
+# Core merge runner — with pause/resume support
 # ══════════════════════════════════════════════════════════════════════════════
-
-class ProgressTracker:
-    """Track download/upload progress and provide formatted updates."""
-
-    def __init__(self, bot, user_id, job_id, phase="download"):
-        self.bot = bot
-        self.user_id = user_id
-        self.job_id = job_id
-        self.phase = phase
-        self.status_msg = None
-        self.last_edit_time = 0
-        self.start_time = time.time()
-        self.total_bytes = 0
-        self.current_file_idx = 0
-        self.total_files = 0
-
-    async def update_file_progress(self, file_idx, total_files, dl_bytes=0, total_bytes=0):
-        """Called periodically to update progress for file-level operations."""
-        now = time.time()
-        if now - self.last_edit_time < 3:  # Rate limit: max 1 edit per 3 seconds
-            return
-
-        self.last_edit_time = now
-        self.current_file_idx = file_idx
-        self.total_files = total_files
-
-        elapsed = now - self.start_time
-        speed = dl_bytes / elapsed if elapsed > 0 else 0
-        files_remaining = total_files - file_idx
-        avg_time = elapsed / max(file_idx, 1)
-        eta = files_remaining * avg_time
-
-        bar = _progress_bar(file_idx, total_files)
-        icon = "⬇️" if self.phase == "download" else "⬆️"
-        phase_label = "Downloading" if self.phase == "download" else "Uploading"
-
-        text = (
-            f"<b>{icon} {phase_label}...</b>\n\n"
-            f"<code>{bar}</code>\n\n"
-            f"📁 <b>Files:</b> {file_idx}/{total_files}\n"
-            f"💾 <b>Size:</b> {_format_size(dl_bytes)}\n"
-            f"⚡ <b>Speed:</b> {_format_speed(speed)}\n"
-            f"⏱ <b>ETA:</b> {_format_time(eta)}"
-        )
-
-        try:
-            if self.status_msg:
-                await self.status_msg.edit_text(text)
-            else:
-                self.status_msg = await self.bot.send_message(self.user_id, text)
-        except Exception:
-            pass
-
-    async def final_update(self, text):
-        """Send or edit a final status message."""
-        try:
-            if self.status_msg:
-                await self.status_msg.edit_text(text)
-            else:
-                await self.bot.send_message(self.user_id, text)
-        except Exception:
-            pass
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Core merge runner
-# ══════════════════════════════════════════════════════════════════════════════
-
 BATCH_SIZE = 200
 
-# All supported media extensions — NEVER skip based on format
-AUDIO_EXTS = {".mp3", ".aac", ".ogg", ".flac", ".alac", ".wav", ".aiff",
-              ".m4a", ".wma", ".opus", ".m4b", ".oga", ".wv"}
-VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".webm", ".mov", ".flv", ".ts",
-              ".m4v", ".wmv", ".3gp", ".mpg", ".mpeg"}
-
-
 async def _run_merge_job(job_id, user_id, bot):
-    """
-    Main coroutine for a Merge Job.
-    1. Downloads ALL media files in range (no format skipping)
-    2. Merges them with FFmpeg (lossless or high-quality re-encode)
-    3. Uploads to destination channel(s) + user
-    """
     job = await _mg_get(job_id)
-    if not job:
-        return
+    if not job: return
+
+    # Pause/resume event
+    ev = _merge_paused.get(job_id)
+    if not ev:
+        ev = asyncio.Event()
+        ev.set()  # running by default
+        _merge_paused[job_id] = ev
 
     client = None
     work_dir = f"merge_tmp/{job_id}"
@@ -357,27 +232,52 @@ async def _run_merge_job(job_id, user_id, bot):
 
         client = await start_clone_bot(_CLIENT.client(acc))
 
-        from_chat    = job["from_chat"]
-        start_id     = job["start_id"]
-        end_id       = job["end_id"]
-        out_name     = job.get("output_name", "merged")
-        metadata     = job.get("metadata", {})
-        dest_chats   = job.get("dest_chats", [])  # Destination channel IDs
+        from_chat   = job["from_chat"]
+        start_id    = job["start_id"]
+        end_id      = job["end_id"]
+        out_name    = job.get("output_name", "merged")
+        metadata    = job.get("metadata", {})
+        dest_chats  = job.get("dest_chats", [])
+        merge_type  = job.get("merge_type", "audio")  # "audio" or "video"
+        cover_path  = None
 
-        await _mg_update(job_id, status="downloading", error="")
+        # Resume support — start from where we left off
+        resume_from = job.get("current_id", start_id)
+        already_dl  = job.get("downloaded", 0)
 
-        # ── Phase 1: Download ALL media files ─────────────────────────────
-        tracker = ProgressTracker(bot, user_id, job_id, "download")
-        downloaded_files = []
-        current = start_id
+        await _mg_update(job_id, status="downloading", error="",
+                         dl_start_time=time.time())
+
+        # ── Check if cover image was already saved ────────────────────────
+        cover_file = os.path.join(work_dir, "cover.jpg")
+        if os.path.exists(cover_file):
+            cover_path = cover_file
+
+        # ── Phase 1: Download ─────────────────────────────────────────────
+        # Collect any previously downloaded files
+        existing_files = sorted([
+            os.path.join(work_dir, f) for f in os.listdir(work_dir)
+            if f.startswith("0") and not f.endswith(".list.txt")
+        ])
+        downloaded_files = existing_files[:]
         total_range = end_id - start_id + 1
-        downloaded_count = 0
-        total_dl_bytes = 0
-        skipped_text = 0  # Only text messages skipped
-        start_time = time.time()
+        downloaded_count = len(existing_files)
+        total_dl_bytes = sum(os.path.getsize(f) for f in existing_files)
+        skipped = 0
+        dl_start = time.time()
+
+        status_msg = None
+        last_edit = 0
+        current = resume_from
 
         while current <= end_id:
-            # Check if stopped
+            # Pause check
+            if not ev.is_set():
+                await _mg_update(job_id, status="paused", current_id=current)
+                await ev.wait()  # Block until resumed
+                await _mg_update(job_id, status="downloading")
+
+            # Stop check
             fresh = await _mg_get(job_id)
             if not fresh or fresh.get("status") == "stopped":
                 return
@@ -387,388 +287,385 @@ async def _run_merge_job(job_id, user_id, bot):
 
             try:
                 msgs = await client.get_messages(from_chat, batch_ids)
-                if not isinstance(msgs, list):
-                    msgs = [msgs]
+                if not isinstance(msgs, list): msgs = [msgs]
             except FloodWait as fw:
                 await asyncio.sleep(fw.value + 2)
                 continue
             except Exception as e:
-                logger.warning(f"[Merge {job_id}] Fetch error at {current}: {e}")
+                logger.warning(f"[Merge {job_id}] Fetch error: {e}")
                 current += BATCH_SIZE
                 continue
 
             valid = [m for m in msgs if m and not m.empty and not m.service]
-            valid.sort(key=lambda m: m.id)  # STRICT ORDER
+            valid.sort(key=lambda m: m.id)
 
             for msg in valid:
-                # Skip non-media (text-only messages)
                 if not msg.media:
-                    skipped_text += 1
+                    skipped += 1
                     continue
 
-                # Accept ANY media type — photos, stickers excluded for merge
-                # but audio/video/document/voice/video_note are ALL included
                 media_obj = None
                 for attr in ('audio', 'video', 'document', 'voice', 'video_note'):
                     media_obj = getattr(msg, attr, None)
-                    if media_obj:
-                        break
+                    if media_obj: break
 
                 if not media_obj:
-                    # Photo/sticker/animation — not mergeable into audio/video stream
-                    skipped_text += 1
+                    skipped += 1
                     continue
 
-                # Get original filename and extension
-                original_name = getattr(media_obj, 'file_name', None)
+                # Get extension
                 ext = ""
-                if original_name:
-                    ext = os.path.splitext(original_name)[1].lower()
+                fn = getattr(media_obj, 'file_name', None)
+                if fn: ext = os.path.splitext(fn)[1].lower()
                 if not ext:
-                    # Derive extension from media type
                     if getattr(msg, 'audio', None):
                         mime = getattr(media_obj, 'mime_type', '') or ''
-                        if 'mp4' in mime or 'm4a' in mime:
-                            ext = ".m4a"
-                        elif 'ogg' in mime:
-                            ext = ".ogg"
-                        elif 'flac' in mime:
-                            ext = ".flac"
-                        elif 'wav' in mime:
-                            ext = ".wav"
-                        else:
-                            ext = ".mp3"
-                    elif getattr(msg, 'voice', None):
-                        ext = ".ogg"
-                    elif getattr(msg, 'video', None) or getattr(msg, 'video_note', None):
-                        ext = ".mp4"
+                        ext = ".m4a" if 'm4a' in mime or 'mp4' in mime else \
+                              ".ogg" if 'ogg' in mime else \
+                              ".flac" if 'flac' in mime else \
+                              ".wav" if 'wav' in mime else ".mp3"
+                    elif getattr(msg, 'voice', None): ext = ".ogg"
+                    elif getattr(msg, 'video', None) or getattr(msg, 'video_note', None): ext = ".mp4"
                     elif getattr(msg, 'document', None):
                         mime = getattr(media_obj, 'mime_type', '') or ''
-                        if 'audio' in mime:
-                            ext = ".mp3"
-                        elif 'video' in mime:
-                            ext = ".mp4"
-                        else:
-                            ext = ".bin"  # Still download — FFmpeg will figure it out
+                        ext = ".mp3" if 'audio' in mime else ".mp4" if 'video' in mime else ".bin"
 
-                # Sequential naming for strict order
                 seq_name = f"{downloaded_count:06d}{ext}"
                 dl_path = os.path.join(work_dir, seq_name)
 
-                # Download with retry (5 attempts)
+                # Download with retry
                 fp = None
-                for dl_attempt in range(5):
+                for attempt in range(5):
                     try:
                         fp = await client.download_media(msg, file_name=dl_path)
-                        if fp:
-                            break
+                        if fp: break
                     except FloodWait as fw:
                         await asyncio.sleep(fw.value + 2)
-                    except Exception as dl_e:
-                        err_str = str(dl_e).upper()
-                        if "TIMEOUT" in err_str or "CONNECTION" in err_str:
-                            await asyncio.sleep(5)
-                            continue
-                        if dl_attempt < 4:
-                            await asyncio.sleep(3)
-                            continue
-                        logger.warning(f"[Merge {job_id}] DL failed {msg.id}: {dl_e}")
+                    except Exception as e:
+                        if attempt < 4: await asyncio.sleep(3); continue
+                        logger.warning(f"[Merge {job_id}] DL fail {msg.id}: {e}")
                         break
 
                 if fp and os.path.exists(fp):
-                    file_sz = os.path.getsize(fp)
-                    total_dl_bytes += file_sz
+                    fsz = os.path.getsize(fp)
+                    total_dl_bytes += fsz
                     downloaded_files.append(fp)
                     downloaded_count += 1
-                    await _mg_update(job_id, downloaded=downloaded_count)
 
-                    # Update progress every 5 files
-                    if downloaded_count % 5 == 0:
-                        await tracker.update_file_progress(
-                            downloaded_count, total_range - skipped_text,
-                            total_dl_bytes, 0
+                    # Save progress for resume
+                    await _mg_update(job_id, downloaded=downloaded_count,
+                                     current_id=msg.id, total_dl_bytes=total_dl_bytes)
+
+                    # Progress update (rate-limited: every 3s)
+                    now = time.time()
+                    if now - last_edit >= 3:
+                        last_edit = now
+                        elapsed = now - dl_start
+                        speed = total_dl_bytes / elapsed if elapsed > 0 else 0
+                        files_left = total_range - downloaded_count - skipped
+                        eta = (files_left * elapsed / max(downloaded_count, 1))
+                        txt = (
+                            f"<b>⬇️ Downloading — {merge_type.title()} Merge</b>\n\n"
+                            f"<code>{_bar(downloaded_count, total_range - skipped)}</code>\n\n"
+                            f"📁 <b>Files:</b> {downloaded_count}/{total_range - skipped}\n"
+                            f"💾 <b>Downloaded:</b> {_sz(total_dl_bytes)}\n"
+                            f"⚡ <b>Speed:</b> {_spd(speed)}\n"
+                            f"⏱ <b>ETA:</b> {_tm(eta)}"
                         )
+                        try:
+                            if status_msg:
+                                await status_msg.edit_text(txt)
+                            else:
+                                status_msg = await bot.send_message(user_id, txt)
+                        except Exception:
+                            pass
+                else:
+                    skipped += 1
 
             current = batch_end + 1
+            await _mg_update(job_id, current_id=current)
+
+        dl_time = time.time() - dl_start
 
         if not downloaded_files:
-            await _mg_update(job_id, status="error", error="No media files found in range")
-            await tracker.final_update(
-                "<b>❌ Merge failed: No media files found in the specified range.</b>"
-            )
+            await _mg_update(job_id, status="error", error="No media files found")
+            try:
+                if status_msg: await status_msg.edit_text("<b>❌ No media files found in range.</b>")
+                else: await bot.send_message(user_id, "<b>❌ No media files found in range.</b>")
+            except: pass
             return
 
-        # Final download status
-        await tracker.final_update(
-            f"<b>✅ Download complete!</b>\n\n"
-            f"📁 <b>Files:</b> {downloaded_count}\n"
-            f"💾 <b>Total:</b> {_format_size(total_dl_bytes)}\n"
-            f"⏱ <b>Time:</b> {_format_time(time.time() - start_time)}"
-        )
+        # Update download complete
+        try:
+            txt = (f"<b>✅ Download Complete</b>\n\n"
+                   f"📁 {downloaded_count} files • {_sz(total_dl_bytes)}\n"
+                   f"⏱ Time: {_tm(dl_time)}")
+            if status_msg: await status_msg.edit_text(txt)
+            else: await bot.send_message(user_id, txt)
+        except: pass
 
-        # ── Phase 2: Merge with FFmpeg ────────────────────────────────────
-        await _mg_update(job_id, status="merging", downloaded=downloaded_count)
+        # ── Phase 2: Merge ────────────────────────────────────────────────
+        await _mg_update(job_id, status="merging", merge_start_time=time.time())
 
-        # Detect media type from first file
-        first_info = _get_media_info(downloaded_files[0])
-        media_type = first_info["type"]
-        out_ext = ".mp4" if media_type == "video" else ".mp3"
+        out_ext = ".mp4" if merge_type == "video" else ".mp3"
         output_path = os.path.join(work_dir, f"{out_name}{out_ext}")
 
-        # Merge status message
         merge_msg = None
         try:
-            merge_msg = await bot.send_message(
-                user_id,
-                f"<b>🔀 Merging {downloaded_count} files...</b>\n\n"
-                f"<b>Type:</b> {'🎬 Video' if media_type == 'video' else '🎵 Audio'}\n"
-                f"<b>Output:</b> <code>{out_name}{out_ext}</code>\n\n"
-                f"<i>Attempting lossless concat first.\n"
-                f"If codecs differ, will re-encode at highest quality (320k audio / CRF 18 video).\n"
-                f"This may take several minutes for large files.</i>"
-            )
-        except Exception:
-            pass
+            merge_msg = await bot.send_message(user_id,
+                f"<b>🔀 Merging {downloaded_count} {'video' if merge_type == 'video' else 'audio'} files...</b>\n\n"
+                f"<b>Output:</b> <code>{out_name}{out_ext}</code>\n"
+                f"<i>Trying lossless concat first. If codecs differ, will re-encode at highest quality.</i>")
+        except: pass
 
-        # Run FFmpeg in thread
         loop = asyncio.get_event_loop()
-        success, error_msg = await loop.run_in_executor(
-            None, _merge_files_ffmpeg, downloaded_files, output_path,
-            metadata, media_type
-        )
+        success, err = await loop.run_in_executor(
+            None, _merge_ffmpeg, downloaded_files, output_path, metadata, merge_type, cover_path)
+
+        merge_time = time.time() - (job.get("merge_start_time") or time.time())
 
         if not success:
-            await _mg_update(job_id, status="error", error=error_msg[:500])
+            await _mg_update(job_id, status="error", error=err[:500])
             try:
-                if merge_msg:
-                    await merge_msg.edit_text(
-                        f"<b>❌ Merge failed!</b>\n\n<code>{error_msg[:500]}</code>"
-                    )
-            except Exception:
-                pass
+                if merge_msg: await merge_msg.edit_text(f"<b>❌ Merge failed!</b>\n<code>{err[:400]}</code>")
+            except: pass
             return
 
-        # Check file size
-        file_size = os.path.getsize(output_path)
-        file_size_mb = file_size / (1024 * 1024)
-
-        if file_size > 2 * 1024 * 1024 * 1024:  # 2GB
-            await _mg_update(job_id, status="error",
-                             error=f"Merged file too large: {file_size_mb:.0f}MB")
+        fsize = os.path.getsize(output_path)
+        if fsize > 2 * 1024**3:
+            await _mg_update(job_id, status="error", error=f"File too large: {_sz(fsize)}")
             try:
-                if merge_msg:
-                    await merge_msg.edit_text(
-                        f"<b>❌ Merged file is {file_size_mb:.0f}MB — exceeds Telegram's 2GB limit.</b>\n"
-                        f"<i>Try merging fewer files.</i>"
-                    )
-            except Exception:
-                pass
+                if merge_msg: await merge_msg.edit_text(f"<b>❌ {_sz(fsize)} exceeds 2GB Telegram limit.</b>")
+            except: pass
             return
 
         try:
-            if merge_msg:
-                await merge_msg.edit_text(
-                    f"<b>✅ Merge complete!</b>\n"
-                    f"<b>Size:</b> {_format_size(file_size)}"
-                )
-        except Exception:
-            pass
+            if merge_msg: await merge_msg.edit_text(
+                f"<b>✅ Merge Complete</b>\n📦 {_sz(fsize)} • ⏱ {_tm(merge_time)}")
+        except: pass
 
-        # ── Phase 3: Upload to destinations ───────────────────────────────
-        await _mg_update(job_id, status="uploading")
-        upload_tracker = ProgressTracker(bot, user_id, job_id, "upload")
+        # ── Phase 3: Upload ───────────────────────────────────────────────
+        await _mg_update(job_id, status="uploading", upload_start_time=time.time())
 
-        caption = (
-            f"<b>🔀 {out_name}{out_ext}</b>\n"
-            f"<b>Files merged:</b> {downloaded_count}\n"
-            f"<b>Size:</b> {_format_size(file_size)}"
-        )
-        if metadata.get("title"):
-            caption += f"\n<b>Title:</b> {metadata['title']}"
-        if metadata.get("artist"):
-            caption += f"\n<b>Artist:</b> {metadata['artist']}"
+        caption = f"<b>🔀 {out_name}{out_ext}</b>\n📁 {downloaded_count} files • {_sz(fsize)}"
+        if metadata.get("title"): caption += f"\n🎵 {metadata['title']}"
+        if metadata.get("artist"): caption += f" — {metadata['artist']}"
 
-        # Build list of destinations: user + any selected channels
-        all_dests = [user_id]
-        if dest_chats:
-            for dc in dest_chats:
-                if dc not in all_dests:
-                    all_dests.append(dc)
+        all_dests = [user_id] + [d for d in dest_chats if d != user_id]
+        up_start = time.time()
 
-        upload_start = time.time()
-
-        for dest_idx, dest_id in enumerate(all_dests):
-            for up_attempt in range(3):
+        for dest in all_dests:
+            for attempt in range(3):
                 try:
-                    if media_type == "video":
-                        await client.send_video(
-                            chat_id=dest_id,
-                            video=output_path,
-                            caption=caption,
-                            file_name=f"{out_name}{out_ext}",
-                            supports_streaming=True
-                        )
+                    thumb = cover_path if cover_path and os.path.exists(cover_path) else None
+                    if merge_type == "video":
+                        await client.send_video(chat_id=dest, video=output_path,
+                            caption=caption, file_name=f"{out_name}{out_ext}",
+                            thumb=thumb, supports_streaming=True)
                     else:
-                        send_kw = {
-                            "chat_id": dest_id,
-                            "audio": output_path,
-                            "caption": caption,
-                            "file_name": f"{out_name}{out_ext}",
-                        }
-                        if metadata.get("title"):
-                            send_kw["title"] = metadata["title"]
-                        if metadata.get("artist"):
-                            send_kw["performer"] = metadata["artist"]
-                        await client.send_audio(**send_kw)
-
-                    # Update progress
-                    up_elapsed = time.time() - upload_start
-                    up_speed = file_size / up_elapsed if up_elapsed > 0 else 0
-                    try:
-                        await upload_tracker.update_file_progress(
-                            dest_idx + 1, len(all_dests), file_size, file_size
-                        )
-                    except Exception:
-                        pass
+                        kw = {"chat_id": dest, "audio": output_path, "caption": caption,
+                              "file_name": f"{out_name}{out_ext}", "thumb": thumb}
+                        if metadata.get("title"): kw["title"] = metadata["title"]
+                        if metadata.get("artist"): kw["performer"] = metadata["artist"]
+                        await client.send_audio(**kw)
                     break
                 except FloodWait as fw:
                     await asyncio.sleep(fw.value + 2)
-                except Exception as up_e:
-                    if up_attempt < 2:
-                        await asyncio.sleep(5)
-                        continue
-                    logger.warning(f"[Merge {job_id}] Upload to {dest_id} failed: {up_e}")
+                except Exception as e:
+                    if attempt < 2: await asyncio.sleep(5); continue
+                    logger.warning(f"[Merge {job_id}] Upload to {dest}: {e}")
                     break
 
+        up_time = time.time() - up_start
+        total_time = time.time() - dl_start
+
         # ── Done ──────────────────────────────────────────────────────────
-        elapsed_total = time.time() - start_time
-        await _mg_update(job_id, status="done")
-
-        dest_labels = []
-        for dc in dest_chats:
-            try:
-                chat_info = await client.get_chat(dc)
-                dest_labels.append(getattr(chat_info, 'title', str(dc)))
-            except Exception:
-                dest_labels.append(str(dc))
-
-        dest_text = "\n".join(f" ┣ 📤 {d}" for d in dest_labels) if dest_labels else " ┣ 📤 Sent to you (DM)"
+        await _mg_update(job_id, status="done",
+                         dl_time=dl_time, merge_time=merge_time,
+                         up_time=up_time, total_time=total_time,
+                         file_size=fsize)
 
         try:
-            await bot.send_message(
-                user_id,
+            await bot.send_message(user_id,
                 f"<b>✅ Merge Job Complete!</b>\n\n"
-                f"<b>📊 Summary:</b>\n"
-                f" ┣ <b>Downloaded:</b> {downloaded_count} files\n"
-                f" ┣ <b>Skipped:</b> {skipped_text} (text/photo only)\n"
-                f" ┣ <b>Output:</b> <code>{out_name}{out_ext}</code>\n"
-                f" ┣ <b>Size:</b> {_format_size(file_size)}\n"
-                f" ┣ <b>Type:</b> {'🎬 Video' if media_type == 'video' else '🎵 Audio'}\n"
-                f" ┗ <b>Time:</b> {_format_time(elapsed_total)}\n\n"
-                f"<b>📤 Destinations:</b>\n{dest_text}"
-            )
-        except Exception:
-            pass
+                f"╭───── 📊 <b>Statistics</b> ─────╮\n"
+                f"┃ 📁 <b>Files:</b> {downloaded_count}\n"
+                f"┃ 📦 <b>Output:</b> <code>{out_name}{out_ext}</code>\n"
+                f"┃ 💾 <b>Size:</b> {_sz(fsize)}\n"
+                f"┃\n"
+                f"┃ ⬇️ <b>Download:</b> {_tm(dl_time)}\n"
+                f"┃ 🔀 <b>Merge:</b> {_tm(merge_time)}\n"
+                f"┃ ⬆️ <b>Upload:</b> {_tm(up_time)}\n"
+                f"┃ ⏱ <b>Total:</b> {_tm(total_time)}\n"
+                f"╰─────────────────────────╯")
+        except: pass
 
     except asyncio.CancelledError:
-        logger.info(f"[Merge {job_id}] Cancelled")
         await _mg_update(job_id, status="stopped")
     except Exception as e:
         logger.error(f"[Merge {job_id}] Fatal: {e}")
         await _mg_update(job_id, status="error", error=str(e)[:500])
-        try:
-            await bot.send_message(user_id,
-                f"<b>❌ Merge error:</b>\n<code>{str(e)[:500]}</code>")
-        except Exception:
-            pass
+        try: await bot.send_message(user_id, f"<b>❌ Error:</b> <code>{e}</code>")
+        except: pass
     finally:
         _merge_tasks.pop(job_id, None)
+        _merge_paused.pop(job_id, None)
         try:
-            if os.path.exists(work_dir):
-                shutil.rmtree(work_dir, ignore_errors=True)
-        except Exception:
-            pass
+            if os.path.exists(work_dir): shutil.rmtree(work_dir, ignore_errors=True)
+        except: pass
         if client:
-            try:
-                await client.stop()
-            except Exception:
-                pass
+            try: await client.stop()
+            except: pass
+
+
+def _start_merge_task(job_id, user_id, bot):
+    """Start or restart a merge task."""
+    old = _merge_tasks.get(job_id)
+    if old and not old.done():
+        return  # Already running
+    ev = asyncio.Event()
+    ev.set()
+    _merge_paused[job_id] = ev
+    task = asyncio.create_task(_run_merge_job(job_id, user_id, bot))
+    _merge_tasks[job_id] = task
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Parse message link
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _parse_msg_link(text):
-    """Parse a Telegram message link → (chat_ref, message_id)."""
+def _parse_link(text):
     text = text.strip()
-    if text.isdigit():
-        return None, int(text)
-
+    if text.isdigit(): return None, int(text)
     m = re.match(r'https?://t\.me/c/(\d+)/(\d+)', text)
-    if m:
-        return int(m.group(1)), int(m.group(2))
-
+    if m: return int(m.group(1)), int(m.group(2))
     m = re.match(r'https?://t\.me/([^/]+)/(\d+)', text)
-    if m:
-        return m.group(1), int(m.group(2))
-
+    if m: return m.group(1), int(m.group(2))
     return None, None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Command handler & UI
+# Status emoji helper
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _st(status):
+    return {"downloading": "⬇️", "merging": "🔀", "uploading": "⬆️",
+            "done": "✅", "error": "⚠️", "stopped": "🔴",
+            "paused": "⏸", "running": "▶️"}.get(status, "❓")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# /merge Command & Main UI
 # ══════════════════════════════════════════════════════════════════════════════
 
 @Client.on_message(filters.command("merge") & filters.private)
 async def merge_cmd(bot, message):
     user_id = message.from_user.id
-
     if not _check_ffmpeg():
         return await message.reply(
-            "<b>❌ FFmpeg is not installed on this server.</b>\n\n"
-            "<i>Install it: <code>sudo apt install ffmpeg</code></i>"
-        )
+            "<b>❌ FFmpeg not installed.</b>\n<code>sudo apt install ffmpeg</code>")
+    await _render_merge_list(bot, user_id, message)
 
+
+async def _render_merge_list(bot, user_id, msg_or_query, merge_type=None):
+    """Render the merge job list UI."""
+    is_cb = hasattr(msg_or_query, 'message')
     jobs = await _mg_list(user_id)
-    active = [j for j in jobs if j.get("status") in ("downloading", "merging", "uploading")]
 
-    buttons = []
+    # Filter by type if specified
+    if merge_type:
+        jobs = [j for j in jobs if j.get("merge_type", "audio") == merge_type]
+
+    type_label = ""
+    if merge_type == "audio": type_label = "🎵 Audio "
+    elif merge_type == "video": type_label = "🎬 Video "
+
+    active = [j for j in jobs if j.get("status") in ("downloading","merging","uploading","paused")]
+    done_jobs = [j for j in jobs if j.get("status") in ("done","error","stopped")][:5]
+
+    btns = []
     if active:
-        buttons.append([InlineKeyboardButton("━━━ 🔄 Active Merges ━━━", callback_data="merge#noop")])
+        btns.append([InlineKeyboardButton(f"━━━ 🔄 Active {type_label}Merges ━━━", callback_data="merge#noop")])
         for j in active:
-            st = {"downloading": "⬇️", "merging": "🔀", "uploading": "⬆️"}.get(j["status"], "❓")
+            jid = j["job_id"]
+            short = jid[-6:]
+            s = j.get("status", "stopped")
+            name = j.get("output_name", short)
             prog = j.get("downloaded", 0)
-            label = f"{st} {j.get('output_name', j['job_id'][-6:])} [{prog} files]"
-            buttons.append([InlineKeyboardButton(label, callback_data=f"merge#view_{j['job_id']}")])
+            row = [InlineKeyboardButton(f"{_st(s)} {name} [{prog}]", callback_data=f"merge#info#{jid}")]
+            btns.append(row)
 
-    recent = [j for j in jobs if j.get("status") in ("done", "error", "stopped")][:5]
-    if recent:
-        buttons.append([InlineKeyboardButton("━━━ 📜 Recent ━━━", callback_data="merge#noop")])
-        for j in recent:
-            st = {"done": "✅", "error": "⚠️", "stopped": "🔴"}.get(j["status"], "❓")
-            label = f"{st} {j.get('output_name', j['job_id'][-6:])}"
-            buttons.append([InlineKeyboardButton(label, callback_data=f"merge#view_{j['job_id']}")])
+            ctrl = []
+            if s in ("downloading", "merging", "uploading"):
+                ctrl.append(InlineKeyboardButton(f"⏸ Pause", callback_data=f"merge#pause#{jid}"))
+                ctrl.append(InlineKeyboardButton(f"⏹ Stop", callback_data=f"merge#stop#{jid}"))
+            elif s == "paused":
+                ctrl.append(InlineKeyboardButton(f"▶️ Resume", callback_data=f"merge#resume#{jid}"))
+                ctrl.append(InlineKeyboardButton(f"⏹ Stop", callback_data=f"merge#stop#{jid}"))
+            if ctrl:
+                btns.append(ctrl)
 
-    buttons.append([InlineKeyboardButton("➕ New Merge Job", callback_data="merge#create")])
-    buttons.append([InlineKeyboardButton("⫷ Close", callback_data="merge#close")])
+    if done_jobs:
+        btns.append([InlineKeyboardButton(f"━━━ 📜 Recent ━━━", callback_data="merge#noop")])
+        for j in done_jobs:
+            jid = j["job_id"]
+            short = jid[-6:]
+            name = j.get("output_name", short)
+            row = []
+            s = j.get("status", "stopped")
+            if s == "stopped":
+                row.append(InlineKeyboardButton(f"▶️ Resume {name}", callback_data=f"merge#resume#{jid}"))
+            row.append(InlineKeyboardButton(f"{_st(s)} {name}", callback_data=f"merge#info#{jid}"))
+            row.append(InlineKeyboardButton(f"🗑", callback_data=f"merge#del#{jid}"))
+            btns.append(row)
 
+    # Type filter buttons (when not filtered)
+    if not merge_type:
+        btns.append([
+            InlineKeyboardButton("🎵 Audio Merges", callback_data="merge#audio_menu"),
+            InlineKeyboardButton("🎬 Video Merges", callback_data="merge#video_menu")
+        ])
+
+    # Create buttons
+    if merge_type:
+        btns.append([InlineKeyboardButton(f"➕ New {type_label}Merge", callback_data=f"merge#new_{merge_type}")])
+    else:
+        btns.append([InlineKeyboardButton("➕ New Audio Merge", callback_data="merge#new_audio"),
+                      InlineKeyboardButton("➕ New Video Merge", callback_data="merge#new_video")])
+
+    btns.append([InlineKeyboardButton("🔄 Refresh", callback_data="merge#refresh")])
+    if merge_type:
+        btns.append([InlineKeyboardButton("↩ Back", callback_data="merge#back_main")])
+    else:
+        btns.append([InlineKeyboardButton("⫷ Close", callback_data="merge#close")])
+
+    count = len(active)
     text = (
-        "<b>🔀 Merger — v2</b>\n\n"
-        "<b>Merge any media files from a channel range into one file.</b>\n\n"
-        "🎵 <i>Audio: MP3, AAC, OGG, FLAC, WAV, AIFF, M4A, ALAC, OPUS</i>\n"
-        "🎬 <i>Video: MP4, MKV, AVI, WEBM, MOV, FLV</i>\n\n"
-        "✅ Strict order • No format skipping • Full metadata\n"
-        "📊 Progress bar • Multi-merge • Channel destinations"
+        f"<b>🔀 {type_label}Merger</b>\n\n"
+        f"<b>Active:</b> {count} job(s)\n\n"
+        f"🎵 Audio: MP3, AAC, OGG, FLAC, WAV, AIFF, M4A, OPUS\n"
+        f"🎬 Video: MP4, MKV, AVI, WEBM, MOV\n\n"
+        f"<i>✅ Strict order • No skipping • Full metadata + cover</i>"
     )
 
-    await message.reply(text, reply_markup=InlineKeyboardMarkup(buttons))
+    try:
+        if is_cb:
+            await msg_or_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(btns))
+        else:
+            await msg_or_query.reply(text, reply_markup=InlineKeyboardMarkup(btns))
+    except: pass
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Callback router
+# ══════════════════════════════════════════════════════════════════════════════
 
 @Client.on_callback_query(filters.regex(r'^merge#'))
-async def merge_callback(bot, query):
+async def merge_cb(bot, query):
     user_id = query.from_user.id
-    action = query.data.split("#", 1)[1]
+    parts = query.data.split("#")
+    action = parts[1] if len(parts) > 1 else ""
+    param = parts[2] if len(parts) > 2 else ""
 
     if action == "noop":
         return await query.answer()
@@ -776,128 +673,147 @@ async def merge_callback(bot, query):
     elif action == "close":
         return await query.message.delete()
 
-    elif action.startswith("view_"):
-        job_id = action.split("_", 1)[1]
-        job = await _mg_get(job_id)
-        if not job:
-            return await query.answer("Job not found!", show_alert=True)
+    elif action == "refresh":
+        return await _render_merge_list(bot, user_id, query)
 
-        st_map = {"downloading": "⬇️", "merging": "🔀", "uploading": "⬆️",
-                   "done": "✅", "error": "⚠️", "stopped": "🔴"}
-        st = st_map.get(job["status"], "❓")
+    elif action == "back_main":
+        return await _render_merge_list(bot, user_id, query)
+
+    elif action == "audio_menu":
+        return await _render_merge_list(bot, user_id, query, merge_type="audio")
+
+    elif action == "video_menu":
+        return await _render_merge_list(bot, user_id, query, merge_type="video")
+
+    elif action.startswith("new_"):
+        merge_type = action.split("_", 1)[1]  # "audio" or "video"
+        await query.message.delete()
+        await _create_merge_flow(bot, user_id, merge_type)
+
+    elif action == "info":
+        job = await _mg_get(param)
+        if not job: return await query.answer("Not found!", show_alert=True)
+
+        import datetime
+        created = datetime.datetime.fromtimestamp(job.get("created_at", 0)).strftime("%d %b %Y %H:%M")
+
+        meta = job.get("metadata", {})
+        meta_txt = ""
+        if meta:
+            meta_lines = [f"  {k}: {v}" for k, v in list(meta.items())[:8] if v]
+            meta_txt = "\n".join(meta_lines)
+
+        dl_t = job.get("dl_time", 0)
+        mg_t = job.get("merge_time", 0)
+        up_t = job.get("up_time", 0)
+        tot_t = job.get("total_time", 0)
+        fsz = job.get("file_size", 0)
 
         text = (
-            f"<b>{st} Merge Job Details</b>\n\n"
-            f"<b>Output:</b> <code>{job.get('output_name', '?')}</code>\n"
+            f"<b>{_st(job['status'])} Merge Job Info</b>\n\n"
+            f"<b>Name:</b> <code>{job.get('output_name', '?')}</code>\n"
+            f"<b>Type:</b> {'🎵 Audio' if job.get('merge_type') == 'audio' else '🎬 Video'}\n"
             f"<b>Range:</b> {job.get('start_id')} → {job.get('end_id')}\n"
             f"<b>Downloaded:</b> {job.get('downloaded', 0)} files\n"
             f"<b>Status:</b> {job['status']}\n"
+            f"<b>Created:</b> {created}\n"
         )
 
-        meta = job.get("metadata", {})
-        if meta:
-            meta_lines = [f"  {k}: {v}" for k, v in meta.items() if v]
-            if meta_lines:
-                text += "\n<b>Metadata:</b>\n" + "\n".join(meta_lines) + "\n"
+        if dl_t or mg_t or up_t:
+            text += (
+                f"\n╭──── ⏱ <b>Timings</b> ────╮\n"
+                f"┃ ⬇️ Download: {_tm(dl_t)}\n"
+                f"┃ 🔀 Merge: {_tm(mg_t)}\n"
+                f"┃ ⬆️ Upload: {_tm(up_t)}\n"
+                f"┃ 📊 Total: {_tm(tot_t)}\n"
+                f"╰─────────────────────╯\n"
+            )
 
-        dests = job.get("dest_chats", [])
-        if dests:
-            text += f"\n<b>Destinations:</b> {len(dests)} channel(s)\n"
+        if fsz: text += f"\n<b>File Size:</b> {_sz(fsz)}\n"
+        if meta_txt: text += f"\n<b>Metadata:</b>\n{meta_txt}\n"
+        if job.get("error"): text += f"\n<b>⚠️ Error:</b> <code>{job['error'][:200]}</code>"
 
-        if job.get("error"):
-            text += f"\n<b>Error:</b> <code>{job['error'][:200]}</code>"
+        btns = []
+        s = job["status"]
+        if s in ("downloading", "merging", "uploading"):
+            btns.append([InlineKeyboardButton("⏸ Pause", callback_data=f"merge#pause#{param}"),
+                          InlineKeyboardButton("⏹ Stop", callback_data=f"merge#stop#{param}")])
+        elif s == "paused":
+            btns.append([InlineKeyboardButton("▶️ Resume", callback_data=f"merge#resume#{param}"),
+                          InlineKeyboardButton("⏹ Stop", callback_data=f"merge#stop#{param}")])
+        elif s == "stopped":
+            btns.append([InlineKeyboardButton("▶️ Resume", callback_data=f"merge#resume#{param}")])
+        btns.append([InlineKeyboardButton("🗑 Delete", callback_data=f"merge#del#{param}")])
+        btns.append([InlineKeyboardButton("↩ Back", callback_data="merge#refresh")])
 
-        buttons = []
-        if job["status"] in ("downloading", "merging", "uploading"):
-            buttons.append([InlineKeyboardButton("🛑 Stop", callback_data=f"merge#stop_{job_id}")])
-        buttons.append([InlineKeyboardButton("🗑 Delete", callback_data=f"merge#del_{job_id}")])
-        buttons.append([InlineKeyboardButton("↩ Back", callback_data="merge#back")])
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(btns))
 
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+    elif action == "pause":
+        ev = _merge_paused.get(param)
+        if ev: ev.clear()
+        await _mg_update(param, status="paused")
+        await query.answer("⏸ Paused!", show_alert=True)
+        await _render_merge_list(bot, user_id, query)
 
-    elif action.startswith("stop_"):
-        job_id = action.split("_", 1)[1]
-        await _mg_update(job_id, status="stopped")
-        task = _merge_tasks.get(job_id)
-        if task:
-            task.cancel()
-        await query.answer("Merge job stopped!", show_alert=True)
+    elif action == "resume":
+        job = await _mg_get(param)
+        if not job: return await query.answer("Not found!", show_alert=True)
+        ev = _merge_paused.get(param)
+        if ev and param in _merge_tasks and not _merge_tasks[param].done():
+            ev.set()
+            await _mg_update(param, status="downloading")
+            await query.answer("▶️ Resumed!", show_alert=True)
+        else:
+            # Restart from saved position
+            await _mg_update(param, status="downloading")
+            _start_merge_task(param, user_id, bot)
+            await query.answer("▶️ Restarted from saved position!", show_alert=True)
+        await _render_merge_list(bot, user_id, query)
 
-    elif action.startswith("del_"):
-        job_id = action.split("_", 1)[1]
-        task = _merge_tasks.get(job_id)
-        if task:
-            task.cancel()
-        await _mg_delete(job_id)
-        work_dir = f"merge_tmp/{job_id}"
-        if os.path.exists(work_dir):
-            shutil.rmtree(work_dir, ignore_errors=True)
-        await query.answer("Job deleted!", show_alert=True)
+    elif action == "stop":
+        task = _merge_tasks.pop(param, None)
+        if task and not task.done(): task.cancel()
+        ev = _merge_paused.pop(param, None)
+        if ev: ev.set()
+        await _mg_update(param, status="stopped")
+        await query.answer("⏹ Stopped!", show_alert=True)
+        await _render_merge_list(bot, user_id, query)
 
-    elif action == "back":
-        # Re-show the main merge menu
-        jobs = await _mg_list(user_id)
-        active = [j for j in jobs if j.get("status") in ("downloading", "merging", "uploading")]
-        buttons = []
-        if active:
-            buttons.append([InlineKeyboardButton("━━━ 🔄 Active ━━━", callback_data="merge#noop")])
-            for j in active:
-                st = {"downloading": "⬇️", "merging": "🔀", "uploading": "⬆️"}.get(j["status"], "❓")
-                buttons.append([InlineKeyboardButton(
-                    f"{st} {j.get('output_name', j['job_id'][-6:])}",
-                    callback_data=f"merge#view_{j['job_id']}")])
-
-        recent = [j for j in jobs if j.get("status") in ("done", "error", "stopped")][:5]
-        if recent:
-            buttons.append([InlineKeyboardButton("━━━ 📜 Recent ━━━", callback_data="merge#noop")])
-            for j in recent:
-                st = {"done": "✅", "error": "⚠️", "stopped": "🔴"}.get(j["status"], "❓")
-                buttons.append([InlineKeyboardButton(
-                    f"{st} {j.get('output_name', j['job_id'][-6:])}",
-                    callback_data=f"merge#view_{j['job_id']}")])
-
-        buttons.append([InlineKeyboardButton("➕ New Merge Job", callback_data="merge#create")])
-        buttons.append([InlineKeyboardButton("⫷ Close", callback_data="merge#close")])
-        try:
-            await query.message.edit_text(
-                "<b>🔀 Merger — v2</b>\n\n<i>Select a job or create a new one.</i>",
-                reply_markup=InlineKeyboardMarkup(buttons))
-        except Exception:
-            pass
-
-    elif action == "create":
-        await query.message.delete()
-        await _create_merge_flow(bot, user_id)
+    elif action == "del":
+        task = _merge_tasks.pop(param, None)
+        if task and not task.done(): task.cancel()
+        _merge_paused.pop(param, None)
+        await _mg_delete(param)
+        wd = f"merge_tmp/{param}"
+        if os.path.exists(wd): shutil.rmtree(wd, ignore_errors=True)
+        await query.answer("🗑 Deleted!", show_alert=True)
+        await _render_merge_list(bot, user_id, query)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Creation flow (7 steps)
+# Creation flow (7 steps) — separate for audio/video
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _create_merge_flow(bot, user_id):
-    """Interactive flow to create a new merge job."""
+async def _create_merge_flow(bot, user_id, merge_type="audio"):
+    type_icon = "🎵" if merge_type == "audio" else "🎬"
+    type_label = "Audio" if merge_type == "audio" else "Video"
+
     try:
-        # ── Step 1: Select Account ────────────────────────────────────────
+        # ── Step 1: Account ───────────────────────────────────────────────
         accounts = await db.get_bots(user_id)
         if not accounts:
-            return await bot.send_message(
-                user_id,
-                "<b>❌ No accounts found. Add one in /settings → Accounts first.</b>")
+            return await bot.send_message(user_id,
+                "<b>❌ No accounts found. Add in /settings → Accounts.</b>")
 
-        kb = []
-        for acc in accounts:
-            icon = "🤖" if acc.get("is_bot", True) else "👤"
-            kb.append([f"{icon} {acc['name']}"])
+        kb = [[f"{'🤖' if a.get('is_bot',True) else '👤'} {a['name']}"] for a in accounts]
         kb.append(["❌ Cancel"])
 
-        msg = await _merge_ask(
-            bot, user_id,
-            "<b>🔀 New Merge Job</b>\n\n"
-            "<b>Step 1/7:</b> Select an account to use:",
-            reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True)
-        )
+        msg = await _merge_ask(bot, user_id,
+            f"<b>{type_icon} New {type_label} Merge</b>\n\n"
+            f"<b>Step 1/7:</b> Select account:",
+            reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
 
-        if not msg.text or msg.text == "❌ Cancel":
+        if not msg.text or "Cancel" in msg.text:
             return await bot.send_message(user_id, "<b>Cancelled.</b>",
                                           reply_markup=ReplyKeyboardRemove())
 
@@ -907,110 +823,79 @@ async def _create_merge_flow(bot, user_id):
             return await bot.send_message(user_id, "<b>❌ Account not found.</b>",
                                           reply_markup=ReplyKeyboardRemove())
 
-        # ── Step 2: Start file link ───────────────────────────────────────
-        msg = await _merge_ask(
-            bot, user_id,
-            "<b>Step 2/7:</b> Send the <b>start file link</b> from the source channel.\n\n"
-            "<i>Example: https://t.me/c/123456/100\n"
-            "Or raw message ID if channel is known.</i>",
-            reply_markup=ReplyKeyboardRemove()
-        )
+        # ── Step 2: Start link ────────────────────────────────────────────
+        msg = await _merge_ask(bot, user_id,
+            f"<b>Step 2/7:</b> Send <b>start file link</b>\n\n"
+            f"<i>Example: https://t.me/c/123456/100</i>",
+            reply_markup=ReplyKeyboardRemove())
         if not msg.text or msg.text.lower() == "/cancel":
             return await bot.send_message(user_id, "<b>Cancelled.</b>")
 
-        chat_ref_start, start_id = _parse_msg_link(msg.text)
+        chat_ref_s, start_id = _parse_link(msg.text)
         if start_id is None:
-            return await bot.send_message(user_id, "<b>❌ Could not parse message link.</b>")
+            return await bot.send_message(user_id, "<b>❌ Invalid link.</b>")
 
         from_chat = None
-        if chat_ref_start:
-            if isinstance(chat_ref_start, int):
-                from_chat = -1000000000000 - chat_ref_start
-            else:
-                from_chat = chat_ref_start
+        if chat_ref_s:
+            from_chat = -1000000000000 - chat_ref_s if isinstance(chat_ref_s, int) else chat_ref_s
 
-        # ── Step 3: End file link ─────────────────────────────────────────
-        msg = await _merge_ask(
-            bot, user_id,
-            "<b>Step 3/7:</b> Send the <b>end file link</b> (last file to include).\n\n"
-            "<i>All files between start → end will be merged in exact order.</i>"
-        )
+        # ── Step 3: End link ──────────────────────────────────────────────
+        msg = await _merge_ask(bot, user_id,
+            "<b>Step 3/7:</b> Send <b>end file link</b>")
         if not msg.text or msg.text.lower() == "/cancel":
             return await bot.send_message(user_id, "<b>Cancelled.</b>")
 
-        chat_ref_end, end_id = _parse_msg_link(msg.text)
+        chat_ref_e, end_id = _parse_link(msg.text)
         if end_id is None:
-            return await bot.send_message(user_id, "<b>❌ Could not parse end link.</b>")
+            return await bot.send_message(user_id, "<b>❌ Invalid link.</b>")
 
-        if from_chat is None and chat_ref_end:
-            if isinstance(chat_ref_end, int):
-                from_chat = -1000000000000 - chat_ref_end
-            else:
-                from_chat = chat_ref_end
-
+        if from_chat is None and chat_ref_e:
+            from_chat = -1000000000000 - chat_ref_e if isinstance(chat_ref_e, int) else chat_ref_e
         if from_chat is None:
-            return await bot.send_message(user_id,
-                "<b>❌ Could not determine source channel. Use full message links.</b>")
+            return await bot.send_message(user_id, "<b>❌ Could not detect channel. Use full links.</b>")
 
-        if start_id > end_id:
-            start_id, end_id = end_id, start_id
-
+        if start_id > end_id: start_id, end_id = end_id, start_id
         total = end_id - start_id + 1
 
-        # ── Step 4: Destination channel ───────────────────────────────────
+        # ── Step 4: Destination ───────────────────────────────────────────
         channels = await db.get_user_channels(user_id)
         dest_chats = []
 
         if channels:
-            ch_kb = []
-            for ch in channels:
-                ch_kb.append([f"📢 {ch['title']}"])
-            ch_kb.append(["⏭ Skip (send to me only)"])
+            ch_kb = [[f"📢 {ch['title']}"] for ch in channels]
+            ch_kb.append(["⏭ Skip (DM only)"])
             ch_kb.append(["❌ Cancel"])
 
-            msg = await _merge_ask(
-                bot, user_id,
-                f"<b>Step 4/7:</b> Select <b>destination channel</b> for the merged file.\n\n"
-                f"<b>Range:</b> {start_id} → {end_id} ({total} messages)\n\n"
-                f"<i>The merged file will also be sent to you in DM.</i>",
-                reply_markup=ReplyKeyboardMarkup(ch_kb, resize_keyboard=True, one_time_keyboard=True)
-            )
+            msg = await _merge_ask(bot, user_id,
+                f"<b>Step 4/7:</b> Destination channel\n\n"
+                f"<b>Range:</b> {start_id} → {end_id} ({total} msgs)",
+                reply_markup=ReplyKeyboardMarkup(ch_kb, resize_keyboard=True, one_time_keyboard=True))
 
-            if not msg.text or msg.text == "❌ Cancel":
+            if not msg.text or "Cancel" in msg.text:
                 return await bot.send_message(user_id, "<b>Cancelled.</b>",
                                               reply_markup=ReplyKeyboardRemove())
-
             if "Skip" not in msg.text:
-                ch_title = msg.text.replace("📢 ", "").strip()
-                sel_ch = next((c for c in channels if c["title"] == ch_title), None)
-                if sel_ch:
-                    dest_chats.append(int(sel_ch["chat_id"]))
+                title = msg.text.replace("📢 ", "").strip()
+                ch = next((c for c in channels if c["title"] == title), None)
+                if ch: dest_chats.append(int(ch["chat_id"]))
         else:
-            await bot.send_message(
-                user_id,
-                "<b>Step 4/7:</b> No destination channels configured.\n"
-                "<i>Merged file will be sent to you in DM.</i>",
-                reply_markup=ReplyKeyboardRemove()
-            )
-            await asyncio.sleep(1)
+            await bot.send_message(user_id,
+                "<b>Step 4/7:</b> No channels configured. Sending to DM.",
+                reply_markup=ReplyKeyboardRemove())
+            await asyncio.sleep(0.5)
 
-        # ── Step 5: Output filename ───────────────────────────────────────
-        msg = await _merge_ask(
-            bot, user_id,
-            f"<b>Step 5/7:</b> Send the <b>output filename</b> (without extension).\n\n"
-            f"<i>Example: My_Audiobook_Part1</i>",
-            reply_markup=ReplyKeyboardRemove()
-        )
+        # ── Step 5: Filename ──────────────────────────────────────────────
+        msg = await _merge_ask(bot, user_id,
+            f"<b>Step 5/7:</b> Output <b>filename</b> (no extension)",
+            reply_markup=ReplyKeyboardRemove())
         if not msg.text or msg.text.lower() == "/cancel":
             return await bot.send_message(user_id, "<b>Cancelled.</b>")
-
         output_name = re.sub(r'[<>:"/\\|?*]', '_', msg.text.strip())
 
-        # ── Step 6: Full metadata ─────────────────────────────────────────
-        msg = await _merge_ask(
-            bot, user_id,
-            "<b>Step 6/7:</b> Send <b>metadata</b> (optional).\n\n"
-            "<i>Send each field on a new line:\n"
+        # ── Step 6: Metadata + Cover ──────────────────────────────────────
+        msg = await _merge_ask(bot, user_id,
+            "<b>Step 6/7:</b> Send <b>metadata</b>\n\n"
+            "<i>One field per line:\n"
             "<code>title: My Song\n"
             "artist: Artist Name\n"
             "album: Album Name\n"
@@ -1018,71 +903,88 @@ async def _create_merge_flow(bot, user_id):
             "year: 2024\n"
             "track: 1\n"
             "composer: Composer\n"
-            "comment: My comment</code>\n\n"
-            "Or send <code>skip</code> to use defaults.</i>"
-        )
+            "comment: Notes</code>\n\n"
+            "Send <code>skip</code> for defaults.</i>")
 
         metadata = {}
         if msg.text and msg.text.lower() not in ("skip", "/cancel"):
+            key_map = {"title":"title","artist":"artist","album":"album","genre":"genre",
+                       "year":"date","date":"date","track":"track","composer":"composer",
+                       "comment":"comment","album_artist":"album_artist","description":"description",
+                       "language":"language","publisher":"publisher","performer":"performer",
+                       "copyright":"copyright","encoded_by":"encoded_by","lyrics":"lyrics"}
             for line in msg.text.strip().split("\n"):
-                line = line.strip()
                 if ":" in line:
-                    key, val = line.split(":", 1)
-                    key = key.strip().lower()
-                    val = val.strip()
-                    if key and val:
-                        # Map common names to FFmpeg metadata keys
-                        key_map = {
-                            "title": "title", "artist": "artist",
-                            "album": "album", "genre": "genre",
-                            "year": "date", "date": "date",
-                            "track": "track", "track_number": "track",
-                            "composer": "composer", "comment": "comment",
-                            "album_artist": "album_artist",
-                            "description": "description",
-                            "language": "language", "publisher": "publisher",
-                            "performer": "performer", "copyright": "copyright",
-                            "encoded_by": "encoded_by", "lyrics": "lyrics",
-                        }
-                        ffmpeg_key = key_map.get(key, key)
-                        metadata[ffmpeg_key] = val
+                    k, v = line.split(":", 1)
+                    k = k.strip().lower(); v = v.strip()
+                    if k and v: metadata[key_map.get(k, k)] = v
+
+        # ── Step 6b: Cover image ──────────────────────────────────────────
+        work_dir = f"merge_tmp/{uuid.uuid4()}"  # temp for cover, real dir created later
+        os.makedirs(work_dir, exist_ok=True)
+        cover_path = None
+
+        msg = await _merge_ask(bot, user_id,
+            "<b>Step 6b:</b> Send a <b>cover image</b> (photo/file) for the merged output.\n\n"
+            "<i>Send <code>skip</code> to use no cover.</i>")
+
+        if msg.photo:
+            try:
+                cover_path = await bot.download_media(msg, file_name=os.path.join(work_dir, "cover.jpg"))
+            except: pass
+        elif msg.document and msg.document.mime_type and 'image' in msg.document.mime_type:
+            try:
+                cover_path = await bot.download_media(msg, file_name=os.path.join(work_dir, "cover.jpg"))
+            except: pass
 
         # ── Step 7: Confirm ───────────────────────────────────────────────
-        meta_preview = ""
-        if metadata:
-            meta_lines = [f"  {k}: {v}" for k, v in list(metadata.items())[:6]]
-            meta_preview = "\n".join(meta_lines)
-            if len(metadata) > 6:
-                meta_preview += f"\n  ... +{len(metadata) - 6} more"
-
         dest_preview = "DM only"
         if dest_chats:
-            dest_names = []
+            names = []
             for dc in dest_chats:
                 ch = next((c for c in channels if int(c["chat_id"]) == dc), None)
-                dest_names.append(ch["title"] if ch else str(dc))
-            dest_preview = ", ".join(dest_names)
+                names.append(ch["title"] if ch else str(dc))
+            dest_preview = ", ".join(names)
 
-        confirm_kb = [["✅ Start Merge"], ["❌ Cancel"]]
-        msg = await _merge_ask(
-            bot, user_id,
-            f"<b>Step 7/7: Confirm</b>\n\n"
+        meta_preview = ""
+        if metadata:
+            mlines = [f"  {k}: {v}" for k, v in list(metadata.items())[:5] if v]
+            meta_preview = "\n".join(mlines)
+
+        msg = await _merge_ask(bot, user_id,
+            f"<b>Step 7/7: Confirm {type_label} Merge</b>\n\n"
             f"<b>Source:</b> <code>{from_chat}</code>\n"
             f"<b>Range:</b> {start_id} → {end_id} ({total} msgs)\n"
             f"<b>Output:</b> <code>{output_name}</code>\n"
+            f"<b>Type:</b> {type_icon} {type_label}\n"
+            f"<b>Cover:</b> {'✅ Yes' if cover_path else '❌ No'}\n"
             f"<b>Destination:</b> {dest_preview}\n"
             + (f"\n<b>Metadata:</b>\n{meta_preview}\n" if meta_preview else "") +
-            f"\n<i>⚠️ All media files in this range will be downloaded and merged.\n"
-            f"No file will be skipped regardless of format.</i>",
-            reply_markup=ReplyKeyboardMarkup(confirm_kb, resize_keyboard=True, one_time_keyboard=True)
-        )
+            f"\n<i>All media files will be merged in exact order. No file skipped.</i>",
+            reply_markup=ReplyKeyboardMarkup(
+                [["✅ Start Merge"], ["❌ Cancel"]],
+                resize_keyboard=True, one_time_keyboard=True))
 
         if not msg.text or "Cancel" in msg.text:
+            if os.path.exists(work_dir): shutil.rmtree(work_dir, ignore_errors=True)
             return await bot.send_message(user_id, "<b>Cancelled.</b>",
                                           reply_markup=ReplyKeyboardRemove())
 
-        # ── Create & start job ────────────────────────────────────────────
+        # ── Create job ────────────────────────────────────────────────────
         job_id = str(uuid.uuid4())
+        real_dir = f"merge_tmp/{job_id}"
+        os.makedirs(real_dir, exist_ok=True)
+
+        # Move cover if exists
+        if cover_path and os.path.exists(cover_path):
+            new_cover = os.path.join(real_dir, "cover.jpg")
+            shutil.copy2(cover_path, new_cover)
+            cover_path = new_cover
+
+        # Clean temp dir
+        if os.path.exists(work_dir) and work_dir != real_dir:
+            shutil.rmtree(work_dir, ignore_errors=True)
+
         job = {
             "job_id": job_id,
             "user_id": user_id,
@@ -1090,35 +992,33 @@ async def _create_merge_flow(bot, user_id):
             "from_chat": from_chat,
             "start_id": start_id,
             "end_id": end_id,
+            "current_id": start_id,
             "output_name": output_name,
+            "merge_type": merge_type,
             "metadata": metadata,
             "dest_chats": dest_chats,
+            "has_cover": bool(cover_path),
             "status": "downloading",
             "downloaded": 0,
+            "total_dl_bytes": 0,
             "error": "",
             "created_at": time.time(),
         }
         await _mg_save(job)
+        _start_merge_task(job_id, user_id, bot)
 
-        task = asyncio.create_task(_run_merge_job(job_id, user_id, bot))
-        _merge_tasks[job_id] = task
-
-        await bot.send_message(
-            user_id,
-            f"<b>✅ Merge Job Created & Started!</b>\n\n"
+        await bot.send_message(user_id,
+            f"<b>✅ {type_icon} {type_label} Merge Started!</b>\n\n"
             f"<b>Range:</b> {start_id} → {end_id} ({total} msgs)\n"
             f"<b>Output:</b> <code>{output_name}</code>\n"
-            f"<b>Destination:</b> {dest_preview}\n"
-            f"<b>Job ID:</b> <code>{job_id[-6:]}</code>\n\n"
-            f"<i>Use /merge to monitor progress.\n"
-            f"Multiple merge jobs can run simultaneously.</i>",
-            reply_markup=ReplyKeyboardRemove()
-        )
+            f"<b>Job:</b> <code>{job_id[-6:]}</code>\n\n"
+            f"<i>Use /merge to monitor. Multiple jobs can run simultaneously.</i>",
+            reply_markup=ReplyKeyboardRemove())
 
     except asyncio.TimeoutError:
-        await bot.send_message(user_id, "<b>⏱ Timed out. Try /merge again.</b>",
+        await bot.send_message(user_id, "<b>⏱ Timed out.</b>",
                                reply_markup=ReplyKeyboardRemove())
     except Exception as e:
-        logger.error(f"[Merge create] Error: {e}")
+        logger.error(f"[Merge create] {e}")
         await bot.send_message(user_id, f"<b>❌ Error:</b> <code>{e}</code>",
                                reply_markup=ReplyKeyboardRemove())
