@@ -673,11 +673,13 @@ def custom_caption(msg, caption, apply_smart_clean=False):
         if fcaption:
           fcaption = fcaption.html
           
-        if apply_smart_clean:
+        if apply_smart_clean is True:
             fcaption = smart_clean_caption(fcaption)
         elif apply_smart_clean is False:
             # Normal mode behavior: send NO caption
             fcaption = ""
+        elif apply_smart_clean == 2:
+            pass  # Keep original unmodified caption exactly as it is
             
         if caption and fcaption:
           return caption.format(filename=file_name, size=get_size(file_size), caption=fcaption)

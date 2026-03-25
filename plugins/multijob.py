@@ -377,6 +377,17 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
 
             valid = [m for m in msgs if m and not m.empty]
             valid.sort(key=lambda m: m.id)
+            
+            # Filter out messages from other chats (Pyrogram fetches global IDs for private/basic groups)
+            filtered = []
+            for m in valid:
+                if m.chat is None: continue
+                if isinstance(from_chat, int) and m.chat.id != from_chat: continue
+                if isinstance(from_chat, str):
+                    src = from_chat.replace("@", "").lower()
+                    if str(m.chat.id) != src and (not m.chat.username or m.chat.username.lower() != src): continue
+                filtered.append(m)
+            valid = filtered
 
             if not valid:
                 consecutive_empty += 1

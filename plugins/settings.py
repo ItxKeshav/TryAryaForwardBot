@@ -333,10 +333,21 @@ async def settings_query(bot, query):
    
   elif type.startswith("updatefilter"):
      i, key, value = type.split('-')
-     if value=="True":
-        await update_configs(user_id, key, False)
+     
+     if key == 'rm_caption':
+         # Three states: False (Remove), True (Smart Clean), 2 (Keep Original)
+         if value == "False":
+             await update_configs(user_id, key, True)
+         elif value == "True":
+             await update_configs(user_id, key, 2)
+         else:
+             await update_configs(user_id, key, False)
      else:
-        await update_configs(user_id, key, True)
+         if value == "True":
+            await update_configs(user_id, key, False)
+         else:
+            await update_configs(user_id, key, True)
+            
      if key in ['poll', 'protect', 'download', 'rm_caption']:
         return await query.edit_message_reply_markup(
            reply_markup=await next_filters_buttons(user_id)) 
@@ -645,7 +656,7 @@ async def filters_buttons(user_id):
        ],[
        InlineKeyboardButton('📝 Caption',
                     callback_data=f'settings_#updatefilter-rm_caption-{filters.get("rm_caption", False)}'),
-       InlineKeyboardButton('✅' if filters.get('rm_caption', False) else '❌',
+       InlineKeyboardButton('🤖' if filters.get('rm_caption', False) is True else ('📝' if filters.get('rm_caption', False) == 2 else '❌'),
                     callback_data=f'settings#updatefilter-rm_caption-{filters.get("rm_caption", False)}')
        ],[
        InlineKeyboardButton('⫷ Bᴀᴄᴋ',
