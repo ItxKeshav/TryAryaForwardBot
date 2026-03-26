@@ -204,9 +204,10 @@ def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", cover=No
                 cmd += ["-i", cover, "-map","0:a","-map","1:0","-c:a","copy",
                         "-id3v2_version","3",
                         "-metadata:s:v","title=Album cover",
-                        "-metadata:s:v","comment=Cover (front)"]
+                        "-metadata:s:v","comment=Cover (front)",
+                        "-max_muxing_queue_size", "1024"]
             else:
-                cmd += ["-c", "copy"]
+                cmd += ["-c", "copy", "-max_muxing_queue_size", "1024"]
             if metadata:
                 for k, v in (metadata or {}).items():
                     if v: cmd += ["-metadata", f"{k}={v}"]
@@ -226,7 +227,7 @@ def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", cover=No
             cmd2 += ["-loop", "1", "-framerate", "1", "-i", os.path.abspath(eff_cover)]
             cmd2 += ["-f","concat","-safe","0","-i",lst]
             if atempo: cmd2 += ["-af", atempo]
-            cmd2 += ["-c:v","libx264","-tune","stillimage","-c:a","aac","-b:a","192k","-pix_fmt","yuv420p","-shortest"]
+            cmd2 += ["-c:v","libx264","-preset","ultrafast","-tune","stillimage","-c:a","aac","-b:a","128k","-pix_fmt","yuv420p","-shortest","-max_muxing_queue_size","1024"]
         else:
             cmd2 += ["-f","concat","-safe","0","-i",lst]
             if cover and os.path.exists(cover) and mtype == "audio" and not make_video:
@@ -235,11 +236,11 @@ def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", cover=No
                 vf = f"setpts={1.0/speed:.4f}*PTS" if abs(speed - 1.0) > 0.001 else ""
                 if vf: cmd2 += ["-vf", vf]
                 if atempo: cmd2 += ["-af", atempo]
-                cmd2 += ["-c:v","libx264","-preset","fast","-crf","24",
-                         "-c:a","aac","-b:a","128k","-movflags","+faststart"]
+                cmd2 += ["-c:v","libx264","-preset","superfast","-crf","28",
+                         "-c:a","aac","-b:a","96k","-movflags","+faststart","-max_muxing_queue_size","1024"]
             else:
                 if atempo: cmd2 += ["-af", atempo]
-                cmd2 += ["-c:a","libmp3lame","-b:a","192k","-ar","44100"]
+                cmd2 += ["-c:a","libmp3lame","-b:a","128k","-ar","44100","-max_muxing_queue_size","1024"]
                 if cover and os.path.exists(cover) and not make_video:
                     cmd2 += ["-map","0:a","-map","1:0",
                              "-id3v2_version","3",
@@ -305,7 +306,7 @@ async def _scan_total_size(client, from_chat, start_id, end_id):
 # ══════════════════════════════════════════════════════════════════════════════
 # Core runner — Chunked, Memory-safe
 # ══════════════════════════════════════════════════════════════════════════════
-CHUNK_SIZE   = 20          # Files downloaded at a time before partial merge
+CHUNK_SIZE   = 10          # Reduced to 10 to keep RAM footprint low
 MAX_TOTAL_GB = 15.0        # Hard limit on total estimated size across all files
 MAX_CHUNK_GB = 2.0         # Abort a single chunk if it somehow exceeds this
 
@@ -358,8 +359,8 @@ async def _run_job(jid, uid, bot):
 
         est_size, media_count = await _scan_total_size(client, from_chat, start_id, end_id)
 
-        MAX_TOTAL_GB = 4.0
-        MAX_FILES = 50
+        MAX_TOTAL_GB = 5.0
+        MAX_FILES = 150
 
         if est_size > MAX_TOTAL_GB * 1024**3 or media_count > MAX_FILES:
             msg = (f"<b>❌ Pre-scan blocked your request:</b>\n"
@@ -646,9 +647,9 @@ async def _run_job(jid, uid, bot):
         # (ok/err check already handled above per-chunk and at final merge)
 
         fsize = os.path.getsize(out_path)
-        if fsize > 2 * 1024**3:
+        if fsize > 3.9 * 1024**3:
             await _db_up(jid, status="error", error=f"Too large: {_sz(fsize)}")
-            try: await bot.send_message(uid, f"<b>❌ {_sz(fsize)} exceeds 2GB limit.</b>")
+            try: await bot.send_message(uid, f"<b>❌ {_sz(fsize)} exceeds 4GB limit.</b>")
             except: pass
             return
 
