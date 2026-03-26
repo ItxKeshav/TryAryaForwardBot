@@ -675,14 +675,15 @@ def custom_caption(msg, caption, apply_smart_clean=False):
   fcaption = getattr(msg, 'caption', '')
   if fcaption: fcaption = fcaption.html
   
-  if apply_smart_clean is True:
-      # User wants to REMOVE caption. Block it completely.
+  if apply_smart_clean == 2:
+      # Wipe All Captions. Block it completely.
       fcaption = ""
+  elif apply_smart_clean is True:
+      # Smart Clean: Remove links and usernames from caption
+      import re
+      fcaption = re.sub(r'(?i)(https?://[^\s]+|t\.me/[^\s]+|@\w+)', '', fcaption).strip()
   elif apply_smart_clean is False:
-      # User wants to KEEP caption. Leave as is.
-      pass
-  elif apply_smart_clean == 2:
-      # Strict original mode
+      # Keep Original
       pass
 
   # If an explicit custom template exists, format it
@@ -694,9 +695,12 @@ def custom_caption(msg, caption, apply_smart_clean=False):
           return caption  # Fallback if bad format
           
   # No template provided
-  if apply_smart_clean is True:
+  if apply_smart_clean == 2:
       # return "" so Pyrogram actually overrides the original caption with nothing
       return ""
+  elif apply_smart_clean is True:
+      # Smart clean modified the caption, return the new cleaned text
+      return fcaption if fcaption else ""
   else:
       return None  # None tells Pyrogram to keep the original untouched
 

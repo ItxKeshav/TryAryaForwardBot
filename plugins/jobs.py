@@ -214,6 +214,10 @@ async def _forward_message(
                 continue
             except Exception as e:
                 err = str(e).upper()
+                # Stop jobs completely if destination or source lacks permissions / invalid
+                if any(x in err for x in ["PEER_ID_INVALID", "CHAT_WRITE_FORBIDDEN", "USER_BANNED", "CHANNEL_PRIVATE", "CHAT_ADMIN_REQUIRED"]):
+                    raise ValueError(f"Fatal Chat Error: {e}")
+
                 if "RESTRICTED" in err or "PROTECTED" in err or "FALLBACK" in err:
                     is_restricted = True
                     break

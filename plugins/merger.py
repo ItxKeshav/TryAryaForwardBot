@@ -228,7 +228,7 @@ def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", cover=No
             cmd2 += ["-f","concat","-safe","0","-i",lst]
             if atempo: cmd2 += ["-af", atempo]
             # Enforce exactly 1280x720 pad to make final concat lossless with outro
-            cmd2 += ["-c:v","libx264","-preset","superfast","-tune","stillimage","-c:a","aac","-b:a","128k","-vf","scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p","-shortest","-max_muxing_queue_size","1024"]
+            cmd2 += ["-c:v","libx264","-preset","superfast","-tune","stillimage","-c:a","aac","-b:a","192k","-vf","scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p","-shortest","-max_muxing_queue_size","1024"]
         else:
             cmd2 += ["-f","concat","-safe","0","-i",lst]
             if cover and os.path.exists(cover) and mtype == "audio" and not make_video:
@@ -238,10 +238,10 @@ def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", cover=No
                 if vf: cmd2 += ["-vf", vf]
                 if atempo: cmd2 += ["-af", atempo]
                 cmd2 += ["-c:v","libx264","-preset","superfast","-crf","28",
-                         "-c:a","aac","-b:a","96k","-movflags","+faststart","-max_muxing_queue_size","1024"]
+                         "-c:a","aac","-b:a","128k","-movflags","+faststart","-max_muxing_queue_size","1024"]
             else:
                 if atempo: cmd2 += ["-af", atempo]
-                cmd2 += ["-c:a","libmp3lame","-b:a","128k","-ar","44100","-max_muxing_queue_size","1024"]
+                cmd2 += ["-c:a","libmp3lame","-b:a","192k","-ar","48000","-max_muxing_queue_size","1024"]
                 if cover and os.path.exists(cover) and not make_video:
                     cmd2 += ["-map","0:a","-map","1:0",
                              "-id3v2_version","3",

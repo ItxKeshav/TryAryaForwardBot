@@ -191,6 +191,9 @@ async def _mj_forward(
                     )
         except Exception as exc:
             err = str(exc).upper()
+            if any(x in err for x in ["PEER_ID_INVALID", "CHAT_WRITE_FORBIDDEN", "USER_BANNED", "CHANNEL_PRIVATE", "CHAT_ADMIN_REQUIRED"]):
+                raise ValueError(f"Fatal Chat Error: {exc}")
+
             if "RESTRICTED" not in err and "PROTECTED" not in err:
                 try:
                     if not forward_tag:
@@ -201,7 +204,10 @@ async def _mj_forward(
                         else:
                             await client.copy_message(chat_id=chat, from_chat_id=msg.chat.id, message_id=msg.id, **kw)
                     return
-                except Exception:
+                except Exception as inner_e:
+                    inner_err = str(inner_e).upper()
+                    if any(x in inner_err for x in ["PEER_ID_INVALID", "CHAT_WRITE_FORBIDDEN", "USER_BANNED", "CHANNEL_PRIVATE", "CHAT_ADMIN_REQUIRED"]):
+                        raise ValueError(f"Fatal Chat Error: {inner_e}")
                     pass
             
             # --- Fallback to Download/Re-upload for restricted sources ---
@@ -801,7 +807,6 @@ async def _create_mj_flow(bot, user_id: int):
     # ── Step 1: Name ──────────────────────────────────────────────────────────
     name_r = await _mj_ask(bot, user_id,
         "<b>⚡ Create Multi Job — Step 1/6</b>\n\n"
-        "<b>⚡ Create Multi Job — Step 1/5</b>\n\n"
         "Send a name for this job, or press 'Default' to use a random name.",
         reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Default")], [KeyboardButton("/cancel")]], resize_keyboard=True, one_time_keyboard=True))
     if "/cancel" in name_r.text:
