@@ -1379,10 +1379,8 @@ async def _create_flow(bot, uid, mtype="audio"):
                 resize_keyboard=True, one_time_keyboard=True))
 
         if not msg.text or "Cancel" in msg.text:
-            try: shutil.rmtree(tmp_dir, ignore_errors=True)
-            except: pass
-            if video_cover_path and video_cover_path != cover_path:
-                try: shutil.rmtree(os.path.dirname(str(video_cover_path)), ignore_errors=True)
+            for td in (tmp_dir, f"merge_tmp/_vcover_{uid}", f"merge_tmp/_ocover_{uid}", f"merge_tmp/_ythumb_{uid}"):
+                try: shutil.rmtree(os.path.abspath(td), ignore_errors=True)
                 except: pass
             return await bot.send_message(uid, "<b>Cancelled.</b>", reply_markup=ReplyKeyboardRemove())
 
@@ -1410,16 +1408,8 @@ async def _create_flow(bot, uid, mtype="audio"):
             shutil.copy2(str(yt_thumb_path), os.path.join(real_dir, "yt_thumb.jpg"))
         
         # Clean up temp dirs
-        try: shutil.rmtree(tmp_dir, ignore_errors=True)
-        except: pass
-        if video_cover_path and video_cover_path != cover_path:
-            try: shutil.rmtree(os.path.abspath(os.path.dirname(str(video_cover_path))), ignore_errors=True)
-            except: pass
-        if outro_cover_path:
-            try: shutil.rmtree(os.path.abspath(os.path.dirname(str(outro_cover_path))), ignore_errors=True)
-            except: pass
-        if yt_thumb_path:
-            try: shutil.rmtree(os.path.abspath(os.path.dirname(str(yt_thumb_path))), ignore_errors=True)
+        for td in (tmp_dir, f"merge_tmp/_vcover_{uid}", f"merge_tmp/_ocover_{uid}", f"merge_tmp/_ythumb_{uid}"):
+            try: shutil.rmtree(os.path.abspath(td), ignore_errors=True)
             except: pass
 
         job = {
