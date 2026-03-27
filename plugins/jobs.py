@@ -180,15 +180,19 @@ async def _forward_message(
         new_caption = custom_caption(msg, cap_tpl, apply_smart_clean=remove_caption)
         if replacements and new_caption:
             for old_txt, new_txt_str in replacements.items():
-                try: new_caption = re.sub(old_txt, new_txt_str, new_caption, flags=re.IGNORECASE)
-                except Exception: new_caption = new_caption.replace(old_txt, new_txt_str)
+                if old_txt is None: continue
+                new_str = "" if new_txt_str is None else str(new_txt_str)
+                try: new_caption = re.sub(str(old_txt), new_str, str(new_caption), flags=re.IGNORECASE)
+                except Exception: new_caption = str(new_caption).replace(str(old_txt), new_str)
     else:
         new_text = msg.text.html if msg.text else ""
         if replacements and new_text:
             orig_text = new_text
             for old_txt, new_txt_str in replacements.items():
-                try: new_text = re.sub(old_txt, new_txt_str, new_text, flags=re.IGNORECASE)
-                except Exception: new_text = new_text.replace(old_txt, new_txt_str)
+                if old_txt is None: continue
+                new_str = "" if new_txt_str is None else str(new_txt_str)
+                try: new_text = re.sub(str(old_txt), new_str, str(new_text), flags=re.IGNORECASE)
+                except Exception: new_text = str(new_text).replace(str(old_txt), new_str)
             if orig_text != new_text:
                 is_text_replaced = True
 

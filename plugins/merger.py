@@ -179,13 +179,14 @@ def _build_atempo_chain(speed):
     return ",".join(filters) if filters else ""
 
 
-def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", cover=None, speed=1.0, make_video=False, video_cover=None, outro_cover=None):
+def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", cover=None, speed=1.0, make_video=False, video_cover=None, outro_cover=None, total_duration=None):
     """Merge file_list → output_path. Tries lossless copy first, falls back to re-encode.
     make_video: If True and cover is present, creates an MP4 video out of the merged audio and cover image.
     speed: 1.0 = normal, 2.5 = 2.5x faster.
     Returns (ok: bool, error: str).
     """
     lst = output_path + ".list.txt"
+    vconcat_txt = output_path + ".vconcat.txt"
     try:
         # CRITICAL: use absolute paths so FFmpeg can find files regardless of CWD
         with open(lst, "w", encoding="utf-8") as f:
@@ -223,8 +224,28 @@ def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", cover=No
         cmd2 = ["ffmpeg","-y","-threads","1"]
         eff_cover = video_cover or cover  # use video_cover if available
         if make_video and eff_cover and os.path.exists(eff_cover) and mtype == "audio":
-            # Static image + audio → MP4 video (very low RAM with -tune stillimage)
-            cmd2 += ["-loop", "1", "-framerate", "1", "-i", os.path.abspath(eff_cover)]
+            if outro_cover:
+                outros = outro_cover if isinstance(outro_cover, list) else [outro_cover] * 4
+                valid_outros = [o for o in outros if isinstance(o, str) and os.path.exists(o)]
+                
+                if len(valid_outros) == 4:
+                    td = total_duration if total_duration else 3600*10
+                    td = td / max(speed, 0.1)
+                    interval = max(10, (td - 20) / 4)
+                    with open(vconcat_txt, "w", encoding="utf-8") as f:
+                        for idx in range(4):
+                            f.write(f"file '{os.path.abspath(eff_cover).replace(chr(92), '/')}'\n")
+                            f.write(f"duration {interval:.1f}\n")
+                            f.write(f"file '{os.path.abspath(valid_outros[idx]).replace(chr(92), '/')}'\n")
+                            f.write(f"duration 5.0\n")
+                        f.write(f"file '{os.path.abspath(eff_cover).replace(chr(92), '/')}'\n")
+                        f.write(f"duration 36000.0\n")
+                    cmd2 += ["-f", "concat", "-safe", "0", "-i", vconcat_txt]
+                else:
+                    cmd2 += ["-loop", "1", "-framerate", "1", "-i", os.path.abspath(eff_cover)]
+            else:
+                cmd2 += ["-loop", "1", "-framerate", "1", "-i", os.path.abspath(eff_cover)]
+            
             cmd2 += ["-f","concat","-safe","0","-i",lst]
             if atempo: cmd2 += ["-af", atempo]
             # Enforce exactly 1280x720 pad to make final concat lossless with outro
@@ -256,36 +277,6 @@ def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", cover=No
         r2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=14400)
         # Verify output at its absolute path
         if r2.returncode == 0 and os.path.exists(abs_output) and os.path.getsize(abs_output) > 100:
-            if make_video and outro_cover and os.path.exists(outro_cover):
-                try:
-                    # Generate 5s outro
-                    outro_vid = output_path + ".outro.mp4"
-                    c_out = ["ffmpeg","-y","-threads","1","-loop","1","-framerate","1","-i", outro_cover]
-                    c_out += ["-f","lavfi","-i","anullsrc=channel_layout=stereo:sample_rate=44100"]
-                    c_out += ["-t","5","-c:v","libx264","-preset","superfast","-tune","stillimage",
-                              "-vf","scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
-                              "-c:a","aac","-b:a","128k","-shortest","-max_muxing_queue_size","1024", outro_vid]
-                    subprocess.run(c_out, capture_output=True)
-                    
-                    if os.path.exists(outro_vid):
-                        main_vid = output_path + ".main.mp4"
-                        os.rename(abs_output, main_vid)
-                        
-                        lst_out = output_path + ".concat.txt"
-                        with open(lst_out, "w", encoding="utf-8") as _f:
-                            _f.write(f"file '{os.path.abspath(main_vid).replace(chr(92), '/')}'\n")
-                            _f.write(f"file '{os.path.abspath(outro_vid).replace(chr(92), '/')}'\n")
-                        
-                        c_concat = ["ffmpeg","-y","-threads","1","-f","concat","-safe","0","-i",lst_out,"-c","copy", abs_output]
-                        subprocess.run(c_concat, capture_output=True)
-                        
-                        try:
-                            os.remove(main_vid)
-                            os.remove(outro_vid)
-                            os.remove(lst_out)
-                        except: pass
-                except: pass
-            
             return True, ""
         else:
             return False, r2.stderr[-800:]
@@ -296,6 +287,7 @@ def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", cover=No
     finally:
         try:
             if os.path.exists(lst): os.remove(lst)
+            if os.path.exists(vconcat_txt): os.remove(vconcat_txt)
         except: pass
 
 
@@ -432,7 +424,14 @@ async def _run_job(jid, uid, bot):
 
         # Outro image (video padding)
         outro_cover = None
-        if job.get("has_outro_cover"):
+        if job.get("use_4auto_outros"):
+            outro_cover = [
+                os.path.abspath("assets/outro_1.jpg"),
+                os.path.abspath("assets/outro_2.jpg"),
+                os.path.abspath("assets/outro_3.jpg"),
+                os.path.abspath("assets/outro_4.jpg"),
+            ]
+        elif job.get("has_outro_cover"):
             _ocp = os.path.abspath(os.path.join(wdir, "outro_cover.jpg"))
             if os.path.exists(_ocp):
                 outro_cover = _ocp
@@ -646,7 +645,7 @@ async def _run_job(jid, uid, bot):
         loop = asyncio.get_event_loop()
         ok, err = await loop.run_in_executor(
             None, _ffmpeg_merge, part_files_sorted, out_path, metadata, mtype,
-            cover, speed, make_video, effective_cover_for_video, outro_cover)
+            cover, speed, make_video, effective_cover_for_video, outro_cover, cumulative_secs)
 
         if not ok:
             await _db_up(jid, status="error", error=err[:500])
@@ -785,7 +784,10 @@ async def _run_job(jid, uid, bot):
 
                 desc_english = f"Hey Strangers, I'm Arya Bot [Your Friend]. I successfully merged and uploaded '{title}' on The Last Broadcast. I collected this from my Telegram database and merged/uploaded it in the same order [1-{last_epi or global_seq}].\n\nYou may notice some issues such as episode order mismatches (e.g., episode 11 before 10), missing episodes, slight quality loss, or other inconsistencies. If you face issues, you can report them in the comments. Since this is an automated process, some limitations may exist. For better navigation, timestamps are provided below so you can jump between episodes easily."
 
-                desc = f"{desc_hindi}\n\n───────────────────────────\n\n{desc_english}\n\n⏱ **TIMESTAMPS / CHAPTERS** ⏱\n{yt_timestamps}"
+                support_msg = "If my work has helped you in any way, you can support me as per your wish by visiting this link: https://razorpay.me/@SusJeetX and sending any amount (minimum 50 INR). This will help me continue providing more stories like this."
+                copyright_msg = "Warning: Copyright issues may occur at any time. Join my Telegram channel: https://t.me/StoriesByJeetXNew to get all stories and updates about the new YouTube channel, so you don't miss any content."
+
+                desc = f"{desc_hindi}\n\n───────────────────────────\n\n{desc_english}\n\n{support_msg}\n\n{copyright_msg}\n\n───────────────────────────\n\n⏱ **TIMESTAMPS / CHAPTERS** ⏱\n{yt_timestamps}"
                 
                 success, yt_res = await upload_video_to_youtube(
                     video_path=out_path,
@@ -1286,19 +1288,25 @@ async def _create_flow(bot, uid, mtype="audio"):
             # Outro Image
             msg = await _mg_ask(bot, uid,
                 "<b>Step 6e/9:</b> Send the <b>Outro Image</b> to show at the end of the video for 5 seconds.\n\n"
-                "Send <code>skip</code> to skip the outro.")
+                "Send <code>4auto</code> to use the 4 default outro images (appears 4 times during the video).\n"
+                "Send <code>skip</code> to skip the outro.",
+                reply_markup=ReplyKeyboardMarkup([["4auto"], ["skip"], ["/cancel"]], resize_keyboard=True, one_time_keyboard=True))
             tmp_odir = os.path.abspath(f"merge_tmp/_ocover_{uid}")
             os.makedirs(tmp_odir, exist_ok=True)
-            if msg.photo:
-                try:
-                    outro_cover_path = await bot.download_media(msg, file_name=os.path.join(tmp_odir, "outro_cover.jpg"))
-                    outro_cover_path = os.path.abspath(outro_cover_path)
-                except: pass
-            elif msg.document and msg.document.mime_type and 'image' in msg.document.mime_type:
-                try:
-                    outro_cover_path = await bot.download_media(msg, file_name=os.path.join(tmp_odir, "outro_cover.jpg"))
-                    outro_cover_path = os.path.abspath(outro_cover_path)
-                except: pass
+            
+            if msg.text and msg.text.lower() == "4auto":
+                outro_cover_path = "4auto"
+            else:
+                if msg.photo:
+                    try:
+                        outro_cover_path = await bot.download_media(msg, file_name=os.path.join(tmp_odir, "outro_cover.jpg"))
+                        outro_cover_path = os.path.abspath(outro_cover_path)
+                    except: pass
+                elif msg.document and msg.document.mime_type and 'image' in msg.document.mime_type:
+                    try:
+                        outro_cover_path = await bot.download_media(msg, file_name=os.path.join(tmp_odir, "outro_cover.jpg"))
+                        outro_cover_path = os.path.abspath(outro_cover_path)
+                    except: pass
 
             # Step 6f: YouTube Upload?
             msg = await _mg_ask(bot, uid,
@@ -1392,7 +1400,9 @@ async def _create_flow(bot, uid, mtype="audio"):
             shutil.copy2(str(video_cover_path), os.path.join(real_dir, "video_cover.jpg"))
             has_video_cover = True
         
-        if outro_cover_path and os.path.exists(str(outro_cover_path)):
+        if outro_cover_path == "4auto":
+            pass
+        elif outro_cover_path and os.path.exists(str(outro_cover_path)):
             shutil.copy2(str(outro_cover_path), os.path.join(real_dir, "outro_cover.jpg"))
             
         if yt_thumb_path and os.path.exists(str(yt_thumb_path)):
@@ -1417,7 +1427,8 @@ async def _create_flow(bot, uid, mtype="audio"):
             "current_id": sid, "output_name": out_name, "merge_type": mtype,
             "metadata": metadata, "dest_chats": dest_chats,
             "has_cover": bool(cover_path), "has_video_cover": has_video_cover,
-            "has_outro_cover": bool(outro_cover_path),
+            "has_outro_cover": True if outro_cover_path == "4auto" else bool(outro_cover_path),
+            "use_4auto_outros": outro_cover_path == "4auto",
             "speed": speed, "make_video": make_video,
             "upload_to_yt": upload_to_yt, "yt_title": yt_title,
             "has_yt_thumb": bool(yt_thumb_path), "yt_start_epi": yt_start_epi,

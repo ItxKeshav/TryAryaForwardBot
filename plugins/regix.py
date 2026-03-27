@@ -308,10 +308,12 @@ async def pub_(bot, message):
                 replacements = data.get('replacements', {})
                 if replacements and new_caption:
                     for old_txt, new_txt in replacements.items():
+                        if old_txt is None: continue
+                        new_txt_safe = "" if new_txt is None else str(new_txt)
                         try:
-                            new_caption = re.sub(old_txt, new_txt, new_caption, flags=re.IGNORECASE)
+                            new_caption = re.sub(str(old_txt), new_txt_safe, str(new_caption), flags=re.IGNORECASE)
                         except Exception:
-                            new_caption = new_caption.replace(old_txt, new_txt)
+                            new_caption = str(new_caption).replace(str(old_txt), new_txt_safe)
                 
                 sort_buffer.append((message, forward_tag, new_caption, protect, download_mode, sleep))
                 
