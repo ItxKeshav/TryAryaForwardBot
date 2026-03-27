@@ -362,6 +362,12 @@ async def _run_job(job_id: str, user_id: int):
         last_seen    = job.get("last_seen_id", 0)
 
         # ── First-run init: snapshot latest ID ────────────────────────────
+        me = await client.get_me()
+        if from_chat == me.id or from_chat == me.username:
+            from_chat = user_id
+            await _update_job(job_id, from_chat=from_chat)
+            logger.info(f"[Job {job_id}] Swapped Bot's own ID with User ID ({user_id}) for Bot DM fetching")
+
         if last_seen == 0:
             last_seen = await _get_latest_id(client, from_chat, is_bot)
             await _update_job(job_id, last_seen_id=last_seen)

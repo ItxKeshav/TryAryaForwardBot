@@ -259,9 +259,15 @@ async def pub_(bot, message):
               try: _from_thread = int(_from_thread)
               except: _from_thread = None
 
+          # Handle Bot DM fetching logic
+          from_chat = sts.get('FROM')
+          me = await client.get_me()
+          if from_chat == me.id or from_chat == me.username:
+              from_chat = user
+
           async for message in client.iter_messages(
             client,
-            chat_id=sts.get('FROM'), 
+            chat_id=from_chat, 
             limit=int(sts.get('limit')), 
             offset=int(sts.get('skip')) if sts.get('skip') else 0,
             continuous=is_continuous,

@@ -105,7 +105,20 @@ async def start_clone_bot(FwdBot, data=None):
                     
                 if not isinstance(msgs, list):
                     msgs = [msgs]
-                valid = [m for m in msgs if m and not m.empty]
+                valid = []
+                for m in msgs:
+                    if not m or m.empty: continue
+                    # Cross-chat filter: skip if pyrogram returned a stray message from another group
+                    if isinstance(chat_id, int) and chat_id < 0:
+                        if getattr(m, 'chat', None) and m.chat.id != chat_id:
+                            continue
+                    elif isinstance(chat_id, str) and chat_id != "me":
+                        src = chat_id.replace("@", "").lower()
+                        c_id = getattr(m, 'chat', None)
+                        if c_id and str(c_id.id) != src and (not c_id.username or c_id.username.lower() != src):
+                            continue
+                    valid.append(m)
+                    
                 valid.sort(key=lambda m: m.id)
                 
                 for message in valid:
@@ -130,7 +143,19 @@ async def start_clone_bot(FwdBot, data=None):
                 
                 if not isinstance(msgs, list):
                     msgs = [msgs]
-                valid = [m for m in msgs if m and not m.empty]
+                valid = []
+                for m in msgs:
+                    if not m or m.empty: continue
+                    if isinstance(chat_id, int) and chat_id < 0:
+                        if getattr(m, 'chat', None) and m.chat.id != chat_id:
+                            continue
+                    elif isinstance(chat_id, str) and chat_id != "me":
+                        src = chat_id.replace("@", "").lower()
+                        c_id = getattr(m, 'chat', None)
+                        if c_id and str(c_id.id) != src and (not c_id.username or c_id.username.lower() != src):
+                            continue
+                    valid.append(m)
+                    
                 valid.sort(key=lambda m: m.id, reverse=True)
                 
                 for message in valid:

@@ -514,6 +514,13 @@ async def _run_job(jid, uid, bot):
         # PHASE 0 — Pre-download size scan
         # ══════════════════════════════════════════════════════════════════
         try:
+            me = await client.get_me()
+            if from_chat == me.id or from_chat == me.username:
+                from_chat = uid
+        except:
+            pass
+
+        try:
             scan_msg = await bot.send_message(uid,
                 f"<b>🔍 Scanning file sizes before download...</b>\n"
                 f"<i>Range: {start_id} → {end_id}</i>")
@@ -944,25 +951,33 @@ async def _run_job(jid, uid, bot):
                 )
                 
                 if success:
+                    yt_vid_id = yt_res.split("/")[-1] if "/" in yt_res.replace("youtu.be/", "/") else None
+                    if not yt_vid_id: yt_vid_id = yt_res
                     yt_msg = f"┃ 🟥 YouTube: <a href='{yt_res}'>Private Link</a>\n"
                     await yt_status.edit_text(f"<b>✅ YouTube Upload Successful!</b>\n{yt_res}")
-                    # Persist yt_video_id, yt_title, and log_entries for later editing
                     try:
-                        _yt_vid_id = yt_res.split("/")[-1] if "/" in yt_res else yt_res
-                        await _db_up(jid, yt_video_id=_yt_vid_id, yt_title=title, log_entries=log_entries)
+                        await _db_up(jid, yt_video_id=yt_vid_id, yt_title=title)
                     except Exception:
                         pass
                 else:
+                    yt_vid_id = None
                     yt_msg = f"┃ 🟥 YouTube: Failed\n"
                     await yt_status.edit_text(f"<b>❌ YouTube Upload Failed</b>\n<code>{yt_res}</code>")
             except Exception as e:
                 logger.error(f"YouTube exception: {e}")
                 yt_msg = f"┃ 🟥 YouTube: Error\n"
+                yt_vid_id = None
 
         _yt_time = time.time() - _yt_start if upload_to_yt else 0
         total_time = dl_total_bytes and (up_time + _yt_time)  # compat field
         _total = (job.get("dl_time") or 0) + (job.get("merge_time") or 0) + up_time + _yt_time
         await _db_up(jid, status="done", total_time=_total, yt_time=_yt_time, file_size=fsize)
+
+        markup = None
+        if upload_to_yt and 'yt_vid_id' in locals() and yt_vid_id:
+            markup = pyrogram.types.InlineKeyboardMarkup([
+                [pyrogram.types.InlineKeyboardButton("✏️ Edit YT Video Details", callback_data=f"edit_yt_{jid}")]
+            ])
 
         try:
             await bot.send_message(uid,
@@ -975,7 +990,7 @@ async def _run_job(jid, uid, bot):
                 f"┃ ⬆️ Upload: {_tm(up_time)}\n"
                 f"┃ ⏱ Total chunks: {total_chunks}\n"
                 f"{yt_msg}"
-                f"╰─────────────╯")
+                f"╰─────────────╯", reply_markup=markup)
         except: pass
 
     except asyncio.CancelledError:
