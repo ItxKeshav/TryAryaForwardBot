@@ -975,8 +975,8 @@ async def _run_job(jid, uid, bot):
 
         markup = None
         if upload_to_yt and 'yt_vid_id' in locals() and yt_vid_id:
-            markup = pyrogram.types.InlineKeyboardMarkup([
-                [pyrogram.types.InlineKeyboardButton("✏️ Edit YT Video Details", callback_data=f"edit_yt_{jid}")]
+            markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✏️ Edit YT Video Details", callback_data=f"mg#yt_edit#{jid}")]
             ])
 
         try:
