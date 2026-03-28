@@ -89,11 +89,18 @@ async def start_share_bot(token=None):
         logger.info("Share Bot token not set. Skipping File Sharing Bot startup.")
         return
 
-    logger.info(f"Starting Secondary Share Bot...")
+    # Aggressively clean the token of any accidental clipboard artifacts
+    token = token.strip().replace(" ", "").replace("\n", "").replace("\r", "")
+    tk_masked = f"{token[:10]}...{token[-4:]}" if len(token) > 15 else "INVALID_LENGTH"
+    
+    logger.info(f"Starting Secondary Share Bot [Token: {tk_masked}]...")
+    
+    import uuid
+    dynamic_name = f"share_bot_mem_{uuid.uuid4().hex[:8]}"
     
     try:
         share_client = Client(
-            name=":memory:",
+            name=dynamic_name,
             api_id=Config.API_ID,
             api_hash=Config.API_HASH,
             bot_token=token,
