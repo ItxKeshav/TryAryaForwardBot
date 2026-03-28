@@ -287,11 +287,23 @@ async def pub_(bot, message):
                     continue
                 # Check message type filtering
                 is_filtered = False
-                _filters = data.get('filters', [])
+                _disabled_types = data.get('filters', [])  # list of disabled type names
+                _configs_filters = data.get('configs_filters', {})  # dict with rm_caption, links, etc.
 
                 if message.empty or message.service:
                     sts.add('deleted')
                     continue
+
+                # Links filter: block only pure text messages containing links
+                if 'links' in _disabled_types:
+                    import re as _re_links
+                    _raw_text = getattr(message, 'text', None) or ''
+                    _has_link = bool(_raw_text and _re_links.search(
+                        r'(https?://\S+|www\.\S+|t\.me/\S+)', str(_raw_text), flags=_re_links.IGNORECASE
+                    ))
+                    if _has_link and not message.media:
+                        sts.add('filtered')
+                        continue
                 
                 # Determine message's generic type
                 msg_type = 'text'
@@ -304,7 +316,7 @@ async def pub_(bot, message):
                 elif getattr(message, 'animation', None): msg_type = 'animation'
                 elif getattr(message, 'sticker', None): msg_type = 'sticker'
                 
-                if msg_type in _filters:
+                if msg_type in _disabled_types:
                     is_filtered = True
                 else:
                     # check extensions and keywords
@@ -340,8 +352,9 @@ async def pub_(bot, message):
                     continue
 
                 # Compute caption & replacements for this message before buffering
-                _filters = data.get('filters', {})
-                new_caption = custom_caption(message, caption, apply_smart_clean=_filters.get('rm_caption', False), remove_links_flag=_filters.get('links', False))
+                # _configs_filters is a dict with rm_caption, links, etc.
+                _remove_links_flag = 'links' in _disabled_types  # strip links from captions of allowed media
+                new_caption = custom_caption(message, caption, apply_smart_clean=_configs_filters.get('rm_caption', False), remove_links_flag=_remove_links_flag)
 
                 replacements = data.get('replacements', {})
                 if replacements and new_caption:

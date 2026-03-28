@@ -117,6 +117,16 @@ def _msg_in_topic(msg, from_thread_id: int) -> bool:
 def _passes_filters(msg, disabled_types: list) -> bool:
     if msg.empty or msg.service:
         return False
+
+    # 'links' filter: only block pure text messages that contain links.
+    # Media messages with links in caption always pass through (links stripped at send time).
+    if 'links' in disabled_types:
+        import re as _re
+        _text = getattr(msg, 'text', None) or getattr(msg, 'caption', None) or ''
+        _has_link = bool(_text and _re.search(r'(https?://\S+|www\.\S+|t\.me/\S+)', str(_text), flags=_re.IGNORECASE))
+        if _has_link and not msg.media:
+            return False
+
     checks = [
         ('text',      lambda m: m.text and not m.media),
         ('audio',     lambda m: m.audio),
@@ -143,9 +153,10 @@ async def _mj_forward(
     to_chat: int, remove_caption: bool, cap_tpl: str | None, forward_tag: bool = False,
     thread_id: int = None,
     to_chat_2: int = None, thread_id_2: int = None,
-    replacements: dict = None
+    replacements: dict = None,
+    remove_links_flag: bool = False
 ):
-    from plugins.regix import custom_caption
+    from plugins.regix import custom_caption, remove_all_links
     import re
 
     # Compute caption
@@ -154,7 +165,7 @@ async def _mj_forward(
     is_text_replaced = False
 
     if msg.media:
-        new_caption = custom_caption(msg, cap_tpl, apply_smart_clean=remove_caption)
+        new_caption = custom_caption(msg, cap_tpl, apply_smart_clean=remove_caption, remove_links_flag=remove_links_flag)
             
         if replacements and new_caption:
             for old_txt, new_txt_str in replacements.items():
@@ -409,7 +420,7 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
 
             if not valid:
                 consecutive_empty += 1
-                if consecutive_empty >= 50:  # Allow 10,000 empty messages before giving up
+                if consecutive_empty >= 200:  # 200 * 200 IDs = 40,000 gaps before giving up
                     await _mj_update(job_id, status="done", current_id=current)
                     logger.info(f"[MultiJob {job_id}] Done — no more messages after {current}")
                     # Send completion report
@@ -454,8 +465,10 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
                     await _mj_update(job_id, current_id=current)
                     continue
 
+                # Get links-filter flag for caption stripping
+                _remove_links = 'links' in disabled_types
                 await _mj_forward(client, msg, to_chat, remove_caption, cap_tpl, forward_tag,
-                                   to_thread, None, None, replacements)
+                                   to_thread, to_chat_2, to_thread_2, replacements, _remove_links)
                 
                 current = msg.id + 1
                 await _mj_update(job_id, current_id=current)

@@ -115,7 +115,7 @@ async def run(bot, message):
                 return
 
             from_thread = None
-            if "yes" in topic_q.text.lower() or "topic" in topic_q.text.lower():
+            if "yes" in topic_q.text.lower() or "✅" in topic_q.text:
                 thread_msg = await bot.ask(
                     message.chat.id,
                     "<b>Send the Topic Thread ID</b> (the message ID of the first message in the topic, usually same as topic ID):",
@@ -263,7 +263,7 @@ async def run(bot, message):
     fwd_mode  = "🔄 Forward (tag on)" if configs.get('forward_tag') else "📋 Copy (no tag)"
     
     _rm_cap = configs.get('filters', {}).get('rm_caption', False)
-    caption_m = "🤖 Smart Clean" if _rm_cap is True else ("📝 Kept Original" if _rm_cap == 2 else "❌ Removed")
+    caption_m = "🤖 Smart Clean" if _rm_cap is True else ("🗑 Wipe All Captions" if _rm_cap == 2 else "✅ Keep Original")
     dl_mode   = "⬇️ Download mode ON" if configs.get('download') else "📤 Direct copy"
     order_lbl = "🔽 New to Old" if reverse_order else "🔼 Old to New"
     mode_lbl  = "🔁 Live (continuous)" if continuous else "📦 Batch"

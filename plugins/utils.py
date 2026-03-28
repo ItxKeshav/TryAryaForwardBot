@@ -72,7 +72,9 @@ class STS:
         
         return bot, configs['caption'], configs['forward_tag'], {
             'download': configs.get('download', False), 'chat_id': k.FROM, 'limit': k.limit, 'offset': k.skip, 
-            'filters': filters, 'rm_caption': configs.get('filters', {}).get('rm_caption', False),
+            'filters': filters,                                   # list of disabled type names  
+            'configs_filters': configs.get('filters', {}),        # full dict: rm_caption, links, etc.
+            'rm_caption': configs.get('filters', {}).get('rm_caption', False),
             'keywords': configs['keywords'], 'media_size': size, 'extensions': configs['extension'], 
             'skip_duplicate': duplicate, 'duration': configs.get('duration', 1), 
             'reverse_order': getattr(k, 'reverse_order', False), 'smart_order': getattr(k, 'smart_order', True),

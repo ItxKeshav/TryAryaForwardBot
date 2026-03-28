@@ -566,7 +566,7 @@ async def _run_task_job(job_id: str, user_id: int):
         logger.info(f"[TaskJob {job_id}] Cancelled")
         await _tj_update(job_id, status="stopped")
         # Mark progress bar stopped
-        if prog_msg_id and to_chat_for_prog:
+        if client and prog_msg_id and to_chat_for_prog:
             try:
                 fresh_j = await _tj_get(job_id)
                 total_fwd = fresh_j.get("forwarded", 0) if fresh_j else 0
