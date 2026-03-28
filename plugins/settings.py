@@ -181,7 +181,14 @@ async def settings_query(bot, query):
      # Cycle autodelete: 0 (Off) -> 5 mins -> 30 mins -> 60 mins -> 1440 mins (24h) -> 0
      current = await db.get_share_autodelete(user_id)
      if current == 0:       nxt = 5
-     elif current == 5:     nxt = 15`r`n      elif current == 15:   nxt = 180`r`n      elif current == 180:  nxt = 360`r`n      elif current == 360:  nxt = 720`r`n      elif current == 720:  nxt = 1440`r`n      elif current == 1440: nxt = 2880`r`n      else:                 nxt = 0
+     elif current == 5:    nxt = 15
+     elif current == 15:   nxt = 180
+     elif current == 180:  nxt = 360
+     elif current == 360:  nxt = 720
+     elif current == 720:  nxt = 1440
+     elif current == 1440: nxt = 2880
+     else:                 nxt = 0
+
      await db.set_share_autodelete(user_id, nxt)
      await query.answer("Auto-Delete Timer Updated!")
      return await edit_settings(client, query, "sharebot")
