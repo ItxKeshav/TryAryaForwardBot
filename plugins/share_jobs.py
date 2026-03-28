@@ -136,9 +136,8 @@ async def _create_share_flow(bot, user_id):
         total_links = math.ceil(total_msgs / sj['batch_size'])
         total_posts = math.ceil(total_links / 10)
         
-        btn = [[InlineKeyboardButton("🚀 Generate & Group Links", callback_data="sl#build")]]
-        await bot.send_message(
-            user_id,
+        markup_conf = ReplyKeyboardMarkup([["🚀 Generate & Group Links"], ["❌ Cancel"]], resize_keyboard=True, one_time_keyboard=True)
+        conf_msg = await _ask(bot, user_id,
             f"<b>📋 CONFIRM SHARE BATCH</b>\n\n"
             f"<b>Story Name:</b> {sj['story']}\n"
             f"<b>Source ID:</b> <code>{sj['source']}</code>\n"
@@ -147,11 +146,19 @@ async def _create_share_flow(bot, user_id):
             f"<b>Batch Size:</b> {sj['batch_size']} files per link\n"
             f"<b>Total Buttons to create:</b> {total_links}\n"
             f"<b>Total Grouped Posts (10 btns each):</b> {total_posts}\n",
-            reply_markup=InlineKeyboardMarkup(btn)
+            reply_markup=markup_conf
         )
+        
+        if not conf_msg.text or conf_msg.text == "/cancel" or "Cancel" in conf_msg.text:
+            if user_id in new_share_job: del new_share_job[user_id]
+            return await bot.send_message(user_id, "<b>Cancelled.</b>", reply_markup=ReplyKeyboardRemove())
+            
+        if "Generate" in conf_msg.text:
+            await _build_share_links(bot, user_id, sj, conf_msg)
+            
     except Exception as e:
         await bot.send_message(user_id, f"<b>Error during link setup:</b> {e}", reply_markup=ReplyKeyboardRemove())
-
+    
 @Client.on_callback_query(filters.regex(r'^sl#'))
 async def sl_callback(bot, query):
     user_id = query.from_user.id
@@ -162,14 +169,12 @@ async def sl_callback(bot, query):
         await query.message.delete()
         asyncio.create_task(_create_share_flow(bot, user_id))
 
-    elif cmd == "build":
-        sj = new_share_job.get(user_id)
-        if not sj: return await query.answer("Expired session.", show_alert=True)
-        
+async def _build_share_links(bot, user_id, sj, info_msg):
+    try:
         # Check token aggressively
         token = await db.get_share_bot_token()
         if not token:
-            return await query.answer("❌ You must set the Share Bot Token in /settings first!", show_alert=True)
+            return await bot.send_message(user_id, "❌ You must set the Share Bot Token in /settings first!", reply_markup=ReplyKeyboardRemove())
         
         import plugins.share_bot as share_mod
         if not share_mod.share_client or not getattr(share_mod.share_client, 'is_connected', False):
@@ -177,8 +182,8 @@ async def sl_callback(bot, query):
                 await share_mod.start_share_bot(token)
             except Exception: pass
             
-        if not share_mod.share_client:
-            return await query.answer("❌ Share Bot failed to start. Review terminal logs.", show_alert=True)
+        if not share_mod.share_client or not getattr(share_mod.share_client, 'is_connected', False):
+            return await bot.send_message(user_id, "❌ Share Bot failed to start. Review terminal logs.", reply_markup=ReplyKeyboardRemove())
             
         bot_usr = share_mod.share_client.me.username if share_mod.share_client.me else "ShareBot"
         
@@ -189,80 +194,80 @@ async def sl_callback(bot, query):
             worker = await start_clone_bot(_CLIENT, sj['bot_id'])
             
         if not worker:
-            return await query.message.edit_text("❌ Failed to start worker account.")
+            return await bot.send_message(user_id, "❌ Failed to start worker account.", reply_markup=ReplyKeyboardRemove())
 
-        await query.message.edit_text("<i>⏳ Scanning database and generating mathematically grouped batches...</i>")
+        sts = await info_msg.reply_text("<i>⏳ Scanning database and generating mathematically grouped batches...</i>", reply_markup=ReplyKeyboardRemove())
         
-        try:
-            current_id = sj['start_id']
-            end_ep = sj['end_id']
-            chunk_size = sj['batch_size']
+        current_id = sj['start_id']
+        end_ep = sj['end_id']
+        chunk_size = sj['batch_size']
+        
+        # Phase 1: Scan and create raw buttons
+        raw_buttons = []
+        
+        while current_id <= end_ep:
+            chunk_end = min(current_id + chunk_size - 1, end_ep)
+            msg_ids = list(range(current_id, chunk_end + 1))
             
-            # Phase 1: Scan and create raw buttons
-            raw_buttons = []
+            valid_ids = []
+            messages = await worker.get_messages(sj['source'], msg_ids)
+            for m in messages:
+                if m.empty or m.service: continue
+                valid_ids.append(m.id)
             
-            while current_id <= end_ep:
-                chunk_end = min(current_id + chunk_size - 1, end_ep)
-                msg_ids = list(range(current_id, chunk_end + 1))
+            if valid_ids:
+                uuid_str = str(uuid.uuid4()).replace('-', '')[:16]
+                await db.save_share_link(uuid_str, valid_ids, sj['source'])
                 
-                valid_ids = []
-                messages = await worker.get_messages(sj['source'], msg_ids)
-                for m in messages:
-                    if m.empty or m.service: continue
-                    valid_ids.append(m.id)
+                url = f"https://t.me/{bot_usr}?start={uuid_str}"
+                # Format e.g., "1–20"
+                btn_text = f"{valid_ids[0]} - {valid_ids[-1]}" if len(valid_ids) > 1 else str(valid_ids[0])
+                btn = InlineKeyboardButton(btn_text, url=url)
                 
-                if valid_ids:
-                    uuid_str = str(uuid.uuid4()).replace('-', '')[:16]
-                    await db.save_share_link(uuid_str, valid_ids, sj['source'])
-                    
-                    url = f"https://t.me/{bot_usr}?start={uuid_str}"
-                    # Format e.g., "1–20"
-                    btn_text = f"{valid_ids[0]} - {valid_ids[-1]}" if len(valid_ids) > 1 else str(valid_ids[0])
-                    btn = InlineKeyboardButton(btn_text, url=url)
-                    
-                    raw_buttons.append({
-                        "btn": btn,
-                        "start_id": valid_ids[0],
-                        "end_id": valid_ids[-1]
-                    })
-                    
-                current_id = chunk_end + 1
-                await asyncio.sleep(1) # Floodwaits
+                raw_buttons.append({
+                    "btn": btn,
+                    "start_id": valid_ids[0],
+                    "end_id": valid_ids[-1]
+                })
                 
-            # Phase 2: Group and Post in batches of 10
-            post_count = 0
-            for i in range(0, len(raw_buttons), 10):
-                chunk_btns = raw_buttons[i:i+10]
-                
-                first_ep = chunk_btns[0]["start_id"]
-                last_ep = chunk_btns[-1]["end_id"]
-                
-                # Title uses Story Name + Range
-                txt = f"<b>{sj['story'].upper()} EPS {first_ep} - {last_ep}</b>"
-                
-                keyboard = []
-                # 2 buttons per row
-                for j in range(0, len(chunk_btns), 2):
-                    row = [cb["btn"] for cb in chunk_btns[j:j+2]]
-                    keyboard.append(row)
-                    
-                # Permanent footer row
-                keyboard.append([
-                    InlineKeyboardButton("Tutorial 🎥", url="https://t.me/StoriesLinkopningguide"),
-                    InlineKeyboardButton("Issue ?", url="https://t.me/+EAc-6v1bmZ1iMDBl")
-                ])
-                
-                await worker.send_message(
-                    chat_id=sj['target'],
-                    text=txt,
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-                post_count += 1
-                await asyncio.sleep(1)
-                
-            await query.message.edit_text(f"<b>✅ Completed!</b>\n\nGenerated ({post_count}) structured posts containing {len(raw_buttons)} protected links mapped to @{bot_usr}.")
+            current_id = chunk_end + 1
+            await asyncio.sleep(1) # Floodwaits
             
-        except Exception as e:
-            await query.message.reply_text(f"<b>Error during linking:</b>\n<code>{e}</code>")
-        finally:
+        # Phase 2: Group and Post in batches of 10
+        post_count = 0
+        for i in range(0, len(raw_buttons), 10):
+            chunk_btns = raw_buttons[i:i+10]
+            
+            first_ep = chunk_btns[0]["start_id"]
+            last_ep = chunk_btns[-1]["end_id"]
+            
+            # Title uses Story Name + Range
+            txt = f"<b>{sj['story'].upper()} EPS {first_ep} - {last_ep}</b>"
+            
+            keyboard = []
+            # 2 buttons per row
+            for j in range(0, len(chunk_btns), 2):
+                row = [cb["btn"] for cb in chunk_btns[j:j+2]]
+                keyboard.append(row)
+                
+            # Permanent footer row
+            keyboard.append([
+                InlineKeyboardButton("Tutorial 🎥", url="https://t.me/StoriesLinkopningguide"),
+                InlineKeyboardButton("Issue ?", url="https://t.me/+EAc-6v1bmZ1iMDBl")
+            ])
+            
+            await worker.send_message(
+                chat_id=sj['target'],
+                text=txt,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            post_count += 1
+            await asyncio.sleep(1)
+            
+        await sts.edit_text(f"<b>✅ Completed!</b>\n\nGenerated ({post_count}) structured posts containing {len(raw_buttons)} protected links mapped to @{bot_usr}.")
+        
+    except Exception as e:
+        await bot.send_message(user_id, f"<b>Error during linking:</b>\n<code>{e}</code>", reply_markup=ReplyKeyboardRemove())
+    finally:
+        if user_id in new_share_job:
             del new_share_job[user_id]
