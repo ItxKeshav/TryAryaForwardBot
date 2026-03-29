@@ -32,19 +32,14 @@ _pending_cleans: dict[int, dict] = {}
 # ──────────────────────────────────────────────────────────────────────────────
 
 def __parse_link(link: str):
+    import re
     link = link.strip().rstrip('/')
-    if "t.me/" not in link:
-        return None, None
-    parts = link.split('/')
-    if not parts[-1].isdigit():
-        return None, None
-    msg_id = int(parts[-1])
-    
-    if "t.me/c/" in link:
-        chat_id = int(f"-100{parts[-2]}")
-    else:
-        chat_id = parts[-2]
-    return chat_id, msg_id
+    m = re.search(r'https?://t\.me/c/(\d+)(?:/\d+)?/(\d+)', link)
+    if m: return int("-100" + m.group(1)), int(m.group(2))
+    m = re.search(r'https?://t\.me/([^/]+)(?:/\d+)?/(\d+)', link)
+    if m and m.group(1) not in ['joinchat', '+', 'c']:
+        return m.group(1), int(m.group(2))
+    return None, None
 
 def _type_matches(msg, wanted: str) -> bool:
     if msg.empty or msg.service:

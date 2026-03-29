@@ -142,25 +142,50 @@ async def settings_query(bot, query):
   elif type=="addchannel":  
      await query.message.delete()
      try:
-         text = await bot.send_message(user_id, "<b>❪ SET TARGET CHAT ❫\n\nForward a message from Your target chat\n/cancel - cancel this process</b>")
+         text = await bot.send_message(user_id, "<b>❪ ADD CHAT ❫\n\nForward a message from the chat, OR send its Chat ID (e.g. -100...), OR send a link to any message in the chat.\n/cancel - cancel this process</b>")
          chat_ids = await bot.listen(chat_id=user_id, timeout=300)
-         if chat_ids.text=="/cancel":
-            await chat_ids.delete()
-            return await text.edit_text(
-                  "<b>process canceled</b>",
-                  reply_markup=InlineKeyboardMarkup(buttons))
-         elif not chat_ids.forward_date:
-            await chat_ids.delete()
-            return await text.edit_text("**This is not a forward message**")
-         else:
-            chat_id = chat_ids.forward_from_chat.id
-            title = chat_ids.forward_from_chat.title
-            username = chat_ids.forward_from_chat.username
-            username = "@" + username if username else "private"
+         if chat_ids.text == "/cancel":
+             await chat_ids.delete()
+             return await text.edit_text("<b>process canceled</b>", reply_markup=InlineKeyboardMarkup(buttons))
+             
+         chat_id, title, username = None, "Unknown Chat", "private"
+         
+         if getattr(chat_ids, 'forward_from_chat', None):
+             chat_id = chat_ids.forward_from_chat.id
+             title = chat_ids.forward_from_chat.title
+             username = "@" + chat_ids.forward_from_chat.username if chat_ids.forward_from_chat.username else "private"
+         elif chat_ids.text:
+             txt = chat_ids.text.strip()
+             if txt.lstrip('-').isdigit():
+                 chat_id = int(txt)
+             elif "t.me/c/" in txt:
+                 import re
+                 m = re.search(r't\.me/c/(\d+)', txt)
+                 if m: chat_id = int("-100" + m.group(1))
+             elif "t.me/" in txt:
+                 import re
+                 m = re.search(r't\.me/([^/]+)', txt.replace('https://','').replace('http://',''))
+                 if m and m.group(1) not in ['joinchat', '+', 'c']:
+                     chat_id = m.group(1)
+                     username = "@" + m.group(1)
+                     
+         if not chat_id:
+             await chat_ids.delete()
+             return await text.edit_text("**Could not extract Chat ID. Invalid forward or link.**", reply_markup=InlineKeyboardMarkup(buttons))
+         
+         try:
+             # Try to resolve chat title
+             chat_info = await bot.get_chat(chat_id)
+             chat_id = chat_info.id
+             title = chat_info.title or title
+             username = "@" + chat_info.username if getattr(chat_info, 'username', None) else username
+         except Exception:
+             pass
+             
          chat = await db.add_channel(user_id, chat_id, title, username)
          await chat_ids.delete()
          await text.edit_text(
-            "<b>Successfully updated</b>" if chat else "<b>This channel already added</b>",
+            "<b>Successfully updated</b>" if chat else "<b>This channel is already added</b>",
             reply_markup=InlineKeyboardMarkup(buttons))
      except asyncio.exceptions.TimeoutError:
          await text.edit_text('Process has been automatically cancelled', reply_markup=InlineKeyboardMarkup(buttons))

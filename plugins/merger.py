@@ -260,11 +260,11 @@ def _check_ffmpeg():
     return shutil.which("ffmpeg") is not None
 
 def _parse_link(text):
-    text = text.strip()
+    text = text.strip().rstrip('/')
     if text.isdigit(): return None, int(text)
-    m = re.match(r'https?://t\.me/c/(\d+)/(\d+)', text)
+    m = re.search(r'https?://t\.me/c/(\d+)(?:/\d+)?/(\d+)', text)
     if m: return int(m.group(1)), int(m.group(2))
-    m = re.match(r'https?://t\.me/([^/]+)/(\d+)', text)
+    m = re.search(r'https?://t\.me/([^/]+)(?:/\d+)?/(\d+)', text)
     if m: return m.group(1), int(m.group(2))
     return None, None
 
