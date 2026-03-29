@@ -331,19 +331,25 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                     if title: text += " " + str(title)
 
             # Priority 1 — named keyword + number: "Ep 23", "Episode 23", "Part 23"
-            m = _re.search(r'\b(?:ep|episode|ch|chapter|part|audio)\s*[-_.]?\s*(\d{1,4})\b', text, _re.IGNORECASE)
+            m = _re.search(r'\b(?:ep|episode|ch|chapter|part|audio)\s*[-_.]?\s*(\d{1,4})(?!\d)', text, _re.IGNORECASE)
             if m:
                 return int(m.group(1)), int(m.group(1)), False
 
             # Priority 2 — explicit range: "31-40", "31 to 40" → grouped file
-            m2 = _re.search(r'\b(\d{1,4})\s*[-–—to]+\s*(\d{1,4})\b', text, _re.IGNORECASE)
+            m2 = _re.search(r'(?<!\d)(\d{1,4})\s*[-–—to]+\s*(\d{1,4})(?!\d)', text, _re.IGNORECASE)
             if m2:
                 s, e = int(m2.group(1)), int(m2.group(2))
                 if 0 < s < e and (e - s) < 500:
                     return s, e, True
 
-            # Priority 3 — last standalone number (handles "204.mp3" → 204)
-            nums = _re.findall(r'\b\d{1,4}\b', text)
+            # Priority 3 — scan for standalone digits but avoid resolutions/years at the end
+            # Remove common metadata numbers that throw off the "last number" detection
+            clean_text = _re.sub(r'(?<!\d)(?:720|1080|480|360|240|144|2160)[pPiI]\b', '', text)
+            clean_text = _re.sub(r'(?<!\d)(?:201\d|202\d|203\d|199\d)\b', '', clean_text)  # skip 1990-2039 years
+            clean_text = _re.sub(r'(?i)\b(?:x264|x265|h264|h265|hevc|mp4|mkv|mb|gb|kbps)\b', '', clean_text)
+            
+            # Using (?<!\d) and (?!\d) instead of \b so that "Name166" works correctly.
+            nums = _re.findall(r'(?<!\d)(\d{1,4})(?!\d)', clean_text)
             if nums:
                 return int(nums[-1]), int(nums[-1]), False
 
