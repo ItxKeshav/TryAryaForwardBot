@@ -148,7 +148,7 @@ async def settings_query(bot, query):
 
   elif type == "sharebot":
      token       = await db.get_share_bot_token()
-     protect     = await db.get_share_protect(user_id)
+     protect     = await db.get_share_protect_global()
      auto_delete = await db.get_share_autodelete_global()
      bpp         = await db.get_share_buttons_per_post()
      fsub_chs    = await db.get_share_fsub_channels()
@@ -177,8 +177,8 @@ async def settings_query(bot, query):
      await query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(buttons))
 
   elif type == "sharebotprotect":
-     protect = await db.get_share_protect(user_id)
-     await db.set_share_protect(user_id, not protect)
+     protect = await db.get_share_protect_global()
+     await db.set_share_protect_global(not protect)
      await query.answer(f"Protection turned {'OFF' if protect else 'ON'}")
      return await edit_settings(client, query, "sharebot")
 
@@ -309,17 +309,24 @@ async def settings_query(bot, query):
      return await edit_settings(client, query, "sharebot")
 
   elif type == "editsharebot":
+     import re
      await query.message.delete()
      try:
-         txtmsg = await bot.send_message(user_id, "<b>Send the Bot Token for the File-Sharing Bot:</b>\n<i>(Get it from @BotFather)</i>\n\n/cancel to abort")
+         txtmsg = await bot.send_message(user_id, "<b>Send the Bot Token for the File-Sharing Bot:</b>\n<i>(Get it from @BotFather)</i>\n\n/remove - to delete current token.\n/cancel - to abort.")
          resp = await bot.listen(chat_id=user_id, timeout=120)
          if resp.text == "/cancel":
              await resp.delete()
              return await txtmsg.edit_text("<b>Cancelled.</b>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩ Back', callback_data='settings#sharebot')]]))
-         new_token = resp.text.strip()
-         if ":" not in new_token:
+         if resp.text == "/remove":
+             await resp.delete()
+             await db.set_share_bot_token("")
+             return await txtmsg.edit_text("<b>Token Removed.</b>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩ Back', callback_data='settings#sharebot')]]))
+            
+         bot_token = re.findall(r'\d{8,10}:[A-Za-z0-9_-]{35}', resp.text)
+         if not bot_token:
              return await txtmsg.edit_text("<b>Invalid Token Format.</b>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩ Back', callback_data='settings#sharebot')]]))
          
+         new_token = bot_token[0]
          await db.set_share_bot_token(new_token)
          # Start immediately
          try:

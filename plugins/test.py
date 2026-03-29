@@ -31,6 +31,12 @@ async def _schedule_delete(bot, chat_id, message_id, delay=43200): # 12 hours
         pass
 
 async def start_clone_bot(FwdBot, data=None):
+   try:
+       from plugins.share_bot import register_share_handlers
+       register_share_handlers(FwdBot)
+   except Exception as e:
+       logger.warning(f"Could not bind share handlers to clone: {e}")
+       
    await FwdBot.start()
    #
    async def iter_messages(

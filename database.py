@@ -35,12 +35,11 @@ class Database:
         doc = await self.stats.find_one({'_id': 'share_bot'})
         return doc.get('token') if doc else None
 
-    async def set_share_protect(self, user_id: int, protect: bool):
-        await self.col.update_one({'_id': user_id}, {'$set': {'share_protect': protect}}, upsert=True)
+    async def set_share_protect_global(self, protect: bool):
+        await self._set_share_cfg(protect=protect)
 
-    async def get_share_protect(self, user_id: int) -> bool:
-        doc = await self.col.find_one({'_id': user_id})
-        return doc.get('share_protect', True) if doc else True
+    async def get_share_protect_global(self) -> bool:
+        return (await self._share_cfg()).get('protect', True)
 
     async def set_share_autodelete(self, user_id: int, minutes: int):
         await self.col.update_one({'_id': user_id}, {'$set': {'share_autodelete': minutes}}, upsert=True)

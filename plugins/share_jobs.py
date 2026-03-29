@@ -146,28 +146,10 @@ async def _create_share_flow(bot, user_id):
         if batch_size < 1: batch_size = 20
         new_share_job[user_id]['batch_size'] = batch_size
 
-        msg_start_ep = await _ask(bot, user_id,
-            "<b>❪ STEP 8: STARTING EPISODE NUMBER ❫</b>\n\n"
-            "What is the episode number of the <b>first message</b> in your range?\n"
-            "Example: if the first file is <code>Episode 201</code>, type <code>201</code>\n\n"
-            "<i>This anchors every message ID to its real episode number so labels are always accurate, "
-            "even when episodes are missing or duplicated.</i>",
-            reply_markup=markup
-        )
-        if (msg_start_ep.text or "") == "/cancel": return await bot.send_message(user_id, "Cancelled.", reply_markup=ReplyKeyboardRemove())
-        raw_ep = (msg_start_ep.text or msg_start_ep.caption or "1").strip()
-        start_ep = int(raw_ep) if raw_ep.isdigit() else 1
-        if start_ep < 1: start_ep = 1
-        new_share_job[user_id]['start_ep'] = start_ep
-        
+        # No longer need step 8 / start_ep because we extract numbers directly from captions/filenames!
+
         sj = new_share_job[user_id]
-        start_ep    = sj.get('start_ep', 1)
-        ep_offset   = start_ep - sj['start_id']   # ep_num = msg_id + ep_offset
         total_msgs  = (sj['end_id'] - sj['start_id']) + 1
-        end_ep_num  = sj['end_id'] + ep_offset
-        # How many full windows of batch_size cover [start_ep … end_ep_num]?
-        total_links = math.ceil((end_ep_num - start_ep + 1) / sj['batch_size'])
-        total_posts = math.ceil(total_links / 10)
         
         markup_conf = ReplyKeyboardMarkup([["🚀 Generate & Group Links"], ["❌ Cancel"]], resize_keyboard=True, one_time_keyboard=True)
         conf_msg = await _ask(bot, user_id,
@@ -176,16 +158,13 @@ async def _create_share_flow(bot, user_id):
             f"<b>Source ID:</b> <code>{sj['source']}</code>\n"
             f"<b>Target ID:</b> <code>{sj['target']}</code>\n"
             f"<b>Msg ID Range:</b> {sj['start_id']} → {sj['end_id']} ({total_msgs} slots)\n"
-            f"<b>Episode Range:</b> {start_ep} → {end_ep_num}\n"
             f"<b>Episodes/Button:</b> {sj['batch_size']}\n"
-            f"<b>Est. Buttons:</b> ~{total_links}\n"
-            f"<b>Est. Posts ({10} btns each):</b> ~{total_posts}\n"
-            f"\n<i>⚠️ Missing episodes will be silently skipped inside their correct window.</i>",
+            f"\n<i>🤖 Smart Parse active: I will read filenames & captions to correctly group duplicates and missing episodes.</i>",
             reply_markup=markup_conf
         )
         
         if not conf_msg.text or conf_msg.text == "/cancel" or "Cancel" in conf_msg.text:
-            if user_id in new_share_job: del new_share_job[user_id]
+            new_share_job.pop(user_id, None)
             return await bot.send_message(user_id, "<b>Cancelled.</b>", reply_markup=ReplyKeyboardRemove())
             
         if "Generate" in conf_msg.text:
@@ -283,7 +262,7 @@ async def _build_share_links(bot, user_id, sj, info_msg):
 
         # Save db channel access_hash for delivery-time peer injection in the Share Bot
         db_access_hash   = db_peer.access_hash if hasattr(db_peer, 'access_hash') else 0
-        protect          = await db.get_share_protect(user_id)
+        protect          = await db.get_share_protect_global()
         buttons_per_post = await db.get_share_buttons_per_post()
 
 
@@ -294,18 +273,12 @@ async def _build_share_links(bot, user_id, sj, info_msg):
         story          = sj['story']
         SCAN_CHUNK     = 100  # Telegram allows up to 100 IDs per GetMessages call
 
-        # ── PHASE 1: Scan entire range, collect ALL valid message IDs ──────────
-        # We scan in chunks of 100 IDs regardless of batch_size.
-        # This decouples the API call size from the button grouping size,
-        # so episodes are never mis-numbered due to partial chunks.
+        # ── PHASE 1: Scan entire range, reading raw objects ──────────
         import re as _re
-        all_valid_ids = []
+        all_valid_msgs = []
         total_scanned = 0
 
-        await safe_edit(
-            f"<i>⏳ Scanning database channel "
-            f"(IDs {current_id}–{end_ep}, {end_ep - current_id + 1} slots)...</i>"
-        )
+        await safe_edit(f"<i>⏳ Scanning and analyzing files {current_id}–{end_ep}...</i>")
 
         while current_id <= end_ep:
             chunk_end = min(current_id + SCAN_CHUNK - 1, end_ep)
@@ -313,126 +286,96 @@ async def _build_share_links(bot, user_id, sj, info_msg):
 
             for attempt in range(6):
                 try:
-                    raw_result = await bot.invoke(
-                        ChannelGetMessages(
-                            channel=db_peer,
-                            id=[InputMessageID(id=mid) for mid in msg_ids]
-                        )
-                    )
-                    for m in raw_result.messages:
-                        if type(m).__name__ not in ('MessageEmpty', 'MessageService'):
-                            all_valid_ids.append(m.id)
+                    msgs = await bot.get_messages(db_peer, msg_ids)
+                    if not isinstance(msgs, list): msgs = [msgs]
+                    
+                    for m in msgs:
+                        if m and not m.empty:
+                            all_valid_msgs.append(m)
                     break
                 except Exception as e:
                     err_str = str(e)
                     if "FLOOD_WAIT" in err_str or "420" in err_str:
                         mw = _re.search(r'wait of (\d+)', err_str)
                         wait_secs = (int(mw.group(1)) + 2) if mw else 15
-                        await safe_edit(
-                            f"<i>⏳ Rate limit — waiting {wait_secs}s "
-                            f"(scanned {current_id - sj['start_id']} / "
-                            f"{end_ep - sj['start_id'] + 1} slots)...</i>"
-                        )
+                        await safe_edit(f"<i>⏳ Flood Wait {wait_secs}s... (scanned {total_scanned})</i>")
                         await asyncio.sleep(wait_secs)
                         continue
-                    return await safe_edit(
-                        f"<b>❌ Scan Error:</b> <code>{e}</code>\n\n"
-                        f"<i>Make sure the Main Bot is an admin in the database channel.</i>"
-                    )
+                    return await safe_edit(f"<b>❌ Scan Error:</b> <code>{e}</code>")
             else:
                 return await safe_edit("❌ Scan aborted after 6 retries due to FloodWait.")
 
             total_scanned += len(msg_ids)
             current_id = chunk_end + 1
-            await asyncio.sleep(0.3)   # gentle pacing
+            await asyncio.sleep(0.3)
 
-        if not all_valid_ids:
-            return await safe_edit("❌ No valid messages found in the given ID range. Check Start/End IDs.")
+        if not all_valid_msgs:
+            return await safe_edit("❌ No files found in that range.")
 
-        # Sort to guarantee ascending order (Telegram may return out-of-order)
-        all_valid_ids.sort()
+        # ── PARSE EPISODE NUMBERS NATIVELY ──
+        # Extract episode number from filename/caption using smart pattern matching
+        def extract_ep(msg) -> int:
+            text = (msg.caption or "") + " " + (msg.text or "")
+            if msg.document and getattr(msg.document, "file_name", None):
+                text += " " + str(msg.document.file_name)
+            
+            # Rule 1: Explicit pattern "Ep 23", "Episode 23", "Part 23", "Ch 23"
+            m = _re.search(r'\b(ep|episode|ch|chapter|part|audio)\s*[-_.:]?\s*(\d+)\b', text, _re.IGNORECASE)
+            if m: return int(m.group(2))
+            
+            # Rule 2: Last continuous number <= 9999 (to avoid catching 6-digit hash IDs)
+            numbers = _re.findall(r'\b\d{1,4}\b', text)
+            if numbers: return int(numbers[-1])
+            return -1
 
-        # ── PHASE 2: Offset-Based Episode-Window Grouping ─────────────────────
-        #
-        # Core principle: every message_id maps to a FIXED real episode number:
-        #     ep_num = message_id + ep_offset   (where ep_offset = start_ep - start_id)
-        #
-        # We group by FIXED windows of batch_size episodes:
-        #     window_index = (ep_num - start_ep) // batch_size
-        #     window_start = start_ep + window_index * batch_size
-        #     window_end   = window_start + batch_size - 1
-        #
-        # This guarantees:
-        #  ✅ Missing ep 206 → button "201–220" skips it, still labelled 201–220
-        #  ✅ Next button correctly starts at 221 (not 220)
-        #  ✅ Duplicate msg at same offset → only first kept (dedup by ep_num)
-        #  ✅ No overlapping button ranges ever
-        #
-        start_ep   = sj.get('start_ep', 1)
-        ep_offset  = start_ep - sj['start_id']  # msg_id + ep_offset = ep_num
+        all_valid_msgs.sort(key=lambda x: x.id) # Sort chronologically
+        
+        parsed_data = [] # List of tuples: (msg_id, ep_num)
+        last_known = 0
+        
+        for m in all_valid_msgs:
+            ep = extract_ep(m)
+            if ep == -1:
+                # If utterly failed to parse, assume it's the next logical episode
+                ep = last_known + 1
+            parsed_data.append((m.id, ep))
+            last_known = ep
 
-        # Deduplicate: if two message IDs map to same episode slot, keep FIRST
-        seen_ep_nums   = set()
-        ep_to_msg_id   = {}    # ep_num → message_id
-        duplicates_dropped = 0
-        for msg_id in all_valid_ids:        # already sorted ascending
-            ep_num = msg_id + ep_offset
-            if ep_num in seen_ep_nums:
-                duplicates_dropped += 1
-                logger.warning(
-                    f"[ShareBot] Duplicate episode slot ep={ep_num} (msg_id={msg_id}) — skipping duplicate."
-                )
-                continue
-            seen_ep_nums.add(ep_num)
-            ep_to_msg_id[ep_num] = msg_id
+        # Sort files by their detected episode number securely
+        parsed_data.sort(key=lambda x: x[1])
 
-        # Determine window boundaries covering every episode seen
-        all_ep_nums = sorted(ep_to_msg_id.keys())
-        if not all_ep_nums:
-            return await safe_edit("❌ No valid non-duplicate episodes found. Check your range.")
+        first_ep_num = parsed_data[0][1]
+        last_ep_num  = parsed_data[-1][1]
 
-        first_ep_num = all_ep_nums[0]
-        last_ep_num  = all_ep_nums[-1]
-
-        # Snap first window to a clean batch boundary:
-        #   window_start = start_ep + floor((first - start_ep) / batch_size) * batch_size
         def window_start_for(ep: int) -> int:
-            """Return the start of the batch_size window that ep falls into."""
-            return start_ep + ((ep - start_ep) // batch_size) * batch_size
+            return first_ep_num + ((ep - first_ep_num) // batch_size) * batch_size
 
         raw_buttons = []
-        w_start = window_start_for(first_ep_num)
+        w_start = first_ep_num
 
         while w_start <= last_ep_num:
             w_end = w_start + batch_size - 1
 
-            # Collect all messages whose episode number falls in [w_start, w_end]
-            batch = [
-                ep_to_msg_id[ep]
-                for ep in all_ep_nums
-                if w_start <= ep <= w_end
-            ]
+            # Get EVERY msg_id inside this window (duplicates inherently included!)
+            batch = [pid for pid, pep in parsed_data if w_start <= pep <= w_end]
 
-            if batch:   # only create a button if there is at least 1 file
+            if batch:
                 uuid_str = str(uuid.uuid4()).replace('-', '')[:16]
                 await db.save_share_link(
                     uuid_str, batch, source_chat_id,
                     protect=protect, access_hash=db_access_hash
                 )
-
                 url = f"https://t.me/{bot_usr}?start={uuid_str}"
 
-                # Label = the WINDOW boundaries (NOT just the files present)
-                # so users see "201–220" even if 206 is missing inside
                 btn_text = str(w_start) if batch_size == 1 else f"{w_start}\u2013{w_end}"
-
                 raw_buttons.append({
                     "btn":      InlineKeyboardButton(btn_text, url=url),
                     "ep_start": w_start,
                     "ep_end":   w_end,
                 })
 
-            w_start += batch_size   # advance to next window — never overlaps
+            w_start += batch_size
+
 
         # ── PHASE 3: Group buttons into posts and send to target channel ──────
         post_count = 0
@@ -454,30 +397,37 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 InlineKeyboardButton("Support ❓", url="https://t.me/+EAc-6v1bmZ1iMDBl")
             ])
 
-            try:
-                await poster.send_message(
-                    chat_id=sj['target'],
-                    text=txt,
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-            except Exception as e:
-                return await safe_edit(
-                    f"<b>❌ Failed to post to target channel:</b> <code>{e}</code>\n\n"
-                    f"<i>Make sure the selected account is an admin in the target/public channel.</i>"
-                )
+            for attempt in range(6):
+                try:
+                    await poster.send_message(
+                        chat_id=sj['target'],
+                        text=txt,
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                    break
+                except Exception as e:
+                    err_str = str(e)
+                    import re as _re
+                    if "FLOOD_WAIT" in err_str or "420" in err_str:
+                        mw = _re.search(r'wait of (\d+)', err_str)
+                        wait_secs = (int(mw.group(1)) + 2) if mw else 35
+                        await safe_edit(f"<i>⏳ Rate limit while posting... waiting {wait_secs}s</i>")
+                        await asyncio.sleep(wait_secs)
+                        continue
+                    else:
+                        return await safe_edit(
+                            f"<b>❌ Failed to post to target channel:</b> <code>{e}</code>\n\n"
+                            f"<i>Make sure the selected account is an admin in the target/public channel.</i>"
+                        )
+            else:
+                return await safe_edit("❌ Posting aborted after 6 retries due to FloodWait.")
 
             post_count += 1
             await asyncio.sleep(1)
 
-        total_files = sum(
-            1 for ep in all_ep_nums
-            if any(b["ep_start"] <= ep <= b["ep_end"] for b in raw_buttons)
-        )
-        dup_note = f"\n⚠️ <b>Duplicates skipped:</b> {duplicates_dropped}" if duplicates_dropped else ""
         await safe_edit(
             f"<b>✅ Share Links Generated!</b>\n\n"
-            f"📊 <b>Valid files scanned:</b> {len(all_valid_ids)}\n"
-            f"🔁 <b>Unique episodes:</b> {len(all_ep_nums)}{dup_note}\n"
+            f"📊 <b>Files processed:</b> {len(parsed_data)}\n"
             f"🎯 <b>Episode range:</b> {first_ep_num}–{last_ep_num}\n"
             f"🔗 <b>Link buttons created:</b> {len(raw_buttons)}\n"
             f"📝 <b>Posts sent to channel:</b> {post_count}\n\n"
@@ -493,5 +443,4 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             await bot.send_message(user_id, f"<b>Error during link generation:</b>\n<code>{e}</code>")
         logger.error(f"Share link generation error:\n{tb}")
     finally:
-        if user_id in new_share_job:
-            del new_share_job[user_id]
+        new_share_job.pop(user_id, None)

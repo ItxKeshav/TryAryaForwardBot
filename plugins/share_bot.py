@@ -46,8 +46,9 @@ async def check_all_subscriptions(client, user_id: int, fsub_channels: list) -> 
                 not_joined.append(ch)
         except UserNotParticipant:
             not_joined.append(ch)
-        except Exception:
-            pass  # don't block delivery on lookup errors
+        except Exception as e:
+            logger.error(f"FSub check failed (admin needed?): {e}")
+            not_joined.append(ch)  # Fail secure: if we can't check, require it.
     return not_joined
 
 
@@ -111,7 +112,7 @@ def register_share_handlers(app: Client):
 
         msg_ids      = link_data.get('message_ids', [])
         source_chat  = link_data.get('source_chat')
-        protect_flag = link_data.get('protect', True)
+        protect_flag = await db.get_share_protect_global()
 
         if not msg_ids or not source_chat:
             await message.reply_text("<b>❌ Database Error:</b> Missing file references.")
@@ -197,11 +198,13 @@ def register_share_handlers(app: Client):
                 hrs   = auto_delete_mins // 60
                 mins_r= auto_delete_mins % 60
                 del_str = (f"{hrs}h {mins_r}m" if hrs and mins_r
-                           else (f"{hrs}h" if hrs else f"{auto_delete_mins}m"))
+                           else (f"{hrs} hours" if hrs else f"{auto_delete_mins} minutes"))
                 notice = await sts.edit_text(
                     f"<b>✅ {total} file(s) delivered!</b>\n\n"
-                    f"<i>⚠️ These files will <b>auto-delete</b> in <b>{del_str}</b>. "
-                    f"Save them before they disappear!</i>{fail_note}"
+                    f"⚠️ <b>Important:</b>\n"
+                    f"Listen from here only. Due to copyright, the content will auto-delete after {del_str}.\n"
+                    f"If your episodes get auto-deleted, then repeat the same process next time — "
+                    f"you only need to click 'Try Again' once.{fail_note}"
                 )
                 asyncio.create_task(
                     delete_later(client, user_id, sent_ids, notice.id, auto_delete_mins * 60)
