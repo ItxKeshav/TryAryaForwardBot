@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from database import db
 from translation import Translation
 from plugins.lang import t, _tx
@@ -6,7 +7,49 @@ from pyrogram import Client, filters
 from .test import get_configs, update_configs, CLIENT, parse_buttons
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+logger = logging.getLogger(__name__)
 CLIENT = CLIENT()
+
+
+async def _sb_set_text_flow(bot, user_id, query, b_id: str, key: str,
+                             label: str, instructions: str, back_cb: str):
+    """Reusable helper: prompt user for a per-bot text, then save it."""
+    await query.message.delete()
+    ask = await bot.send_message(
+        user_id,
+        f"<b>📝 Set {label}</b>\n\n{instructions}\n\n"
+        "Send /reset to remove current value.\n"
+        "/cancel to abort."
+    )
+    try:
+        resp = await bot.listen(chat_id=user_id, timeout=300)
+        txt = resp.text or resp.caption or ""
+        await resp.delete()
+        if txt.strip() == "/cancel":
+            return await ask.edit_text(
+                "Cancelled.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=back_cb)]])
+            )
+        if txt.strip() == "/reset":
+            await db.set_share_bot_text(b_id, key, "")
+            return await ask.edit_text(
+                f"✅ {label} reset to default.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=back_cb)]])
+            )
+        await db.set_share_bot_text(b_id, key, txt)
+        await ask.edit_text(
+            f"✅ {label} saved!",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=back_cb)]])
+        )
+    except asyncio.TimeoutError:
+        try:
+            await ask.edit_text(
+                "Timeout.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=back_cb)]])
+            )
+        except Exception:
+            pass
+
 
 @Client.on_message(filters.command('settings'))
 async def settings(client, message):
@@ -354,30 +397,293 @@ async def settings_query(bot, query):
               pass
 
   elif type.startswith("sb_view_"):
-      b_id = type.split("_")[-1]
+      b_id = type.split("sb_view_")[1]
       bots = await db.get_share_bots()
       bt = next((x for x in bots if x['id'] == str(b_id)), None)
       if not bt: return await query.answer("Bot not found!")
-      
+
       buttons = [
-          [InlineKeyboardButton('❌ Remove Bot ❌', callback_data=f"settings#sb_remove_{b_id}")],
-          [InlineKeyboardButton('↩ Back', callback_data="settings#sbt_manage")]
+          [InlineKeyboardButton('📝 Wᴇʟᴄᴏᴍᴇ Mᴇssᴀɢᴇ',   callback_data=f"settings#sb_set_welcome_{b_id}")],
+          [InlineKeyboardButton('🗑 Dᴇʟᴇᴛᴇ Mᴇssᴀɢᴇ',      callback_data=f"settings#sb_set_delete_{b_id}")],
+          [InlineKeyboardButton('✅ Sᴜᴄᴄᴇss Mᴇssᴀɢᴇ',     callback_data=f"settings#sb_set_success_{b_id}")],
+          [InlineKeyboardButton('📌 Cᴜsᴛᴏᴍ Cᴀᴘᴛɪᴏɴ',      callback_data=f"settings#sb_set_caption_{b_id}")],
+          [InlineKeyboardButton('✨ Aʙᴏᴜᴛ Sᴇᴄᴛɪᴏɴ',       callback_data=f"settings#sb_about_{b_id}")],
+          [InlineKeyboardButton('📢 Fᴏʀᴄᴇ Sᴜʙsᴄʀɪʙᴇ',    callback_data=f"settings#sb_fsub_{b_id}")],
+          [InlineKeyboardButton('❌ Rᴇᴍᴏᴠᴇ Bᴏᴛ ❌',        callback_data=f"settings#sb_remove_{b_id}")],
+          [InlineKeyboardButton('↩ Bᴀᴄᴋ',                 callback_data="settings#sbt_manage")],
       ]
       await query.message.edit_text(
           f"<b>❪ SHARE BOT PROFILE ❫</b>\n\n"
           f"<b>📝 Name:</b> {bt['name']}\n"
           f"<b>🔗 Username:</b> @{bt['username']}\n"
-          f"<b>🆔 ID:</b> <code>{bt['id']}</code>",
+          f"<b>🆔 ID:</b> <code>{bt['id']}</code>\n\n"
+          "<i>All settings below are specific to this bot.</i>",
           reply_markup=InlineKeyboardMarkup(buttons)
       )
-      
+
+  # ── Per-bot text setters ──────────────────────────────────────────────────
+  elif type.startswith("sb_set_welcome_"):
+      b_id = type.split("sb_set_welcome_")[1]
+      await _sb_set_text_flow(bot, user_id, query, b_id, "welcome_msg",
+          "Wᴇʟᴄᴏᴍᴇ Mᴇssᴀɢᴇ",
+          "Send the new welcome message.\n"
+          "Use <code>{first_name}</code>, <code>{full_name}</code>, <code>{mention}</code> as placeholders.\n"
+          "Any font/formatting is accepted.",
+          f"settings#sb_view_{b_id}")
+
+  elif type.startswith("sb_set_delete_"):
+      b_id = type.split("sb_set_delete_")[1]
+      await _sb_set_text_flow(bot, user_id, query, b_id, "delete_msg",
+          "Dᴇʟᴇᴛᴇ Nᴏᴛɪᴄᴇ Mᴇssᴀɢᴇ",
+          "Send the delete notice text.\n"
+          "Use <code>{time}</code> for the auto-delete duration.\n"
+          "Any font/formatting is accepted.",
+          f"settings#sb_view_{b_id}")
+
+  elif type.startswith("sb_set_success_"):
+      b_id = type.split("sb_set_success_")[1]
+      await _sb_set_text_flow(bot, user_id, query, b_id, "success_msg",
+          "Sᴜᴄᴄᴇss Mᴇssᴀɢᴇ",
+          "Send the success/delivery confirmation message.\nAny font is accepted.",
+          f"settings#sb_view_{b_id}")
+
+  elif type.startswith("sb_set_caption_"):
+      b_id = type.split("sb_set_caption_")[1]
+      await _sb_set_text_flow(bot, user_id, query, b_id, "custom_caption",
+          "Cᴜsᴛᴏᴍ Cᴀᴘᴛɪᴏɴ",
+          "Send the caption to add to delivered media. Any font is accepted.",
+          f"settings#sb_view_{b_id}")
+
+  # ── About section editor ──────────────────────────────────────────────────
+  elif type.startswith("sb_about_"):
+      b_id = type.split("sb_about_")[1]
+      bots = await db.get_share_bots()
+      bt = next((x for x in bots if x['id'] == str(b_id)), None)
+      if not bt: return await query.answer("Bot not found!")
+      about = await db.get_share_bot_about(b_id)
+      img_set = "✅ Set" if about.get('image_id') else "❌ None"
+      txt_set = "✅ Custom" if about.get('custom_text') else "📄 Default"
+      btns = [
+          [InlineKeyboardButton('🖼 Sᴇᴛ Aʙᴏᴜᴛ Iᴍᴀɢᴇ',   callback_data=f"settings#sb_about_img_{b_id}")],
+          [InlineKeyboardButton('📝 Eᴅɪᴛ Aʙᴏᴜᴛ Tᴇxᴛ',   callback_data=f"settings#sb_about_txt_{b_id}")],
+          [InlineKeyboardButton('👤 Eᴅɪᴛ Oᴡɴᴇʀ',         callback_data=f"settings#sb_about_owner_{b_id}")],
+          [InlineKeyboardButton('🔄 Eᴅɪᴛ Vᴇʀsɪᴏɴ',       callback_data=f"settings#sb_about_ver_{b_id}")],
+          [InlineKeyboardButton('🗑 Rᴇsᴇᴛ ᴛᴏ Dᴇꜰᴀᴜʟᴛ',    callback_data=f"settings#sb_about_reset_{b_id}")],
+          [InlineKeyboardButton('↩ Bᴀᴄᴋ',                callback_data=f"settings#sb_view_{b_id}")],
+      ]
+      await query.message.edit_text(
+          f"<b>✨ Aʙᴏᴜᴛ Sᴇᴄᴛɪᴏɴ — {bt['name']}</b>\n\n"
+          f"<b>Image:</b> {img_set}\n"
+          f"<b>Text:</b> {txt_set}\n"
+          f"<b>Owner:</b> {about.get('owner_name', 'JeetX')}\n"
+          f"<b>Version:</b> {about.get('version', 'V1.0')}\n\n"
+          "<i>The About section is shown when users tap the About button in the delivery bot.</i>",
+          reply_markup=InlineKeyboardMarkup(btns)
+      )
+
+  elif type.startswith("sb_about_img_"):
+      b_id = type.split("sb_about_img_")[1]
+      await query.message.delete()
+      ask = await bot.send_message(user_id,
+          "<b>🖼 Send the About image</b> (photo).\n"
+          "This image will appear in the About section.\n"
+          "/cancel to abort."
+      )
+      try:
+          resp = await bot.listen(chat_id=user_id, timeout=120)
+          if resp.text and resp.text.strip() == "/cancel":
+              return await ask.edit_text("Cancelled.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_about_{b_id}")]]))
+          photo = resp.photo
+          if not photo:
+              return await ask.edit_text("❌ No photo received.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_about_{b_id}")]]))
+          about = await db.get_share_bot_about(b_id)
+          about['image_id'] = photo.file_id
+          await db.set_share_bot_about(b_id, about)
+          await ask.edit_text("✅ About image saved!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_about_{b_id}")]]))
+      except asyncio.TimeoutError:
+          await ask.edit_text("Timeout.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_about_{b_id}")]]))
+
+  elif type.startswith("sb_about_txt_"):
+      b_id = type.split("sb_about_txt_")[1]
+      await query.message.delete()
+      ask = await bot.send_message(user_id,
+          "<b>📝 Send the custom About text</b>.\n"
+          "Use any font you like. HTML formatting is supported.\n"
+          "/cancel to abort."
+      )
+      try:
+          resp = await bot.listen(chat_id=user_id, timeout=180)
+          if resp.text and resp.text.strip() == "/cancel":
+              return await ask.edit_text("Cancelled.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_about_{b_id}")]]))
+          txt = resp.text or ""
+          about = await db.get_share_bot_about(b_id)
+          about['custom_text'] = txt
+          await db.set_share_bot_about(b_id, about)
+          await ask.edit_text("✅ About text saved!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_about_{b_id}")]]))
+      except asyncio.TimeoutError:
+          await ask.edit_text("Timeout.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_about_{b_id}")]]))
+
+  elif type.startswith("sb_about_owner_"):
+      b_id = type.split("sb_about_owner_")[1]
+      await query.message.delete()
+      ask = await bot.send_message(user_id,
+          "<b>👤 Send owner name and link</b>\n"
+          "Format: <code>Owner Name | https://t.me/username</code>\n"
+          "/cancel to abort."
+      )
+      try:
+          resp = await bot.listen(chat_id=user_id, timeout=120)
+          if resp.text and resp.text.strip() == "/cancel":
+              return await ask.edit_text("Cancelled.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_about_{b_id}")]]))
+          parts = (resp.text or "").split("|", 1)
+          about = await db.get_share_bot_about(b_id)
+          about['owner_name'] = parts[0].strip()
+          if len(parts) > 1:
+              about['owner_link'] = parts[1].strip()
+          await db.set_share_bot_about(b_id, about)
+          await ask.edit_text("✅ Owner updated!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_about_{b_id}")]]))
+      except asyncio.TimeoutError:
+          await ask.edit_text("Timeout.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_about_{b_id}")]]))
+
+  elif type.startswith("sb_about_ver_"):
+      b_id = type.split("sb_about_ver_")[1]
+      await query.message.delete()
+      ask = await bot.send_message(user_id,
+          "<b>🔄 Send new version string</b> (e.g. <code>V1.2</code>)\n/cancel to abort."
+      )
+      try:
+          resp = await bot.listen(chat_id=user_id, timeout=60)
+          if resp.text and resp.text.strip() == "/cancel":
+              return await ask.edit_text("Cancelled.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_about_{b_id}")]]))
+          about = await db.get_share_bot_about(b_id)
+          about['version'] = (resp.text or "V1.0").strip()
+          await db.set_share_bot_about(b_id, about)
+          await ask.edit_text("✅ Version updated!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_about_{b_id}")]]))
+      except asyncio.TimeoutError:
+          await ask.edit_text("Timeout.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_about_{b_id}")]]))
+
+  elif type.startswith("sb_about_reset_"):
+      b_id = type.split("sb_about_reset_")[1]
+      await db.set_share_bot_about(b_id, {})
+      await query.answer("About reset to defaults.")
+      return await edit_settings(client, query, f"sb_about_{b_id}")
+
+  # ── Per-bot Force-Subscribe ───────────────────────────────────────────────
+  elif type.startswith("sb_fsub_"):
+      suffix = type[len("sb_fsub_"):]
+      # sub-actions: add, jr, del, main list
+      parts = suffix.split("_")
+      if not parts[0].startswith("-") and not parts[0].isdigit():
+          # It's the main FSub page for this bot: sb_fsub_{b_id}
+          b_id = suffix
+          fsub_chs = await db.get_bot_fsub_channels(b_id)
+          lines = []
+          btns  = []
+          for i, ch in enumerate(fsub_chs):
+              jr_lbl = " [JR]" if ch.get('join_request') else ""
+              lines.append(f"{i+1}. {ch.get('title','?')}{jr_lbl}")
+              btns.append([
+                  InlineKeyboardButton(f"🔄 JR #{i+1}",  callback_data=f"settings#sb_fsub_jr_{b_id}_{i}"),
+                  InlineKeyboardButton(f"❌ Del #{i+1}", callback_data=f"settings#sb_fsub_del_{b_id}_{i}"),
+              ])
+          ch_list = "\n".join(lines) if lines else "None configured."
+          if len(fsub_chs) < 6:
+              btns.append([InlineKeyboardButton("➕ Aᴅᴅ Cʜᴀɴɴᴇʟ", callback_data=f"settings#sb_fsub_add_{b_id}")])
+          btns.append([InlineKeyboardButton("↩ Bᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")])
+          await query.message.edit_text(
+              f"<b>📢 Force-Subscribe — Bot Specific</b>\n\n"
+              f"Users must join ALL listed channels to receive files from this bot.\n"
+              f"[JR] = join-request mode.\n\n{ch_list}",
+              reply_markup=InlineKeyboardMarkup(btns)
+          )
+      else:
+          await query.answer("Invalid FSub action.", show_alert=True)
+
+  elif type.startswith("sb_fsub_jr_"):
+      rest = type[len("sb_fsub_jr_"):]
+      # rest = "{b_id}_{idx}"
+      last_under = rest.rfind("_")
+      b_id = rest[:last_under]; idx = int(rest[last_under+1:])
+      fsub_chs = await db.get_bot_fsub_channels(b_id)
+      if 0 <= idx < len(fsub_chs):
+          new_jr = not fsub_chs[idx].get('join_request', False)
+          fsub_chs[idx]['join_request'] = new_jr
+          ch_id = fsub_chs[idx].get('chat_id')
+          if ch_id:
+              try:
+                  if new_jr:
+                      lnk_obj = await bot.create_chat_invite_link(int(ch_id), creates_join_request=True)
+                      fsub_chs[idx]['invite_link'] = lnk_obj.invite_link
+                  else:
+                      fsub_chs[idx]['invite_link'] = await bot.export_chat_invite_link(int(ch_id))
+              except Exception as e:
+                  logger.warning(f"Could not regenerate invite link: {e}")
+          await db.set_bot_fsub_channels(b_id, fsub_chs)
+          status = "ON ✅" if new_jr else "OFF ❌"
+          await query.answer(f"JR: {status}")
+      return await edit_settings(client, query, f"sb_fsub_{b_id}")
+
+  elif type.startswith("sb_fsub_del_"):
+      rest = type[len("sb_fsub_del_"):]
+      last_under = rest.rfind("_")
+      b_id = rest[:last_under]; idx = int(rest[last_under+1:])
+      fsub_chs = await db.get_bot_fsub_channels(b_id)
+      if 0 <= idx < len(fsub_chs):
+          fsub_chs.pop(idx)
+          await db.set_bot_fsub_channels(b_id, fsub_chs)
+          await query.answer("Removed.")
+      return await edit_settings(client, query, f"sb_fsub_{b_id}")
+
+  elif type.startswith("sb_fsub_add_"):
+      b_id = type[len("sb_fsub_add_"):]
+      await query.message.delete()
+      ask = await bot.send_message(user_id,
+          "<b>Send the Channel/Group ID or @username</b>\n"
+          "Example: <code>-1001234567890</code> or <code>@mychannel</code>\n\n"
+          "/cancel to abort"
+      )
+      try:
+          resp = await bot.listen(chat_id=user_id, timeout=120)
+          if resp.text.strip() == "/cancel":
+              await resp.delete()
+              return await ask.edit_text("Cancelled.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_fsub_{b_id}")]]))
+          raw_id = resp.text.strip()
+          await resp.delete()
+          try:
+              ch_obj = await bot.get_chat(raw_id)
+          except Exception as e:
+              err_str = str(e).lower()
+              if "private" in err_str or "peer_id_invalid" in err_str or "channel_invalid" in err_str:
+                  msg = "<b>❌ Cannot access this channel.</b>\nMake sure the Main Bot is admin."
+              else:
+                  msg = f"<b>❌ Error:</b> <code>{e}</code>"
+              return await ask.edit_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_fsub_{b_id}")]]))
+          try:
+              invite = await bot.export_chat_invite_link(ch_obj.id)
+          except Exception:
+              invite = getattr(ch_obj, 'invite_link', '') or ''
+          fsub_chs = await db.get_bot_fsub_channels(b_id)
+          fsub_chs.append({
+              'chat_id':     str(ch_obj.id),
+              'title':       ch_obj.title or ch_obj.username or str(ch_obj.id),
+              'invite_link': invite,
+              'join_request': False,
+          })
+          await db.set_bot_fsub_channels(b_id, fsub_chs)
+          await ask.edit_text(
+              f"<b>✅ Added: {ch_obj.title}</b>\n<i>Toggle JR to enable join-request mode.</i>",
+              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_fsub_{b_id}")]]))
+      except asyncio.TimeoutError:
+          await ask.edit_text("Timeout.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data=f"settings#sb_fsub_{b_id}")]]))
+
   elif type.startswith("sb_remove_"):
-      b_id = type.split("_")[-1]
+      b_id = type.split("sb_remove_")[1]
       await db.remove_share_bot(b_id)
-      
-      # We could stop the client from share_bot.py but it's fine if it hangs active until restart.
+      await db.remove_share_bot_config(b_id)  # clean up per-bot config too
       await query.answer("Bot Removed!")
       return await edit_settings(client, query, "sbt_manage")
+
+
 
   elif type == "sharefsub":
      fsub_chs = await db.get_share_fsub_channels()

@@ -20,6 +20,13 @@ share_clients: dict = {}   # { bot_id_str: Client }
 active_downloads: set = set()
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Arya Bot Font constants
+# ─────────────────────────────────────────────────────────────────────────────
+ARYA_VERSION = "V1.0"
+UPDATE_LINK   = "https://t.me/MeJeetX"
+SUPPORT_LINK  = "https://t.me/LightchatX"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -27,9 +34,11 @@ def format_msg(text: str, user) -> str:
     if not text:
         return ""
     try:
+        full = (user.first_name or "") + (" " + user.last_name if user.last_name else "")
         return text.format(
             first_name=user.first_name or "",
             last_name=user.last_name or "",
+            full_name=full.strip(),
             mention=user.mention or user.first_name or "User",
         )
     except Exception:
@@ -50,8 +59,12 @@ async def delete_later(client, chat_id, msg_ids: list, notice_id: int, delay_sec
         pass
 
 
-async def check_all_subscriptions(client, user_id: int, fsub_channels: list) -> list:
-    """Returns list of channel dicts the user has NOT joined (or pending for JR channels)."""
+async def check_all_subscriptions(client, user_id: int, fsub_channels: list, bot_id: str = None) -> list:
+    """
+    Returns list of channel dicts the user has NOT joined.
+    For Join-Request channels: if the user already has a PENDING join request
+    (detected by the auto-approve handler), they are treated as joined.
+    """
     not_joined = []
     for ch in fsub_channels:
         chat_id = ch.get('chat_id')
@@ -59,6 +72,7 @@ async def check_all_subscriptions(client, user_id: int, fsub_channels: list) -> 
             continue
         is_jr = ch.get('join_request', False)
         try:
+            # Pre-warm peer cache (in_memory client)
             try:
                 await client.get_chat(int(chat_id))
             except Exception:
@@ -66,56 +80,79 @@ async def check_all_subscriptions(client, user_id: int, fsub_channels: list) -> 
             member = await client.get_chat_member(int(chat_id), user_id)
             if member.status in (enums.ChatMemberStatus.LEFT, enums.ChatMemberStatus.BANNED):
                 not_joined.append(ch)
-            # MEMBER / ADMINISTRATOR / OWNER / RESTRICTED = they're in, allow
+            # MEMBER / ADMINISTRATOR / OWNER / RESTRICTED = they're in → allow
         except UserNotParticipant:
             if is_jr:
-                # Mark as needing join request (not yet a member, but JR mode)
-                ch_copy = dict(ch)
-                ch_copy['needs_request'] = True
-                not_joined.append(ch_copy)
+                # For JR channels: check if this user was already auto-approved
+                # (auto-approve handler added them to the approved set)
+                uid_key = f"{chat_id}_{user_id}"
+                if uid_key in _jr_approved:
+                    # Already sent join request → treat as joined
+                    pass
+                else:
+                    ch_copy = dict(ch)
+                    ch_copy['needs_request'] = True
+                    not_joined.append(ch_copy)
             else:
                 not_joined.append(ch)
         except Exception as e:
             logger.warning(f"FSub check skipped for {chat_id}: {e}")
-            # Can't verify — don't block user
+            # Can't verify — fail-open (don't block)
     return not_joined
 
+
+# In-memory set: tracks users who have sent join requests (to JR channels)
+# Format: "{chat_id}_{user_id}"
+_jr_approved: set = set()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Module-level handler functions (required for add_handler to work)
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def _fsub_auto_approve(client, request):
+    """
+    Auto-approve join requests for FSub channels that have JR mode enabled.
+    This lets users get immediate access after sending a join request —
+    they don't need to wait for manual admin approval.
+    """
+    fsub_chs = await db.get_share_fsub_channels()
+    for ch in fsub_chs:
+        if str(request.chat.id) == ch.get('chat_id') and ch.get('join_request'):
+            try:
+                await request.approve()
+                # Mark user as approved so FSub check knows they're cleared
+                uid_key = f"{request.chat.id}_{request.from_user.id}"
+                _jr_approved.add(uid_key)
+                logger.info(f"Auto-approved JR: user {request.from_user.id} in {request.chat.id}")
+            except Exception as e:
+                logger.error(f"FSub auto-approve failed: {e}")
 
 
 async def _process_start(client, message):
     """Handle /start [uuid] deep-link — deliver files to user."""
     user_id = message.from_user.id
     args = message.command
+    bot_id = str(client.me.id) if client.me else None
 
     # Plain /start — show welcome
     if len(args) < 2:
-        custom_wel = await db.get_share_text("welcome_msg", "")
-        if custom_wel:
-            await message.reply_text(format_msg(custom_wel, message.from_user))
-        else:
-            bot_name = client.me.first_name if client.me else "Delivery Bot"
-            await message.reply_text(
-                f"<b>👋 Welcome to {bot_name}!</b>\n\n"
-                "I'm a secure file-delivery bot. Click a link button from the channel "
-                "to receive your episodes directly here in DM.\n\n"
-                "<i>If you ended up here by mistake, go back to the channel and click a button.</i>"
-            )
+        await _send_welcome(client, message, bot_id)
         return
 
     uuid_str = args[1].strip()
+
+    # Help command via deep-link (start=help)
+    if uuid_str == "help":
+        await _send_help(client, message, bot_id)
+        return
 
     # 1. Fetch link record from DB
     link_data = await db.get_share_link(uuid_str)
     if not link_data:
         await message.reply_text(
             "<b>❌ Link Expired or Invalid</b>\n\n"
-            "This batch link no longer exists. Go back to the channel and generate a new one."
+            "This batch link no longer exists. Go back to the channel and click the button again."
         )
         return
 
@@ -127,25 +164,24 @@ async def _process_start(client, message):
         await message.reply_text("<b>❌ Database Error:</b> Missing file references.")
         return
 
-    # 2. Force-Subscribe check
-    fsub_channels = await db.get_share_fsub_channels()
+    # 2. Force-Subscribe check (per-bot fsub)
+    fsub_channels = await db.get_bot_fsub_channels(bot_id) if bot_id else []
+    if not fsub_channels:
+        fsub_channels = await db.get_share_fsub_channels()  # fallback global
+
     if fsub_channels:
-        not_joined = await check_all_subscriptions(client, user_id, fsub_channels)
+        not_joined = await check_all_subscriptions(client, user_id, fsub_channels, bot_id)
         if not_joined:
-            # For JR channels that user hasn't joined yet — send join request
             f_buttons = []
-            jr_channels = []  # channels where user needs to send a join request
+            channel_num = 1
             for ch in not_joined:
-                label = ch.get('title') or "📢 Join Channel"
-                invite = ch.get('invite_link', '')
-                is_jr = ch.get('join_request', False)
-                is_pending = ch.get('pending_request', False)
-                if is_jr and not is_pending and invite:
-                    # User needs to send join request
-                    f_buttons.append(InlineKeyboardButton(f"📨 {label}", url=invite))
-                    jr_channels.append(label)
-                elif not is_jr and invite:
-                    f_buttons.append(InlineKeyboardButton(f"📢 {label}", url=invite))
+                invite  = ch.get('invite_link', '')
+                is_jr   = ch.get('join_request', False)
+                label   = f"Jᴏɪɴ Cʜᴀɴɴᴇʟ {channel_num}"  # Never show channel name
+                channel_num += 1
+                if invite:
+                    emoji = "📨" if is_jr else "📢"
+                    f_buttons.append(InlineKeyboardButton(f"{emoji} {label}", url=invite))
 
             rows = []
             for i in range(0, len(f_buttons), 2):
@@ -157,24 +193,29 @@ async def _process_start(client, message):
                 )
             ])
 
-            fsub_msg = await db.get_share_text("fsub_msg", "")
+            # FSub message from DB or default
+            fsub_msg = await db.get_share_bot_text(bot_id, "fsub_msg") if bot_id else ""
+            if not fsub_msg:
+                fsub_msg = await db.get_share_text("fsub_msg", "")
             if fsub_msg:
                 txt = format_msg(fsub_msg, message.from_user)
-            elif jr_channels:
-                txt = (
-                    f"<b>🔒 Join Required!</b>\n\n"
-                    f"Hey {message.from_user.first_name or 'User'},\n"
-                    f"Please send a <b>join request</b> to the following channel(s) to access files:\n"
-                    + "\n".join(f"• {n}" for n in jr_channels) +
-                    "\n\n<i>After sending the request, click <b>Try Again</b> — your request will be auto-approved.</i>"
-                )
             else:
-                txt = (
-                    f"<b>🔒 Join Required!</b>\n\n"
-                    f"Hey {message.from_user.first_name or 'User'},\n"
-                    f"Please join all update channels to use me!\n\n"
-                    "<i>After joining, click <b>Try Again</b> below.</i>"
-                )
+                has_jr = any(ch.get('join_request') for ch in not_joined)
+                user_name = message.from_user.first_name or "User"
+                if has_jr:
+                    txt = (
+                        f"<b>🔒 Jᴏɪɴ Rᴇϙᴜɪʀᴇᴅ!</b>\n\n"
+                        f"Hᴇʏ {user_name} 👋\n"
+                        "Pʟᴇᴀsᴇ sᴇɴᴅ ᴀ <b>ᴊᴏɪɴ ʀᴇϙᴜᴇsᴛ</b> ᴛᴏ ᴀʟʟ ᴄʜᴀɴɴᴇʟs ʙᴇʟᴏᴡ.\n"
+                        "<i>After tapping each button and sending the request, click <b>Tʀʏ Aɢᴀɪɴ</b> — you'll get instant access!</i>"
+                    )
+                else:
+                    txt = (
+                        f"<b>🔒 Jᴏɪɴ Rᴇϙᴜɪʀᴇᴅ!</b>\n\n"
+                        f"Hᴇʏ {user_name} 👋\n"
+                        "Pʟᴇᴀsᴇ ᴊᴏɪɴ ᴀʟʟ ᴜᴘᴅᴀᴛᴇ ᴄʜᴀɴɴᴇʟs ᴛᴏ ᴜsᴇ ᴍᴇ!\n\n"
+                        "<i>After joining, click <b>Tʀʏ Aɢᴀɪɴ</b> below.</i>"
+                    )
             await message.reply_text(txt, reply_markup=InlineKeyboardMarkup(rows))
             return
 
@@ -192,7 +233,7 @@ async def _process_start(client, message):
     active_downloads.add(dl_id)
 
     sts = await message.reply_text(
-        "<i>⏳ Fetching your files securely, please wait...</i>",
+        "<i>⏳ Fᴇᴛᴄʜɪɴɢ ʏᴏᴜʀ ꜰɪʟᴇs sᴇᴄᴜʀᴇʟʏ, ᴘʟᴇᴀsᴇ ᴡᴀɪᴛ...</i>",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("Cᴀɴᴄᴇʟ", callback_data=f"cancel_dl_{uuid_str}")
         ]])
@@ -200,14 +241,14 @@ async def _process_start(client, message):
 
     sent_ids   = []
     fail_count = 0
-    cap_tpl    = await db.get_share_text("custom_caption", "")
+    cap_tpl    = (await db.get_share_bot_text(bot_id, "custom_caption") if bot_id else "") or \
+                 await db.get_share_text("custom_caption", "")
     formatted_cap = format_msg(cap_tpl, message.from_user) if cap_tpl else None
 
     try:
         for msg_id in msg_ids:
             if dl_id not in active_downloads:
-                # Cancel handler already edited the status message — just exit silently
-                return
+                return  # cancel handler already edited the status
             try:
                 kwargs = {
                     "chat_id": user_id,
@@ -233,7 +274,7 @@ async def _process_start(client, message):
         total = len(sent_ids)
         if total == 0:
             await message.reply_text(
-                "<b>❌ Delivery Failed</b>\n\n"
+                "<b>❌ Dᴇʟɪᴠᴇʀʏ Fᴀɪʟᴇᴅ</b>\n\n"
                 "Could not copy any files. "
                 "Ensure the Share Bot is an <b>admin</b> in the Database Channel."
             )
@@ -246,22 +287,25 @@ async def _process_start(client, message):
             mins_r = auto_delete_mins % 60
             del_str = (f"{hrs}h {mins_r}m" if hrs and mins_r
                        else (f"{hrs} hours" if hrs else f"{auto_delete_mins} minutes"))
-            custom_del = await db.get_share_text("delete_msg", "")
-            if custom_del:
-                txt = format_msg(custom_del, message.from_user).replace("{time}", del_str)
+            del_tpl = (await db.get_share_bot_text(bot_id, "delete_msg") if bot_id else "") or \
+                      await db.get_share_text("delete_msg", "")
+            if del_tpl:
+                txt = format_msg(del_tpl, message.from_user).replace("{time}", del_str)
             else:
                 txt = (
-                    f"<i>⚠️ Important: {total} file(s) delivered! Due to copyright, all messages will auto-delete after {del_str}. "
-                    f"If your episodes get deleted, simply click the same link button again — you only need to do it once.{fail_note}</i>"
+                    f"<i>⚠️ Iᴍᴘᴏʀᴛᴀɴᴛ: {total} file(s) delivered! Due to copyright, all messages "
+                    f"will auto-delete after {del_str}. "
+                    f"To re-access, simply click the same link button again.{fail_note}</i>"
                 )
             notice = await message.reply_text(txt)
             asyncio.create_task(
                 delete_later(client, user_id, sent_ids, notice.id, auto_delete_mins * 60)
             )
         else:
-            custom_suc = await db.get_share_text("success_msg", "")
-            txt = (format_msg(custom_suc, message.from_user) if custom_suc
-                   else f"<b>✅ {total} file(s) delivered!</b>{fail_note}")
+            suc_tpl = (await db.get_share_bot_text(bot_id, "success_msg") if bot_id else "") or \
+                      await db.get_share_text("success_msg", "")
+            txt = (format_msg(suc_tpl, message.from_user) if suc_tpl
+                   else f"<b>✅ {total} ꜰɪʟᴇ(s) ᴅᴇʟɪᴠᴇʀᴇᴅ!</b>{fail_note}")
             await message.reply_text(txt)
 
     except Exception as e:
@@ -271,9 +315,187 @@ async def _process_start(client, message):
         except Exception:
             pass
         await message.reply_text(
-            f"<b>❌ Delivery Error:</b> <code>{e}</code>\n\n"
+            f"<b>❌ Dᴇʟɪᴠᴇʀʏ Eʀʀᴏʀ:</b> <code>{e}</code>\n\n"
             "<i>The Share Bot must be an admin in the Database Channel to deliver files.</i>"
         )
+
+
+async def _send_welcome(client, message, bot_id: str = None):
+    """Send the welcome message + Help/About buttons."""
+    user = message.from_user
+    bot_name = client.me.first_name if client.me else "Delivery Bot"
+    bot_username = client.me.username if client.me else ""
+
+    # Full name mention (clickable)
+    full_name = (user.first_name or "") + (" " + user.last_name if user.last_name else "")
+    mention = f'<a href="tg://user?id={user.id}">{full_name.strip()}</a>'
+
+    # Bot-specific welcome text or global
+    custom_wel = (await db.get_share_bot_text(bot_id, "welcome_msg") if bot_id else "") or \
+                 await db.get_share_text("welcome_msg", "")
+
+    bot_about = await db.get_share_bot_about(bot_id) if bot_id else {}
+
+    if custom_wel:
+        txt = format_msg(custom_wel, user).replace("{mention}", mention)
+    else:
+        txt = (
+            f"<b>👋 Wᴇʟᴄᴏᴍᴇ ᴛᴏ {bot_name}!</b>\n\n"
+            f"Hᴇʟʟᴏ {mention} ✨\n\n"
+            "<i>I am a permanent file store bot — users can access stored messages "
+            "by using a shareable link created for them.</i>\n\n"
+            "Click a link button from the channel to receive your files directly here.\n"
+            "<i>To know more, click the Help button below.</i>"
+        )
+
+    # Buttons row 1: Help | About
+    # Button row 2: Update Channel
+    buttons = [
+        [
+            InlineKeyboardButton("ʜᴇʟᴘ", callback_data="sbd#help"),
+            InlineKeyboardButton("ᴀʙᴏᴜᴛ", callback_data="sbd#about"),
+        ],
+        [
+            InlineKeyboardButton("🔔 Uᴘᴅᴀᴛᴇ Cʜᴀɴɴᴇʟ", url=UPDATE_LINK)
+        ]
+    ]
+
+    # Try to send with about image if set
+    about_img = bot_about.get('image_id') if bot_about else None
+    try:
+        if about_img:
+            await client.send_photo(
+                user.id, photo=about_img,
+                caption=txt,
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+        else:
+            await message.reply_text(txt, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception:
+        await message.reply_text(txt, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def _send_help(client, message, bot_id: str = None):
+    """Send the Help menu."""
+    txt = (
+        "<b>🌵 Hᴇʟᴘ Mᴇɴᴜ</b>\n\n"
+        "<i>I am a permanent file store bot. You can access stored files by using "
+        "a shareable link given by me from the channel.</i>\n\n"
+        "<b>📚 How to Get Files:</b>\n"
+        "<i>➜ Open the channel and tap a link button\n"
+        "➜ I will send the files directly to your DM\n"
+        "➜ If force-subscribe is enabled, join required channels first\n"
+        "➜ If your files are deleted, tap the same button again</i>\n\n"
+        "<b>📚 Available Commands:</b>\n"
+        "<i>➜ /start — check if I'm alive\n"
+        "➜ Click any episode link button in the channel to receive files</i>\n\n"
+        "<b>🛡️ Bot Info:</b>\n"
+        "<i>➜ All file deliveries are encrypted and protected\n"
+        "➜ Files may auto-delete after a set time (copyright protection)\n"
+        "➜ Simply click your link button again to re-download</i>"
+    )
+    buttons = [
+        [InlineKeyboardButton("◀️ Bᴀᴄᴋ", callback_data="sbd#back")],
+        [InlineKeyboardButton("🔔 Uᴘᴅᴀᴛᴇ Cʜᴀɴɴᴇʟ", url=UPDATE_LINK)]
+    ]
+    try:
+        await message.edit_text(txt, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception:
+        await message.reply_text(txt, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def _send_about(client, message, bot_id: str = None):
+    """Send the About section."""
+    bot_name = client.me.first_name if client.me else "Delivery Bot"
+    about = await db.get_share_bot_about(bot_id) if bot_id else {}
+
+    owner_name  = about.get('owner_name', 'JeetX')
+    owner_link  = about.get('owner_link', 'https://t.me/MeJeetX')
+    update_chan = about.get('update_chan', 'JeetX')
+    update_link = about.get('update_link', UPDATE_LINK)
+    support_chan = about.get('support_chan', 'Light Chat')
+    support_link = about.get('support_link', SUPPORT_LINK)
+    version      = about.get('version', ARYA_VERSION)
+    about_img    = about.get('image_id', None)
+    about_text   = about.get('custom_text', None)
+
+    if about_text:
+        txt = about_text
+    else:
+        txt = (
+            f"✨ <b>ᴀʙᴏᴜᴛ ᴍᴇ</b>\n\n"
+            f"✰ <b>ᴍʏ ɴᴀᴍᴇ:</b> {bot_name}\n"
+            f"✰ <b>ᴏᴘᴇʀᴀᴛᴇᴅ ʙʏ:</b> Arya Bot\n"
+            f"✰ <b>ᴍʏ ᴏᴡɴᴇʀ:</b> <a href=\"{owner_link}\">{owner_name}</a>\n"
+            f"✰ <b>ᴜᴘᴅᴀᴛᴇs:</b> <a href=\"{update_link}\">{update_chan}</a>\n"
+            f"✰ <b>sᴜᴘᴘᴏʀᴛ:</b> <a href=\"{support_link}\">{support_chan}</a>\n"
+            f"✰ <b>ᴠᴇʀsɪᴏɴ:</b> {version}"
+        )
+
+    buttons = [[InlineKeyboardButton("◀️ Bᴀᴄᴋ", callback_data="sbd#back")]]
+
+    try:
+        if about_img:
+            # Edit with photo not easy inline, so send new message
+            await client.send_photo(
+                message.chat.id, photo=about_img,
+                caption=txt,
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+        else:
+            await message.edit_text(txt, reply_markup=InlineKeyboardMarkup(buttons), disable_web_page_preview=True)
+    except Exception:
+        try:
+            await message.reply_text(txt, reply_markup=InlineKeyboardMarkup(buttons), disable_web_page_preview=True)
+        except Exception:
+            pass
+
+
+async def _process_delivery_button(client, query):
+    """Handle inline buttons on the welcome/help/about messages."""
+    cmd = query.data.split('#')[1] if '#' in query.data else ''
+    bot_id = str(client.me.id) if client.me else None
+
+    if cmd == "help":
+        await query.answer()
+        await _send_help(client, query.message, bot_id)
+    elif cmd == "about":
+        await query.answer()
+        await _send_about(client, query.message, bot_id)
+    elif cmd == "back":
+        await query.answer()
+        # Go back to welcome — re-edit this message
+        bot_name = client.me.first_name if client.me else "Delivery Bot"
+        user = query.from_user
+        full_name = (user.first_name or "") + (" " + user.last_name if user.last_name else "")
+        mention = f'<a href="tg://user?id={user.id}">{full_name.strip()}</a>'
+
+        custom_wel = (await db.get_share_bot_text(bot_id, "welcome_msg") if bot_id else "") or \
+                     await db.get_share_text("welcome_msg", "")
+        if custom_wel:
+            txt = format_msg(custom_wel, user).replace("{mention}", mention)
+        else:
+            txt = (
+                f"<b>👋 Wᴇʟᴄᴏᴍᴇ ᴛᴏ {bot_name}!</b>\n\n"
+                f"Hᴇʟʟᴏ {mention} ✨\n\n"
+                "<i>I am a permanent file store bot — users can access stored messages "
+                "by using a shareable link created for them.</i>\n\n"
+                "Click a link button from the channel to receive your files directly here.\n"
+                "<i>To know more, click the Help button below.</i>"
+            )
+        buttons = [
+            [
+                InlineKeyboardButton("ʜᴇʟᴘ", callback_data="sbd#help"),
+                InlineKeyboardButton("ᴀʙᴏᴜᴛ", callback_data="sbd#about"),
+            ],
+            [InlineKeyboardButton("🔔 Uᴘᴅᴀᴛᴇ Cʜᴀɴɴᴇʟ", url=UPDATE_LINK)]
+        ]
+        try:
+            await query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(buttons))
+        except Exception:
+            pass
+    else:
+        await query.answer()
 
 
 async def _process_delivery_cancel(client, query):
@@ -284,7 +506,7 @@ async def _process_delivery_cancel(client, query):
         active_downloads.discard(dl_id)
         await query.answer("Download cancelled.", show_alert=True)
         try:
-            await query.message.edit_text("<b>🚫 Download Cancelled.</b>")
+            await query.message.edit_text("<b>🚫 Dᴏᴡɴʟᴏᴀᴅ Cᴀɴᴄᴇʟʟᴇᴅ.</b>")
         except Exception:
             pass
     else:
@@ -297,10 +519,15 @@ async def _process_delivery_cancel(client, query):
 
 def register_share_handlers(app: Client):
     """Register all handlers on a started Client instance."""
-    # Note: No ChatJoinRequestHandler — JR channels require manual admin approval.
+    # Auto-approve join requests for JR channels so users get instant access
+    app.add_handler(ChatJoinRequestHandler(_fsub_auto_approve))
     app.add_handler(MessageHandler(
         _process_start,
         filters.private & filters.command("start")
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _process_delivery_button,
+        filters.regex(r'^sbd#')
     ))
     app.add_handler(CallbackQueryHandler(
         _process_delivery_cancel,
@@ -336,6 +563,7 @@ async def start_share_bot():
                 in_memory=True,
             )
             await sc.start()
+            sc.is_initialized = True
             register_share_handlers(sc)
             share_clients[b['id']] = sc
             logger.info(f"Share Bot started: @{sc.me.username} [{b['name']}]")

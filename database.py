@@ -109,15 +109,62 @@ class Database:
     async def set_share_fsub_channels(self, channels: list):
         await self._set_share_cfg(fsub_channels=channels)
 
-    # Customizable Texts
-    async def get_share_text(self, key: str, default: str) -> str:
+    # Customizable Texts (global fallback)
+    async def get_share_text(self, key: str, default: str = "") -> str:
         return (await self._share_cfg()).get(key, default)
 
     async def set_share_text(self, key: str, value: str):
-        if not value: 
+        if not value:
             await self.share_config.update_one({'_id': 'global'}, {'$unset': {key: ""}}, upsert=True)
         else:
             await self._set_share_cfg(**{key: value})
+
+    # ── Per-Bot Config ────────────────────────────────────────────
+    async def _bot_cfg(self, bot_id: str) -> dict:
+        if not bot_id:
+            return {}
+        doc = await self.share_config.find_one({'_id': f'bot_{bot_id}'})
+        return doc or {}
+
+    async def _set_bot_cfg(self, bot_id: str, **kwargs):
+        if not bot_id:
+            return
+        await self.share_config.update_one(
+            {'_id': f'bot_{bot_id}'}, {'$set': kwargs}, upsert=True
+        )
+
+    # Per-bot customizable texts (welcome_msg, delete_msg, success_msg, custom_caption, fsub_msg)
+    async def get_share_bot_text(self, bot_id: str, key: str, default: str = "") -> str:
+        return (await self._bot_cfg(bot_id)).get(key, default)
+
+    async def set_share_bot_text(self, bot_id: str, key: str, value: str):
+        if not bot_id:
+            return
+        if not value:
+            await self.share_config.update_one(
+                {'_id': f'bot_{bot_id}'}, {'$unset': {key: ""}}, upsert=True
+            )
+        else:
+            await self._set_bot_cfg(bot_id, **{key: value})
+
+    # Per-bot fsub channels
+    async def get_bot_fsub_channels(self, bot_id: str) -> list:
+        return (await self._bot_cfg(bot_id)).get('fsub_channels', [])
+
+    async def set_bot_fsub_channels(self, bot_id: str, channels: list):
+        await self._set_bot_cfg(bot_id, fsub_channels=channels)
+
+    # Per-bot About section
+    async def get_share_bot_about(self, bot_id: str) -> dict:
+        return (await self._bot_cfg(bot_id)).get('about', {})
+
+    async def set_share_bot_about(self, bot_id: str, about: dict):
+        await self._set_bot_cfg(bot_id, about=about)
+
+    # When a bot is removed, clean up its config too
+    async def remove_share_bot_config(self, bot_id: str):
+        await self.share_config.delete_one({'_id': f'bot_{bot_id}'})
+
 
     # save_share_link — access_hash allows Share Bot to rebuild peer cache at delivery time
     async def save_share_link(self, uuid_str: str, message_ids: list, source_chat,

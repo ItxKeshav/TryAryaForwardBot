@@ -161,7 +161,7 @@ async def _create_share_flow(bot, user_id):
         sj = new_share_job[user_id]
         total_msgs  = (sj['end_id'] - sj['start_id']) + 1
         
-        markup_conf = ReplyKeyboardMarkup([["🚀 Generate & Group Links"], ["❌ Cancel"]], resize_keyboard=True, one_time_keyboard=True)
+        markup_conf = ReplyKeyboardMarkup([["Gᴇɴᴇʀᴀᴛᴇ & Pᴏsᴛ Lɪɴᴋs"], ["❌ Cancel"]], resize_keyboard=True, one_time_keyboard=True)
         conf_msg = await _ask(bot, user_id,
             f"<b>📋 CONFIRM SHARE BATCH</b>\n\n"
             f"<b>Story Name:</b> {sj['story']}\n"
@@ -178,7 +178,7 @@ async def _create_share_flow(bot, user_id):
             new_share_job.pop(user_id, None)
             return await bot.send_message(user_id, "<b>Cancelled.</b>", reply_markup=ReplyKeyboardRemove())
             
-        if "Generate" in conf_msg.text:
+        if "Generate" in conf_msg.text or "Gᴇɴᴇʀᴀᴛᴇ" in conf_msg.text:
             await _build_share_links(bot, user_id, sj, conf_msg)
             
     except Exception as e:
