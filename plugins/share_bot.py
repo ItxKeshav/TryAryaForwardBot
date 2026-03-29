@@ -329,7 +329,6 @@ async def _send_welcome(client, message, bot_id: str = None):
     """Send the welcome message + Help/About buttons."""
     user = message.from_user
     bot_name = client.me.first_name if client.me else "Delivery Bot"
-    bot_username = client.me.username if client.me else ""
 
     # Full name mention (clickable)
     full_name = (user.first_name or "") + (" " + user.last_name if user.last_name else "")
@@ -339,7 +338,9 @@ async def _send_welcome(client, message, bot_id: str = None):
     custom_wel = (await db.get_share_bot_text(bot_id, "welcome_msg") if bot_id else "") or \
                  await db.get_share_text("welcome_msg", "")
 
+    # Image is SHARED between Welcome and About — always pull from About section
     bot_about = await db.get_share_bot_about(bot_id) if bot_id else {}
+    about_img = bot_about.get('image_id') if bot_about else None
 
     if custom_wel:
         txt = format_msg(custom_wel, user).replace("{mention}", mention)
@@ -353,8 +354,6 @@ async def _send_welcome(client, message, bot_id: str = None):
             "<i>To know more, click the Help button below.</i>"
         )
 
-    # Buttons row 1: Help | About
-    # Button row 2: Update Channel
     buttons = [
         [
             InlineKeyboardButton("ʜᴇʟᴘ", callback_data="sbd#help"),
@@ -365,8 +364,6 @@ async def _send_welcome(client, message, bot_id: str = None):
         ]
     ]
 
-    # Try to send with about image if set
-    about_img = bot_about.get('image_id') if bot_about else None
     try:
         if about_img:
             await client.send_photo(
@@ -409,20 +406,20 @@ async def _send_help(client, message, bot_id: str = None):
         await message.reply_text(txt, reply_markup=InlineKeyboardMarkup(buttons))
 
 
-async def _send_about(client, message, bot_id: str = None):
-    """Send the About section."""
+async def _send_about(client, query_or_msg, bot_id: str = None, edit: bool = True):
+    """Send or edit the About section inline — always edits the same message."""
     bot_name = client.me.first_name if client.me else "Delivery Bot"
     about = await db.get_share_bot_about(bot_id) if bot_id else {}
 
-    owner_name  = about.get('owner_name', 'JeetX')
-    owner_link  = about.get('owner_link', 'https://t.me/MeJeetX')
-    update_chan = about.get('update_chan', 'JeetX')
-    update_link = about.get('update_link', UPDATE_LINK)
+    owner_name   = about.get('owner_name', 'JeetX')
+    owner_link   = about.get('owner_link', 'https://t.me/MeJeetX')
+    update_chan  = about.get('update_chan', 'JeetX')
+    update_link  = about.get('update_link', UPDATE_LINK)
     support_chan = about.get('support_chan', 'Light Chat')
     support_link = about.get('support_link', SUPPORT_LINK)
     from plugins.commands import get_bot_version
     version      = about.get('version', get_bot_version())
-    about_img    = about.get('image_id', None)
+    about_img    = about.get('image_id', None)   # SHARED with Welcome
     about_text   = about.get('custom_text', None)
 
     if about_text:
@@ -439,20 +436,32 @@ async def _send_about(client, message, bot_id: str = None):
         )
 
     buttons = [[InlineKeyboardButton("◀️ Bᴀᴄᴋ", callback_data="sbd#back")]]
+    markup  = InlineKeyboardMarkup(buttons)
+
+    # Determine if current message is a photo (sent with image) or text
+    msg = query_or_msg if hasattr(query_or_msg, 'photo') else getattr(query_or_msg, 'message', query_or_msg)
+    is_photo_msg = bool(getattr(msg, 'photo', None))
 
     try:
-        if about_img:
-            # Edit with photo not easy inline, so send new message
-            await client.send_photo(
-                message.chat.id, photo=about_img,
-                caption=txt,
-                reply_markup=InlineKeyboardMarkup(buttons)
-            )
+        if is_photo_msg:
+            # Edit caption inline (no new message sent)
+            await msg.edit_caption(caption=txt, reply_markup=markup)
         else:
-            await message.edit_text(txt, reply_markup=InlineKeyboardMarkup(buttons), disable_web_page_preview=True)
-    except Exception:
+            if about_img:
+                # Current message is text but we have an image.
+                # Delete current and send photo (only case we must send new msg).
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+                chat_id = msg.chat.id
+                await client.send_photo(chat_id, photo=about_img, caption=txt, reply_markup=markup)
+            else:
+                await msg.edit_text(txt, reply_markup=markup, disable_web_page_preview=True)
+    except Exception as e:
+        logger.warning(f"_send_about edit failed: {e}")
         try:
-            await message.reply_text(txt, reply_markup=InlineKeyboardMarkup(buttons), disable_web_page_preview=True)
+            await msg.reply_text(txt, reply_markup=markup, disable_web_page_preview=True)
         except Exception:
             pass
 
@@ -461,20 +470,55 @@ async def _process_delivery_button(client, query):
     """Handle inline buttons on the welcome/help/about messages."""
     cmd = query.data.split('#')[1] if '#' in query.data else ''
     bot_id = str(client.me.id) if client.me else None
+    msg = query.message
+    is_photo = bool(getattr(msg, 'photo', None))
 
     if cmd == "help":
         await query.answer()
-        await _send_help(client, query.message, bot_id)
+        txt = (
+            "<b>🌵 Hᴇʟᴘ Mᴇɴᴜ</b>\n\n"
+            "<i>I am a permanent file store bot. You can access stored files by using "
+            "a shareable link given by me from the channel.</i>\n\n"
+            "<b>📚 How to Get Files:</b>\n"
+            "<i>➜ Open the channel and tap a link button\n"
+            "➜ I will send the files directly to your DM\n"
+            "➜ If force-subscribe is enabled, join required channels first\n"
+            "➜ If your files are deleted, tap the same button again</i>\n\n"
+            "<b>📚 Available Commands:</b>\n"
+            "<i>➜ /start — check if I'm alive\n"
+            "➜ Click any episode link button in the channel to receive files</i>\n\n"
+            "<b>🛡️ Bot Info:</b>\n"
+            "<i>➜ All file deliveries are encrypted and protected\n"
+            "➜ Files may auto-delete after a set time (copyright protection)\n"
+            "➜ Simply click your link button again to re-download</i>"
+        )
+        buttons = [
+            [InlineKeyboardButton("◀️ Bᴀᴄᴋ", callback_data="sbd#back")],
+            [InlineKeyboardButton("🔔 Uᴘᴅᴀᴛᴇ Cʜᴀɴɴᴇʟ", url=UPDATE_LINK)]
+        ]
+        markup = InlineKeyboardMarkup(buttons)
+        try:
+            if is_photo:
+                await msg.edit_caption(caption=txt, reply_markup=markup)
+            else:
+                await msg.edit_text(txt, reply_markup=markup)
+        except Exception:
+            await msg.reply_text(txt, reply_markup=markup)
+
     elif cmd == "about":
         await query.answer()
-        await _send_about(client, query.message, bot_id)
+        await _send_about(client, query, bot_id)
+
     elif cmd == "back":
         await query.answer()
-        # Go back to welcome — re-edit this message
+        # Go back to welcome — edit current message in-place
         bot_name = client.me.first_name if client.me else "Delivery Bot"
         user = query.from_user
         full_name = (user.first_name or "") + (" " + user.last_name if user.last_name else "")
         mention = f'<a href="tg://user?id={user.id}">{full_name.strip()}</a>'
+
+        bot_about = await db.get_share_bot_about(bot_id) if bot_id else {}
+        about_img = bot_about.get('image_id') if bot_about else None
 
         custom_wel = (await db.get_share_bot_text(bot_id, "welcome_msg") if bot_id else "") or \
                      await db.get_share_text("welcome_msg", "")
@@ -496,8 +540,12 @@ async def _process_delivery_button(client, query):
             ],
             [InlineKeyboardButton("🔔 Uᴘᴅᴀᴛᴇ Cʜᴀɴɴᴇʟ", url=UPDATE_LINK)]
         ]
+        markup = InlineKeyboardMarkup(buttons)
         try:
-            await query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(buttons))
+            if is_photo:
+                await msg.edit_caption(caption=txt, reply_markup=markup)
+            else:
+                await msg.edit_text(txt, reply_markup=markup)
         except Exception:
             pass
     else:

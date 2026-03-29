@@ -537,26 +537,25 @@ async def _build_share_links(bot, user_id, sj, info_msg):
         if not parsed_msgs:
             return await safe_edit("❌ Could not extract any episode numbers from the scanned messages.")
 
+        total_count = len(parsed_msgs)  # used in final report
+
 
         # ── Outlier tolerance (for individual mode): fix misnamed episodes ───
-        # If ep number differs wildly from its positional sequence neighbor,
-        # adjust it to the sequence position instead of skipping it.
-        # Example: 40 files in sequence, ep 359 appears as 259 → treat as 359
+        # STRICTLY limited: only correct obvious single-digit-prefix typos
+        # (e.g., "259" when the sequence expects "359" and last 2 digits match).
+        # We do NOT bulk-snap multiple consecutive episodes to avoid cascading errors.
         if not GROUPED_MODE:
-            # Build a sequential estimate based on neighbors
-            for i in range(len(parsed_msgs)):
+            corrected_this_pass = 0
+            for i in range(1, len(parsed_msgs)):
+                if corrected_this_pass >= 5:  # safety cap: max 5 corrections per run
+                    break
                 msg, ep_s, ep_e, is_r = parsed_msgs[i]
-                if i == 0:
-                    continue
                 prev_ep = parsed_msgs[i-1][1]
                 expected = prev_ep + 1
-                # If current episode deviates by more than 50 from expected,
-                # but the last digit/two digits match (mistyped prefix),
-                # snap it to expected
-                if abs(ep_s - expected) > 50:
-                    # Check if last 2 digits match (e.g., 259 vs 359: last 2 = 59)
-                    if ep_s % 100 == expected % 100 or ep_s % 10 == expected % 10:
-                        parsed_msgs[i] = (msg, expected, expected, False)
+                # Only snap if deviation > 80 (clear typo) AND EXACT last-2-digit match
+                if abs(ep_s - expected) > 80 and ep_s % 100 == expected % 100:
+                    parsed_msgs[i] = (msg, expected, expected, False)
+                    corrected_this_pass += 1
 
         # ── Build ep_to_msgs dict and track duplicates ─────────────────────
         ep_to_msgs: dict = {}      # ep_start → [msg_ids]
@@ -611,20 +610,24 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                     buckets.append((ep_s, ep_e, [msg.id]))
         else:
             # Individual mode: fixed-size buckets
+            # IMPORTANT: Only episodes that actually fall within b_s..b_e go in that bucket.
+            # The bucket boundaries are FIXED by batch_size math — no episodes slip across.
+            bucket_map: dict = {}  # b_s -> list_of_msg_ids
             for ep in all_ep_nums:
                 b_s = ((ep - 1) // batch_size) * batch_size + 1
                 b_e = b_s + batch_size - 1
-                # Find or create bucket
-                existing = next((b for b in buckets if b[0] == b_s), None)
-                if existing:
-                    for mid in ep_to_msgs[ep]:
-                        if mid not in existing[2]:
-                            existing[2].append(mid)
-                else:
-                    mids = list(ep_to_msgs[ep])
-                    buckets.append([b_s, b_e, mids])
+                if b_s not in bucket_map:
+                    bucket_map[b_s] = (b_e, [])
+                for mid in ep_to_msgs[ep]:
+                    if mid not in bucket_map[b_s][1]:
+                        bucket_map[b_s][1].append(mid)
 
-            # Cap last bucket label at actual last ep
+            # Build sorted buckets list
+            for b_s in sorted(bucket_map.keys()):
+                b_e_raw, mids = bucket_map[b_s]
+                buckets.append([b_s, b_e_raw, mids])
+
+            # Cap ONLY last bucket label at actual last ep (cosmetic only)
             if buckets:
                 last_b = buckets[-1]
                 buckets[-1] = (last_b[0], min(last_b[1], last_ep_num), last_b[2])
