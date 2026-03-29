@@ -315,64 +315,228 @@ async def _build_share_links(bot, user_id, sj, info_msg):
 
         def extract_ep_info(msg):
             """
-            Returns (ep_start, ep_end, is_range) where:
-            - ep_start: starting episode number
-            - ep_end:   ending episode number (same as ep_start for single files)
-            - is_range: True if this is a grouped/range file (e.g. '1-37')
-            Returns (-1, -1, False) if unparseable.
+            Deeply analyses every possible pattern to extract episode info.
+            Returns (ep_start, ep_end, is_range).
+            Returns (-1, -1, False) if truly unparseable.
+
+            Patterns handled (in priority order):
+              1. Explicit keyword: "Ep 23", "Episode 23", "Part 23", etc.
+              2. Keyword-glued-number: "ep23", "Ep23"
+              3. Explicit GROUPED range: "57-79" as the ONLY numeric group (grouped file mode)
+              4. Last standalone number: "Veeraangadh166", "Veera66angadh" (→ 166), "Name 24" etc.
+              5. Number anywhere (absolute fallback)
             """
-            text = (msg.caption or "") + " " + (msg.text or "")
+            # ── Collect all text sources ──────────────────────────────────
+            raw_parts = [msg.caption or "", msg.text or ""]
             for attr in ("audio", "voice", "document", "video"):
                 media = getattr(msg, attr, None)
                 if media:
                     fname = getattr(media, "file_name", None)
-                    if fname: text += " " + str(fname)
+                    if fname: raw_parts.append(str(fname))
                     title = getattr(media, "title", None)
-                    if title: text += " " + str(title)
+                    if title: raw_parts.append(str(title))
+            text = " ".join(raw_parts)
 
-            # Priority 1 — named keyword + number: "Ep 23", "Episode 23", "Part 23"
-            m = _re.search(r'\b(?:ep|episode|ch|chapter|part|audio)\s*[-_.]?\s*(\d{1,4})(?!\d)', text, _re.IGNORECASE)
+            # ── Pre-clean: remove noise that contains digits ───────────────
+            # Remove video resolutions like 720p, 1080p, 480p, 4K, etc.
+            clean = _re.sub(r'(?i)\b(?:360|480|720|1080|2160|4k)[pi]?\b', '', text)
+            # Remove codec tags
+            clean = _re.sub(r'(?i)\b(?:x264|x265|h\.?264|h\.?265|hevc|avc|aac|mp[34]|mkv|avi|mov|wmv|flv)\b', '', clean)
+            # Remove year-like 4-digit numbers that look like calendar years
+            clean = _re.sub(r'(?<!\d)(?:19[0-9]{2}|20[0-9]{2})(?!\d)', '', clean)
+            # Remove file sizes like "700MB", "1.4GB"
+            clean = _re.sub(r'(?i)\b\d+(?:\.\d+)?\s*(?:mb|gb|kb)\b', '', clean)
+
+            # ── Strategy 1: Explicit keyword before number ─────────────────
+            # Matches: "Episode 23", "Ep23", "Ep-23", "Part 23", "Ch23"
+            m = _re.search(
+                r'(?i)\b(?:ep(?:isode)?|part|ch(?:apter)?|audio|s\d{1,2}e)\s*[-_.]?\s*(\d{1,4})(?!\d)',
+                clean
+            )
             if m:
-                return int(m.group(1)), int(m.group(1)), False
+                n = int(m.group(1))
+                if 0 < n < 5000:
+                    return n, n, False
 
-            # Priority 2 — explicit range: "31-40", "31 to 40" → grouped file
-            m2 = _re.search(r'(?<!\d)(\d{1,4})\s*[-–—to]+\s*(\d{1,4})(?!\d)', text, _re.IGNORECASE)
+            # ── Strategy 2: Keyword glued directly (no space): "ep23" ──────
+            m2 = _re.search(r'(?i)(?:ep|part|ch)(\d{1,4})(?!\d)', clean)
             if m2:
-                s, e = int(m2.group(1)), int(m2.group(2))
-                if 0 < s < e and (e - s) < 500:
-                    return s, e, True
+                n = int(m2.group(1))
+                if 0 < n < 5000:
+                    return n, n, False
 
-            # Priority 3 — scan for standalone digits but avoid resolutions/years at the end
-            # Remove common metadata numbers that throw off the "last number" detection
-            clean_text = _re.sub(r'(?<!\d)(?:720|1080|480|360|240|144|2160)[pPiI]\b', '', text)
-            clean_text = _re.sub(r'(?<!\d)(?:201\d|202\d|203\d|199\d)\b', '', clean_text)  # skip 1990-2039 years
-            clean_text = _re.sub(r'(?i)\b(?:x264|x265|h264|h265|hevc|mp4|mkv|mb|gb|kbps)\b', '', clean_text)
-            
-            # Using (?<!\d) and (?!\d) instead of \b so that "Name166" works correctly.
-            nums = _re.findall(r'(?<!\d)(\d{1,4})(?!\d)', clean_text)
-            if nums:
-                return int(nums[-1]), int(nums[-1]), False
+            # ── Strategy 3: Grouped range detection ───────────────────────
+            # "57-79", "1 to 20", "1–40"  BUT only if this makes sense
+            # as a range (start < end, gap < 500). We prioritise a range
+            # only when there is NO other standalone number after it that
+            # looks more like an episode (numbers at end of string).
+            # To avoid "Veeraangadh_say_57-79-99" being treated as range,
+            # we check that no larger standalone number exists after the range.
+            range_matches = list(_re.finditer(
+                r'(?<!\d)(\d{1,4})\s*[-–—]\s*(\d{1,4})(?!\d)', clean
+            ))
+            best_range = None
+            for rm in range_matches:
+                s, e = int(rm.group(1)), int(rm.group(2))
+                if 0 < s < e < 5000 and (e - s) < 500:
+                    # Check no standalone number AFTER this match looks bigger
+                    after = clean[rm.end():]
+                    later_nums = _re.findall(r'(?<!\d)(\d{1,4})(?!\d)', after)
+                    later_nums = [int(x) for x in later_nums if 0 < int(x) < 5000]
+                    # If there are numbers after this range that could be the episode, skip range
+                    if not later_nums:
+                        best_range = (s, e)
+                        break  # take first valid range with nothing after
+
+            # ── Strategy 4 & 5: Standalone number extraction ──────────────
+            # Find ALL digit sequences not glued to other digits
+            all_standalone = _re.findall(r'(?<!\d)(\d{1,4})(?!\d)', clean)
+            all_standalone = [int(x) for x in all_standalone if 0 < int(x) < 5000]
+
+            # If we have a valid range but also standalone numbers mixed in, prefer
+            # standalone that appears ALONE or LAST in the filename.
+            if best_range and not all_standalone:
+                return best_range[0], best_range[1], True
+
+            if all_standalone:
+                # Prefer the LAST standalone number — most filenames end with ep number.
+                # Exception: if the last number looks like a resolution/year (handled above).
+                return all_standalone[-1], all_standalone[-1], False
+
+            # If only a range was found, use it
+            if best_range:
+                return best_range[0], best_range[1], True
+
+            # ── Absolute fallback: any digit sequence at all ───────────────
+            all_nums = _re.findall(r'\d+', text)
+            all_nums = [int(x) for x in all_nums if 0 < int(x) < 5000]
+            if all_nums:
+                return all_nums[-1], all_nums[-1], False
 
             return -1, -1, False
 
-        # First pass: collect all episode info in message order
-        parsed_msgs = []  # list of (msg, ep_start, ep_end, is_range)
+        def _get_clean_text(msg):
+            """Collect and clean all text sources from a message."""
+            raw_parts = [msg.caption or "", msg.text or ""]
+            for attr in ("audio", "voice", "document", "video"):
+                media = getattr(msg, attr, None)
+                if media:
+                    fname = getattr(media, "file_name", None)
+                    if fname: raw_parts.append(str(fname))
+                    title = getattr(media, "title", None)
+                    if title: raw_parts.append(str(title))
+            text = " ".join(raw_parts)
+            # Remove noise digits
+            clean = _re.sub(r'(?i)\b(?:360|480|720|1080|2160|4k)[pi]?\b', '', text)
+            clean = _re.sub(r'(?i)\b(?:x264|x265|h\.?264|h\.?265|hevc|avc|aac|mp[34]|mkv|avi|mov|wmv|flv)\b', '', clean)
+            clean = _re.sub(r'(?<!\d)(?:19[0-9]{2}|20[0-9]{2})(?!\d)', '', clean)
+            clean = _re.sub(r'(?i)\b\d+(?:\.\d+)?\s*(?:mb|gb|kb)\b', '', clean)
+            return text, clean
+
+        def extract_ep_individual(msg):
+            """
+            Extract episode number treating file as an individual episode.
+            Range patterns (57-79) are treated as: take the LAST number (79).
+            Handles: Name12, Name 24, Name-46, Name66middle, Name-ep-58,
+                     Name_say_57-79-99, Name 57-78, 47-57, 37, etc.
+            """
+            text, clean = _get_clean_text(msg)
+
+            # Strategy 1: Explicit keyword + number ("Ep 23", "Episode 23", "Part 23", "Ch23")
+            m = _re.search(
+                r'(?i)\b(?:ep(?:isode)?|part|ch(?:apter)?|audio|s\d{1,2}e)\s*[-_.]?\s*(\d{1,4})(?!\d)',
+                clean
+            )
+            if m:
+                n = int(m.group(1))
+                if 0 < n < 5000: return n, n, False
+
+            # Strategy 2: Keyword glued directly: "ep23"
+            m2 = _re.search(r'(?i)(?:ep|part|ch)(\d{1,4})(?!\d)', clean)
+            if m2:
+                n = int(m2.group(1))
+                if 0 < n < 5000: return n, n, False
+
+            # Strategy 3: All standalone numbers — always take LAST (no range logic)
+            # (?<!\d) and (?!\d) so  "Name166" finds 166, "Veera66angadh" finds 66
+            all_standalone = _re.findall(r'(?<!\d)(\d{1,4})(?!\d)', clean)
+            all_standalone = [int(x) for x in all_standalone if 0 < int(x) < 5000]
+            if all_standalone:
+                return all_standalone[-1], all_standalone[-1], False
+
+            # Absolute fallback
+            all_nums = _re.findall(r'\d+', text)
+            all_nums = [int(x) for x in all_nums if 0 < int(x) < 5000]
+            if all_nums:
+                return all_nums[-1], all_nums[-1], False
+
+            return -1, -1, False
+
+        def extract_ep_grouped(msg):
+            """
+            Extract episode range for grouped files (e.g., '1-37', '57 to 79').
+            Falls back to individual extraction if no range found.
+            """
+            text, clean = _get_clean_text(msg)
+
+            # Strategy 1: Explicit keyword + number
+            m = _re.search(
+                r'(?i)\b(?:ep(?:isode)?|part|ch(?:apter)?|audio|s\d{1,2}e)\s*[-_.]?\s*(\d{1,4})(?!\d)',
+                clean
+            )
+            if m:
+                n = int(m.group(1))
+                if 0 < n < 5000: return n, n, False
+
+            # Strategy 2: Find a valid range — "57-79", "1–40", "1 to 20"
+            # Take the FIRST valid range (leftmost = usually the actual range)
+            range_matches = list(_re.finditer(r'(?<!\d)(\d{1,4})\s*[-–—]\s*(\d{1,4})(?!\d)', clean))
+            for rm in range_matches:
+                s, e = int(rm.group(1)), int(rm.group(2))
+                if 0 < s < e < 5000 and (e - s) < 500:
+                    return s, e, True
+
+            # No range found — fall back to individual
+            return extract_ep_individual(msg)
+
+        # ══ TWO-PASS PARSING ══════════════════════════════════════════════════
+        # PASS 1: Parse all msgs as individual to detect MODE
+        # This avoids range patterns wrongly flagging files as grouped
+        pass1 = []
         unparseable_count = 0
-        for m in all_valid_msgs:
-            ep_s, ep_e, is_r = extract_ep_info(m)
+        for msg in all_valid_msgs:
+            ep_s, ep_e, is_r = extract_ep_individual(msg)
             if ep_s < 1:
                 unparseable_count += 1
                 continue
-            parsed_msgs.append((m, ep_s, ep_e, is_r))
+            pass1.append((msg, ep_s, ep_e, is_r))
+
+        if not pass1:
+            return await safe_edit("❌ Could not extract any episode numbers from the scanned messages.")
+
+        # ── DETECT MODE ───────────────────────────────────────────────────────
+        # Check if a significant fraction of files look like ranges ("57-79")
+        range_hint_count = 0
+        for msg in all_valid_msgs:
+            _, clean = _get_clean_text(msg)
+            if _re.search(r'(?<!\d)\d{1,4}\s*[-–—]\s*\d{1,4}(?!\d)', clean):
+                range_hint_count += 1
+        GROUPED_MODE = range_hint_count > (len(all_valid_msgs) * 0.50)
+
+        # PASS 2: Re-parse with the correct extractor based on mode
+        parsed_msgs = []
+        unparseable_count = 0
+        extractor = extract_ep_grouped if GROUPED_MODE else extract_ep_individual
+        for msg in all_valid_msgs:
+            ep_s, ep_e, is_r = extractor(msg)
+            if ep_s < 1:
+                unparseable_count += 1
+                continue
+            parsed_msgs.append((msg, ep_s, ep_e, is_r))
 
         if not parsed_msgs:
             return await safe_edit("❌ Could not extract any episode numbers from the scanned messages.")
 
-        # ── DETECT MODE: Individual episodes vs Grouped range files ──────────
-        grouped_count = sum(1 for _, _, _, is_r in parsed_msgs if is_r)
-        total_count   = len(parsed_msgs)
-        # If >30% of files are range files, treat ALL files as their own bucket
-        GROUPED_MODE  = grouped_count > (total_count * 0.30)
 
         # ── Outlier tolerance (for individual mode): fix misnamed episodes ───
         # If ep number differs wildly from its positional sequence neighbor,
