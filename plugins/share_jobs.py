@@ -736,24 +736,18 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 "ep_end":   b_e,
             })
 
-        # ── Extra/Skipped Files button ─────────────────────────────────────────
-        # Use ALL messages that had no parseable episode number in pass 2.
-        # Even if gap-fill assigned some to episode slots, the user gets access
-        # to ALL of them here so nothing is ever unreachable.
+        # ── Extra/Skipped Files button ────────────────────────────────────
+        # Only files that are STILL not in any episode slot AFTER gap-fill.
         added_msg_ids = set()
         for mids in ep_to_msgs.values():
             added_msg_ids.update(mids)
         truly_skipped_msgs = [m for m in all_valid_msgs if m.id not in added_msg_ids]
         final_skipped_count = len(truly_skipped_msgs)
 
-        # Reconstruct the full set of originally-unparseable messages from pass 2
-        parsed_ids = {msg.id for msg, *_ in parsed_msgs}
-        all_originally_unparseable = [m for m in all_valid_msgs if m.id not in parsed_ids]
-
-        if all_originally_unparseable:
+        if truly_skipped_msgs:
             uuid_str = str(uuid.uuid4()).replace('-', '')[:16]
             await db.save_share_link(
-                uuid_str, [m.id for m in all_originally_unparseable], source_chat_id,
+                uuid_str, [m.id for m in truly_skipped_msgs], source_chat_id,
                 protect=protect, access_hash=db_access_hash
             )
             url = f"https://t.me/{bot_usr}?start={uuid_str}"
@@ -880,11 +874,17 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             plain_report.append("  " + ", ".join(str(e) for e in missing_eps))
         if unparseable_count:
             plain_report.append("-" * 50)
-            plain_report.append(f"INITIALLY UNPARSEABLE: {unparseable_count} (gap-fill resolved {unparseable_count - final_skipped_count}, truly skipped: {final_skipped_count})")
+            plain_report.append(f"UNPARSEABLE FILES: {unparseable_count}")
+            plain_report.append(f"  Gap-fill resolved : {unparseable_count - final_skipped_count}")
+            plain_report.append(f"  Truly skipped     : {final_skipped_count}")
+            if final_skipped_count:
+                plain_report.append("  (Available via Extra/Skipped Files button)")
         plain_report += [
             "=" * 50,
-            "Note: Duplicates mean multiple files had the same episode",
-            "number. ALL were included — nothing was skipped.",
+            "Note: Duplicates = multiple files with same episode number.",
+            "ALL were included — nothing was skipped.",
+            "-" * 50,
+            "This report is auto-generated. | Powered by Arya Bot",
             "=" * 50,
         ]
         report_text = "\n".join(plain_report)
@@ -938,10 +938,10 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                           f"\n\n<blockquote expandable>{hi_body}</blockquote>")
 
                 await bot.send_document(user_id, report_bytes, caption=dm_cap,
-                                        file_name=report_bytes.name)
+                                        parse_mode="html", file_name=report_bytes.name)
                 report_bytes.seek(0)
                 await poster.send_document(sj['target'], report_bytes, caption=ch_cap,
-                                           file_name=report_bytes.name)
+                                           parse_mode="html", file_name=report_bytes.name)
 
             else:
                 dm_ongoing = (
@@ -958,10 +958,10 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 ch_cap = f"<blockquote expandable>{ch_ongoing}</blockquote>"
 
                 await bot.send_document(user_id, report_bytes, caption=dm_cap,
-                                        file_name=report_bytes.name)
+                                        parse_mode="html", file_name=report_bytes.name)
                 report_bytes.seek(0)
                 await poster.send_document(sj['target'], report_bytes, caption=ch_cap,
-                                           file_name=report_bytes.name)
+                                           parse_mode="html", file_name=report_bytes.name)
 
         except Exception as rep_err:
             logger.error(f"Could not send report file: {rep_err}", exc_info=True)
