@@ -760,7 +760,15 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             chunk = raw_buttons[i : i + buttons_per_post]
             first_ep = chunk[0]["ep_start"]
             last_ep  = chunk[-1]["ep_end"]
-            txt = f"<b>»  {_sc(story)} | {_sc('Episodes')} {first_ep}–{last_ep}</b>"
+            def _bold(t):
+                r = ""
+                for c in str(t):
+                    if 'A' <= c <= 'Z': r += chr(0x1D400 + ord(c) - ord('A'))
+                    elif 'a' <= c <= 'z': r += chr(0x1D41A + ord(c) - ord('a'))
+                    elif '0' <= c <= '9': r += chr(0x1D7CE + ord(c) - ord('0'))
+                    else: r += c
+                return r
+            txt = f"{_bold(story.upper())} {_bold('EPS')} {first_ep}–{last_ep}"
             keyboard = []
             for j in range(0, len(chunk), 2):
                 row = [c["btn"] for c in chunk[j:j + 2]]
@@ -866,11 +874,15 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             plain_report.append("  " + ", ".join(str(e) for e in missing_eps))
         if unparseable_count:
             plain_report.append("-" * 50)
-            plain_report.append(f"UNPARSEABLE MESSAGES SKIPPED: {unparseable_count}")
+            plain_report.append(f"UNPARSEABLE FILES: {unparseable_count}")
+            plain_report.append(f"  These files had no readable episode number in their name.")
+            plain_report.append(f"  They are accessible via the Extra/Skipped Files button.")
         plain_report += [
             "=" * 50,
-            "Note: Duplicates mean multiple files had the same episode",
-            "number. ALL were included — nothing was skipped.",
+            "Note: Duplicates = multiple files had the same episode number.",
+            "ALL were included — nothing was skipped.",
+            "-" * 50,
+            "This report is auto-generated. | Powered by Arya Bot",
             "=" * 50,
         ]
         report_text = "\n".join(plain_report)
@@ -880,12 +892,13 @@ async def _build_share_links(bot, user_id, sj, info_msg):
         try:
             usr_obj = await bot.get_users(user_id)
             u_name = usr_obj.first_name if usr_obj else "User"
-            bot_link = f"<a href='https://t.me/{bot_usr}'>{poster.me.first_name}</a>"
+            poster_me = await poster.get_me()
+            bot_link = f"<a href='https://t.me/{bot_usr}'>{poster_me.first_name}</a>"
             story_sz = _sc(story)
 
             if sj.get('is_completed'):
-                # ── Completed story: full bilingual report caption ──────────
-                header = f"›› {_sc('Hey')} <a href='tg://user?id={user_id}'>{u_name}</a>\n\n"
+                dm_header  = f"›› {_sc('Hey')} <a href='tg://user?id={user_id}'>{u_name}</a>\n\n"
+                ch_header  = f"›› {_sc('Hey Strangers')}\n\n"
 
                 en_body = (
                     _sc("This ") + story_sz + _sc(" is completed by ") + bot_link +
@@ -900,55 +913,63 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 )
 
                 hi_body = (
-                    f"यह {story_sz} {bot_link} द्वारा पूरी कर दी गई है। मैंने सब कुछ सही"
-                    " करने की कोशिश की है। कुछ एपिसोड स्वाभाविक रूप से गायब हो सकते हैं —"
-                    " घबराएं नहीं। गैर-तार्किक फ़ाइलें '»  Extra/Skipped files' में मिलेंगी।"
+                    f"यह {story_sz} {bot_link} द्वारा पूरी कर दी गई है। मैंने सब कुछ सही करने की"
+                    " कोशिश की है और आपको सभी विवरणों के साथ एक अंतिम रिपोर्ट भी प्रदान की है।"
+                    " कुछ एपिसोड स्वाभाविक रूप से गायब हो सकते हैं — कृपया घबराएं नहीं,"
+                    " उसका कुछ नहीं किया जा सकता। लेकिन अगर 10+ एपिसोड गायब हैं, तो आप"
+                    " सपोर्ट में शिकायत कर सकते हैं। गैर-तार्किक या अनपार्स की गई फ़ाइलें"
+                    " '»  Extra/Skipped files' में उपलब्ध होंगी। कुछ डुप्लिकेट दिखाए गए हैं —"
+                    " या तो वे वास्तविक डुप्लिकेट हैं, या अपलोडर ने एक ही नाम से कई फ़ाइलें"
+                    " अपलोड की हैं। मैं जिम्मेदार नहीं हूँ क्योंकि ये फ़ाइलें आर्या बॉट के"
+                    " माध्यम से अग्रेषित की गई थीं, स्क्रैप नहीं की गई थीं।"
                 )
 
-                final_cap = (
-                    f"<blockquote expandable>{header}{en_body}</blockquote>"
+                dm_cap = (
+                    f"<blockquote expandable>{dm_header}{en_body}</blockquote>"
+                    f"\n\n<blockquote expandable>{hi_body}</blockquote>"
+                )
+                ch_cap = (
+                    f"<blockquote expandable>{ch_header}{en_body}</blockquote>"
                     f"\n\n<blockquote expandable>{hi_body}</blockquote>"
                 )
 
-                # Send to admin DM
-                await bot.send_document(
-                    user_id, report_bytes,
-                    caption=final_cap,
-                    file_name=report_bytes.name
-                )
-                # Send to target channel too
-                report_bytes.seek(0)
-                await poster.send_document(
-                    sj['target'], report_bytes,
-                    caption=final_cap,
-                    file_name=report_bytes.name
-                )
-
             else:
-                # ── Ongoing story: short friendly caption ───────────────────
-                ongoing_cap = (
+                dm_ongoing = (
                     f"›› {_sc('Hey')} <a href='tg://user?id={user_id}'>{u_name}</a>\n\n"
                     + _sc("I have posted all the files currently available. "
                            "As new episodes arrive, I will post them. Enjoy!")
                 )
-                final_cap = f"<blockquote expandable>{ongoing_cap}</blockquote>"
+                ch_ongoing = (
+                    f"›› {_sc('Hey Strangers')}\n\n"
+                    + _sc("All currently available files have been posted here. "
+                           "New episodes will be added as they arrive. Enjoy and stay tuned!")
+                )
+                dm_cap = f"<blockquote expandable>{dm_ongoing}</blockquote>"
+                ch_cap = f"<blockquote expandable>{ch_ongoing}</blockquote>"
 
-                # Send to admin DM
+            # Send to admin DM — independent of channel
+            try:
                 await bot.send_document(
                     user_id, report_bytes,
-                    caption=final_cap,
+                    caption=dm_cap, parse_mode="html",
                     file_name=report_bytes.name
                 )
-                # Send to target channel too
+            except Exception as dm_err:
+                logger.error(f"[Report] DM send failed: {dm_err}", exc_info=True)
+
+            # Send to target channel — always attempted independently
+            try:
                 report_bytes.seek(0)
                 await poster.send_document(
                     sj['target'], report_bytes,
-                    caption=final_cap,
+                    caption=ch_cap, parse_mode="html",
                     file_name=report_bytes.name
                 )
+            except Exception as ch_err:
+                logger.error(f"[Report] Channel send failed: {ch_err}", exc_info=True)
 
         except Exception as rep_err:
-            logger.error(f"Could not send report file: {rep_err}", exc_info=True)
+            logger.error(f"[Report] Could not prepare report: {rep_err}", exc_info=True)
 
     except Exception as e:
         import traceback
