@@ -880,51 +880,75 @@ async def _build_share_links(bot, user_id, sj, info_msg):
         try:
             usr_obj = await bot.get_users(user_id)
             u_name = usr_obj.first_name if usr_obj else "User"
+            bot_link = f"<a href='https://t.me/{bot_usr}'>{poster.me.first_name}</a>"
+            story_sz = _sc(story)
 
             if sj.get('is_completed'):
-                header = (
-                    f"›› {_sc('Hey')} <a href='tg://user?id={user.id}'>{u_name}</a>\n"
-                    
-                    
-                    f"\n"
-                )
-                
-                bot_link = f"<a href='https://t.me/{bot_usr}'>{poster.me.first_name}</a>"
-                story_sz = _sc(story)
-                
-                en_body = _sc(f"This ") + story_sz + _sc(f" is completed by ") + bot_link + _sc(f". I have tried to make everything correct and have also provided you with a final report containing all details. Some episodes may naturally be missing, so please don't panic — nothing can be done about that. But if 10+ episodes are missing, you can complain in support. Some episodes may also be artificially missing, like due to parser issues. I don't think I can do anything about that. Non-logical or unparsed files will be available in your '»  Extra/Skipped files'. Some duplicates are also shown — either they are real duplicates, or the uploader (I have not scraped this from Pocket FM or any other platform; these were forcefully forwarded via Arya bot from some private/public channel/group/bot, so I am not responsible) uploaded multiple files with the same name. So I believe you are intelligent enough to understand this.")
-                
-                hi_body = f"यह {story_sz} {bot_link} द्वारा पूरी कर दी गई है। मैंने सब कुछ सही करने की कोशिश की है और आपको सभी विवरणों के साथ एक अंतिम रिपोर्ट भी प्रदान की है। कुछ एपिसोड स्वाभाविक रूप से गायब हो सकते हैं, इसलिए कृपया घबराएं नहीं — उसका कुछ नहीं किया जा सकता। लेकिन अगर 10+ एपिसोड गायब हैं, तो आप सपोर्ट में शिकायत कर सकते हैं। कुछ एपिसोड कृत्रिम रूप से भी गायब हो सकते हैं, जैसे पार्सर समस्याओं के कारण। मुझे नहीं लगता कि मैं इसके बारे में कुछ भी कर सकता हूँ। गैर-तार्किक या अनपार्स की गई फ़ाइलें आपके '»  Extra/Skipped files' में उपलब्ध होंगी। कुछ डुप्लिकेट भी दिखाए गए हैं — या तो वे वास्तविक डुप्लिकेट हैं, या अपलोडर ने (मैंने इसे पॉकेट एफएम या किसी अन्य प्लेटफॉर्म से स्क्रैप नहीं किया है; इन्हें आर्या बॉट के माध्यम से किसी निजी/सार्वजनिक चैनल/समूह/बॉट से जबरदस्ती अग्रेषित किया गया था, इसलिए मैं जिम्मेदार नहीं हूं) एक ही नाम से कई फाइलें अपलोड की हैं। इसलिए मुझे विश्वास है कि आप इसे समझने के लिए पर्याप्त बुद्धिमान हैं।"
+                # ── Completed story: full bilingual report caption ──────────
+                header = f"›› {_sc('Hey')} <a href='tg://user?id={user_id}'>{u_name}</a>\n\n"
 
-                final_cap = f"<blockquote expandable>{header}{en_body}</blockquote>\n\n<blockquote expandable>{hi_body}</blockquote>"
-                
+                en_body = (
+                    _sc("This ") + story_sz + _sc(" is completed by ") + bot_link +
+                    _sc(". I have tried to make everything correct and have also provided"
+                        " you with a final report containing all details. Some episodes may"
+                        " naturally be missing — nothing can be done about that. But if 10+"
+                        " episodes are missing, you can complain in support. Non-logical or"
+                        " unparsed files will be available in '»  Extra/Skipped files'."
+                        " Some duplicates are shown — either real duplicates, or the uploader"
+                        " uploaded multiple files with the same name. I am not responsible"
+                        " as these files were forwarded via Arya bot and not scraped.")
+                )
+
+                hi_body = (
+                    f"यह {story_sz} {bot_link} द्वारा पूरी कर दी गई है। मैंने सब कुछ सही"
+                    " करने की कोशिश की है। कुछ एपिसोड स्वाभाविक रूप से गायब हो सकते हैं —"
+                    " घबराएं नहीं। गैर-तार्किक फ़ाइलें '»  Extra/Skipped files' में मिलेंगी।"
+                )
+
+                final_cap = (
+                    f"<blockquote expandable>{header}{en_body}</blockquote>"
+                    f"\n\n<blockquote expandable>{hi_body}</blockquote>"
+                )
+
+                # Send to admin DM
                 await bot.send_document(
                     user_id, report_bytes,
                     caption=final_cap,
                     file_name=report_bytes.name
                 )
+                # Send to target channel too
+                report_bytes.seek(0)
+                await poster.send_document(
+                    sj['target'], report_bytes,
+                    caption=final_cap,
+                    file_name=report_bytes.name
+                )
+
             else:
-                ongoing_msg = _sc("Hey, I have posted all the files currently available with me. If any new episode comes, I will post it. Enjoy 🫶🏻.")
-                final_cap = f"<blockquote expandable>{ongoing_msg}</blockquote>"
+                # ── Ongoing story: short friendly caption ───────────────────
+                ongoing_cap = (
+                    f"›› {_sc('Hey')} <a href='tg://user?id={user_id}'>{u_name}</a>\n\n"
+                    + _sc("I have posted all the files currently available. "
+                           "As new episodes arrive, I will post them. Enjoy!")
+                )
+                final_cap = f"<blockquote expandable>{ongoing_cap}</blockquote>"
+
+                # Send to admin DM
                 await bot.send_document(
                     user_id, report_bytes,
+                    caption=final_cap,
+                    file_name=report_bytes.name
+                )
+                # Send to target channel too
+                report_bytes.seek(0)
+                await poster.send_document(
+                    sj['target'], report_bytes,
                     caption=final_cap,
                     file_name=report_bytes.name
                 )
 
         except Exception as rep_err:
-            logger.warning(f"Could not send report file: {rep_err}")
-
-        # Also send the report file to the TARGET CHANNEL
-        try:
-            report_bytes.seek(0)
-            await poster.send_document(
-                sj['target'], report_bytes,
-                caption=f"<b>»  {_sc(story)} — Share Links Report</b>",
-                file_name=report_bytes.name
-            )
-        except Exception as ch_rep_err:
-            logger.warning(f"Could not send report to target channel: {ch_rep_err}")
+            logger.error(f"Could not send report file: {rep_err}", exc_info=True)
 
     except Exception as e:
         import traceback
