@@ -381,18 +381,18 @@ async def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", co
 
         if not needs_reencode:
             # Try lossless concat copy first (only safe for audio output or pure video concat)
-            cmd = ["ffmpeg","-y","-threads","1","-f","concat","-safe","0","-i",lst]
+            cmd = ["ffmpeg","-y","-threads","2","-f","concat","-safe","0","-i",lst]
             if cover and os.path.exists(cover) and mtype == "audio":
                 cmd += ["-i", cover, "-map","0:a","-map","1:0","-c:a","copy",
                         "-id3v2_version","3",
                         "-metadata:s:v","title=Album cover",
                         "-metadata:s:v","comment=Cover (front)",
-                        "-max_muxing_queue_size", "1024"]
+                        "-max_muxing_queue_size", "4096"]
             elif mtype == "video":
                 # Video concat: add faststart so YouTube can process it
-                cmd += ["-c", "copy", "-movflags", "+faststart", "-max_muxing_queue_size", "1024"]
+                cmd += ["-c", "copy", "-movflags", "+faststart", "-max_muxing_queue_size", "4096"]
             else:
-                cmd += ["-c", "copy", "-max_muxing_queue_size", "1024"]
+                cmd += ["-c", "copy", "-max_muxing_queue_size", "4096"]
             if metadata:
                 for k, v in (metadata or {}).items():
                     if v: cmd += ["-metadata", f"{k}={v}"]
@@ -403,7 +403,7 @@ async def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", co
             if ok and os.path.exists(abs_out) and os.path.getsize(abs_out) > 1000:
                 return True, ""
         # Re-encode path
-        cmd2 = ["ffmpeg","-y","-threads","1"]
+        cmd2 = ["ffmpeg","-y","-threads","2"]
         eff_cover = video_cover or cover  # use video_cover if available
         if make_video and eff_cover and os.path.exists(eff_cover) and mtype == "audio":
             if outro_cover and len([o for o in (outro_cover if isinstance(outro_cover, list) else [outro_cover]*4) if isinstance(o, str) and os.path.exists(o)]) == 4:
@@ -412,7 +412,7 @@ async def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", co
 
                 # ══ Step 1: Merge audio only to get the EXACT real duration ══
                 tmp_audio = output_path + ".tmp_audio.m4a"
-                audio_cmd = ["ffmpeg","-y","-threads","1"]
+                audio_cmd = ["ffmpeg","-y","-threads","2"]
                 for p in file_list: audio_cmd += ["-i", os.path.abspath(p)]
                 fc = "".join(f"[{i}:a]" for i in range(len(file_list))) + f"concat=n={len(file_list)}:v=0:a=1[a1]"
                 if atempo: fc += f";[a1]{atempo}[a2]"
@@ -493,7 +493,7 @@ async def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", co
                     "-c:v","libx264","-preset","superfast","-tune","stillimage",
                     "-c:a","aac","-b:a","192k",
                     "-movflags","+faststart",
-                    "-max_muxing_queue_size","2048"
+                    "-max_muxing_queue_size","4096"
                 ]
                 if metadata:
                     for k, v in (metadata or {}).items():
@@ -525,7 +525,7 @@ async def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", co
                 "-c:v","libx264","-preset","superfast","-tune","stillimage",
                 "-c:a","aac","-b:a","192k",
                 "-movflags","+faststart",
-                "-shortest","-max_muxing_queue_size","2048"
+                "-shortest","-max_muxing_queue_size","4096"
             ]
         else:
             if mtype == "video":
@@ -534,7 +534,7 @@ async def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", co
                 if vf: cmd2 += ["-vf", vf]
                 if atempo: cmd2 += ["-af", atempo]
                 cmd2 += ["-c:v","libx264","-preset","superfast","-crf","28",
-                         "-c:a","aac","-b:a","128k","-movflags","+faststart","-max_muxing_queue_size","2048"]
+                         "-c:a","aac","-b:a","128k","-movflags","+faststart","-max_muxing_queue_size","4096"]
             else:
                 for p in file_list: cmd2 += ["-i", os.path.abspath(p)]
                 fc = "".join(f"[{i}:a]" for i in range(len(file_list))) + f"concat=n={len(file_list)}:v=0:a=1[a1]"
@@ -551,7 +551,7 @@ async def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", co
                 else:
                     cmd2 += ["-filter_complex", fc, "-map", map_lbl]
                     
-                cmd2 += ["-c:a","libmp3lame","-b:a","192k","-ar","48000","-max_muxing_queue_size","2048"]
+                cmd2 += ["-c:a","libmp3lame","-b:a","192k","-ar","48000","-max_muxing_queue_size","4096"]
         
         if metadata:
             for k, v in (metadata or {}).items():
@@ -613,7 +613,7 @@ async def _scan_total_size(client, from_chat, start_id, end_id):
 # ══════════════════════════════════════════════════════════════════════════════
 # Core runner — Chunked, Memory-safe
 # ══════════════════════════════════════════════════════════════════════════════
-CHUNK_SIZE   = 10          # Reduced to 10 to keep RAM footprint low
+CHUNK_SIZE   = 5          # Reduced to 10 to keep RAM footprint low
 MAX_TOTAL_GB = 15.0        # Hard limit on total estimated size across all files
 MAX_CHUNK_GB = 2.0         # Abort a single chunk if it somehow exceeds this
 
@@ -905,9 +905,9 @@ async def _run_job(jid, uid, bot):
                     except: pass
                     last_edit[0] = now
 
-            # Chunk parts: always lossless (speed applied at final merge only)
+            # Chunk parts: apply speed chunk-by-chunk to save MASSIVE amounts of RAM
             ok, err = await _ffmpeg_merge(
-                chunk_files_sorted, part_path, None, mtype, None, 1.0, False, progress_cb=chunk_prog)
+                chunk_files_sorted, part_path, None, mtype, None, speed, False, progress_cb=chunk_prog)
 
             if not ok:
                 await _db_up(jid, status="error", error=f"Chunk {chunk_num} merge failed: {err[:300]}")
@@ -968,9 +968,10 @@ async def _run_job(jid, uid, bot):
                 except: pass
                 last_edit2[0] = now
 
+        # Speed already applied in Phase 2, so enforce 1.0x here
         ok, err = await _ffmpeg_merge(
             part_files_sorted, out_path, metadata, mtype,
-            cover, speed, make_video, effective_cover_for_video, outro_cover, cumulative_secs, progress_cb=final_prog)
+            cover, 1.0, make_video, effective_cover_for_video, outro_cover, cumulative_secs, progress_cb=final_prog)
 
         if not ok:
             await _db_up(jid, status="error", error=err[:500])
