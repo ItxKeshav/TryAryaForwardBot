@@ -1614,37 +1614,37 @@ async def filters_buttons(user_id):
   buttons = [[
        InlineKeyboardButton('🏷️ ꜰᴏʀᴡᴀʀᴅ ᴛᴀɢ',
                     callback_data=f'settings_#updatefilter-forward_tag-{filter["forward_tag"]}'),
-       InlineKeyboardButton('» ' if filter['forward_tag'] else '‣ ',
+       InlineKeyboardButton('✅' if filter['forward_tag'] else '❌',
                     callback_data=f'settings#updatefilter-forward_tag-{filter["forward_tag"]}')
        ],[
        InlineKeyboardButton('🖍️ ᴛᴇxᴛꜱ',
                     callback_data=f'settings_#updatefilter-text-{filters["text"]}'),
-       InlineKeyboardButton('» ' if filters['text'] else '‣ ',
+       InlineKeyboardButton('✅' if filters['text'] else '❌',
                     callback_data=f'settings#updatefilter-text-{filters["text"]}')
        ],[
        InlineKeyboardButton('»  ᴅᴏᴄᴜᴍᴇɴᴛꜱ',
                     callback_data=f'settings_#updatefilter-document-{filters["document"]}'),
-       InlineKeyboardButton('» ' if filters['document'] else '‣ ',
+       InlineKeyboardButton('✅' if filters['document'] else '❌',
                     callback_data=f'settings#updatefilter-document-{filters["document"]}')
        ],[
        InlineKeyboardButton('🎞️ ᴠɪᴅᴇᴏꜱ',
                     callback_data=f'settings_#updatefilter-video-{filters["video"]}'),
-       InlineKeyboardButton('» ' if filters['video'] else '‣ ',
+       InlineKeyboardButton('✅' if filters['video'] else '❌',
                     callback_data=f'settings#updatefilter-video-{filters["video"]}')
        ],[
        InlineKeyboardButton('📷 ᴘʜᴏᴛᴏꜱ',
                     callback_data=f'settings_#updatefilter-photo-{filters["photo"]}'),
-       InlineKeyboardButton('» ' if filters['photo'] else '‣ ',
+       InlineKeyboardButton('✅' if filters['photo'] else '❌',
                     callback_data=f'settings#updatefilter-photo-{filters["photo"]}')
        ],[
        InlineKeyboardButton('🎧 ᴀᴜᴅɪᴏꜱ',
                     callback_data=f'settings_#updatefilter-audio-{filters["audio"]}'),
-       InlineKeyboardButton('» ' if filters['audio'] else '‣ ',
+       InlineKeyboardButton('✅' if filters['audio'] else '❌',
                     callback_data=f'settings#updatefilter-audio-{filters["audio"]}')
        ],[
        InlineKeyboardButton('🎤 ᴠᴏɪᴄᴇꜱ',
                     callback_data=f'settings_#updatefilter-voice-{filters["voice"]}'),
-       InlineKeyboardButton('» ' if filters['voice'] else '‣ ',
+       InlineKeyboardButton('✅' if filters['voice'] else '❌',
                     callback_data=f'settings#updatefilter-voice-{filters["voice"]}')
        ],[
        InlineKeyboardButton('🎭 ᴀɴɪᴍᴀᴛɪᴏɴꜱ',

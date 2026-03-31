@@ -185,6 +185,12 @@ async def _mj_forward(
                 is_text_replaced = True
 
     async def _send_one(chat, thread):
+        nonlocal forward_tag
+        if new_caption is not None or is_text_replaced:
+            # Telegram CANNOT modify text/captions of natively forwarded messages.
+            # If the user wants to wipe captions, remove links, or replace text, we MUST use copy_message.
+            forward_tag = False
+
         kw = {"message_thread_id": thread} if thread else {}
         if new_caption is not None:
             kw["caption"] = new_caption
@@ -212,7 +218,7 @@ async def _mj_forward(
 
             if "RESTRICTED" not in err and "PROTECTED" not in err:
                 try:
-                    if not forward_tag:
+                    if forward_tag:
                         await client.forward_messages(chat_id=chat, from_chat_id=msg.chat.id, message_ids=msg.id, **kw)
                     else:
                         if is_text_replaced and not msg.media:
@@ -454,6 +460,11 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
             except asyncio.CancelledError:
                 raise
             except Exception as e:
+                err_str = str(e).upper()
+                if any(x in err_str for x in ["PEER_ID_INVALID", "CHANNEL_INVALID", "USERNAME_INVALID", "CHAT_ID_INVALID"]):
+                    logger.error(f"[MultiJob {job_id}] Fatal Source Error: {e}")
+                    await _mj_update(job_id, status="error", error=f"Source Invalid: {e}")
+                    break
                 logger.warning(f"[MultiJob {job_id}] Fetch error at {current}: {e}")
                 await asyncio.sleep(10)
                 current += BATCH_SIZE
@@ -544,7 +555,6 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
 
                 # Get links-filter flag for caption stripping
                 _remove_links = 'links' in disabled_types
-                await _mj_forward(client, msg, to_chat, remove_caption, cap_tpl, forward_tag,
                                    to_thread, to_chat_2, to_thread_2, replacements, _remove_links)
                 
                 current = msg.id + 1

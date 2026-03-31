@@ -205,6 +205,12 @@ async def _forward_message(
                 is_text_replaced = True
 
     async def _send_one(chat, thread):
+        nonlocal forward_tag
+        if new_caption is not None or is_text_replaced:
+            # Telegram CANNOT modify text/captions of natively forwarded messages.
+            # If the user wants to wipe captions, remove links, or replace text, we MUST use copy_message.
+            forward_tag = False
+
         kw = {"message_thread_id": thread} if thread else {}
         if new_caption is not None:
             kw["caption"] = new_caption
