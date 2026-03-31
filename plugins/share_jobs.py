@@ -604,7 +604,7 @@ async def _build_share_links(bot, user_id, sj, info_msg):
         if not parsed_msgs:
             return await safe_edit("‣  Could not extract any episode numbers from the scanned messages.")
 
-        total_count = len(parsed_msgs)  # used in final report
+        total_count = len(all_valid_msgs)  # used in final report
 
 
         #  Build ep_to_msgs dict and track duplicates 
@@ -754,11 +754,7 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 "ep_end":   b_e,
             })
 
-        # Calculate unparseable count for the display report
-        added_msg_ids = set()
-        for mids in ep_to_msgs.values():
-            added_msg_ids.update(mids)
-        unparseable_msgs_list = [m.id for m in all_valid_msgs if m.id not in added_msg_ids]
+        # Calculate unparseable count for the display report (removed per user request)
 
 
         #  PHASE 3: Post to target channel 
@@ -840,9 +836,6 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 miss_preview += f" (+{len(missing_eps)-15} more)"
             report_lines.append(f"»  <b>Missing episodes ({len(missing_eps)}):</b> {miss_preview}")
 
-        if unparseable_msgs_list:
-            report_lines.append(f"🚫  <b>Unparseable messages ({len(unparseable_msgs_list)}):</b> Kept at original positions inside buttons.")
-
 
         report_lines.append(f"")
         report_lines.append(f"<i>Users click any button to receive their episodes from @{bot_usr}.</i>")
@@ -879,13 +872,7 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             plain_report.append("-" * 50)
             plain_report.append(f"MISSING EPISODES ({len(missing_eps)}):")
             plain_report.append("  " + ", ".join(str(e) for e in missing_eps))
-        if unparseable_msgs_list:
-            plain_report.append("-" * 50)
-            plain_report.append(f"UNPARSEABLE FILES: {len(unparseable_msgs_list)}")
-            plain_report.append(f"  These files had no readable episode number in their name.")
-            plain_report.append(f"  They were naturally embedded into the buttons at their original chronological positions.")
-            plain_report.append("  IDs: " + ", ".join(str(m) for m in unparseable_msgs_list))
-        plain_report += [
+
             "=" * 50,
             "Note: Duplicates = multiple files had the same episode number.",
             "ALL were included — nothing was skipped.",
