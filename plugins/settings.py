@@ -243,131 +243,35 @@ async def settings_query(bot, query):
      await query.message.edit_text("<b>Successfully changed active account.</b>", reply_markup=InlineKeyboardMarkup(buttons))
 
   elif type == "sharebot":
-     token       = await db.get_share_bot_token()
-     protect     = await db.get_share_protect_global()
-     auto_delete = await db.get_share_autodelete_global()
-     bpp         = await db.get_share_buttons_per_post()
-     fsub_chs    = await db.get_share_fsub_channels()
-     bots_list   = await db.get_share_bots()
-
+     bots = await db.get_share_bots()
+     protect = await db.get_share_protect_global()
      ptxt = "»  ON" if protect else "‣  OFF"
-     if auto_delete == 0:    adtxt = "‣  OFF"
-     elif auto_delete < 60:  adtxt = f"»  {auto_delete}m"
-     else:                   adtxt = f"»  {auto_delete // 60}h"
-
-     buttons = [
-         [InlineKeyboardButton(f'🛡 Pʀᴏᴛᴇᴄᴛɪᴏɴ: {ptxt}', callback_data='settings#sharebotprotect'),
-          InlineKeyboardButton(f'»  Aᴜᴛᴏ-Dᴇʟᴇᴛᴇ: {adtxt}', callback_data='settings#sharebotautodel')],
-         [InlineKeyboardButton(f'🗂 Bᴛɴs/Pᴏsᴛ: {bpp}', callback_data='settings#sharebot_bpp'),
-          InlineKeyboardButton(f'»  Fᴏʀᴄᴇ-Sᴜʙ ({len(fsub_chs)}/6)', callback_data='settings#sharefsub')],
-         [InlineKeyboardButton('📖 ᴡᴇʟᴄᴏᴍᴇ ᴍꜱɢ', callback_data='settings#sbt_welcome'),
-          InlineKeyboardButton('»  ᴅᴇʟᴇᴛᴇ ᴍꜱɢ', callback_data='settings#sbt_delete')],
-         [InlineKeyboardButton('»  ᴄᴜꜱᴛᴏᴍ ᴄᴀᴘᴛɪᴏɴ', callback_data='settings#sbt_caption'),
-          InlineKeyboardButton('»  ꜱᴜᴄᴄᴇꜱꜱ ᴍꜱɢ', callback_data='settings#sbt_success')],
-         [InlineKeyboardButton('🔐 ꜰꜱᴜʙ ᴍꜱɢ', callback_data='settings#sbt_fsub'),
-          InlineKeyboardButton(f'»  Sʜᴀʀᴇ Bᴏᴛs ({len(bots_list)})', callback_data='settings#sbt_manage')],
-         [InlineKeyboardButton('«  ʙᴀᴄᴋ', callback_data='settings#main')]
-     ]
-     txt = (
-         f"<b>❪ SHARE BOT CONFIGURATION ❫</b>\n\n"
-         f"<b>❯ Share Bots:</b> {len(bots_list)} active agent(s)\n\n"
-         f"<b>»  Settings Overview:</b>\n"
-         f"<b>┠ Protection</b> — restricts saving & forwarding delivered files.\n"
-         f"<b>┠ Auto-Delete</b> — globally deletes files after the timer.\n"
-         f"<b>┠ Buttons/Post</b> — how many episode buttons appear in channel posts.\n"
-         f"<b>┠ Force-Subscribe</b> — users must join channels before receiving files.\n"
-         f"<b>┖ Messaging</b> — click the lower buttons to customize text & captions."
+     
+     buttons = []
+     buttons.append([InlineKeyboardButton(f"🛡 Pʀᴏᴛᴇᴄᴛɪᴏɴ: {ptxt}", callback_data="settings#sharebotprotect")])
+     buttons.append([InlineKeyboardButton("    »  ᴅᴇʟɪᴠᴇʀʏ ʙᴏᴛꜱ    ", callback_data="settings#noop")])
+     for b in bots:
+         buttons.append([InlineKeyboardButton(f"»  {b['name']}", callback_data=f"settings#sb_view_{b['id']}")])
+     if len(bots) < 10:
+         buttons.append([InlineKeyboardButton('»  ᴀᴅᴅ ꜱʜᴀʀᴇ ʙᴏᴛ » ', callback_data="settings#sb_add")])
+     buttons.append([InlineKeyboardButton('«  ʙᴀᴄᴋ', callback_data="settings#main")])
+     
+     text = (
+         "<b>❪ SHARE BOT CONFIGURATION ❫</b>\n\n"
+         f"<b>Allocated Bots:</b> {len(bots)}/10\n\n"
+         "<b>These bots handle exclusively the delivery payload of your Share Links.</b>\n\n"
+         "<i>Protection globally restricts saving and forwarding delivered files.</i>"
      )
-     await query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(buttons))
+     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
   elif type == "sharebotprotect":
      protect = await db.get_share_protect_global()
      await db.set_share_protect_global(not protect)
      await query.answer(f"Protection turned {'OFF' if protect else 'ON'}")
-     return await edit_settings(client, query, "sharebot")
+     query.data = "settings#sharebot"
+     return await settings_query(bot, query)
 
-  elif type == "sharebotautodel":
-     # Global cycle: Off → 5m → 15m → 3h → 6h → 12h → 24h → 48h → Off
-     current = await db.get_share_autodelete_global()
-     if current == 0:      nxt = 5
-     elif current == 5:    nxt = 15
-     elif current == 15:   nxt = 180
-     elif current == 180:  nxt = 360
-     elif current == 360:  nxt = 720
-     elif current == 720:  nxt = 1440
-     elif current == 1440: nxt = 2880
-     else:                 nxt = 0
-     await db.set_share_autodelete_global(nxt)
-     await query.answer("Auto-Delete Timer Updated!")
-     return await edit_settings(client, query, "sharebot")
 
-  elif type == "sharebot_bpp":
-     # Cycle buttons-per-post: 4 → 6 → 8 → 10 → 12 → 16 → 20 → 4
-     current = await db.get_share_buttons_per_post()
-     cycle   = [4, 6, 8, 10, 12, 16, 20]
-     try:
-         idx = cycle.index(current)
-         nxt = cycle[(idx + 1) % len(cycle)]
-     except ValueError:
-         nxt = 10
-     await db.set_share_buttons_per_post(nxt)
-     await query.answer(f"Buttons per post set to {nxt}")
-     return await edit_settings(client, query, "sharebot")
-
-  elif type == "sbt_manage":
-      bots = await db.get_share_bots()
-      buttons = []
-      buttons.append([InlineKeyboardButton("    »  ᴅᴇʟɪᴠᴇʀʏ ʙᴏᴛꜱ    ", callback_data="settings#noop")])
-      for b in bots:
-          buttons.append([InlineKeyboardButton(f"»  {b['name']}", callback_data=f"settings#sb_view_{b['id']}")])
-      if len(bots) < 10:
-          buttons.append([InlineKeyboardButton('»  ᴀᴅᴅ ꜱʜᴀʀᴇ ʙᴏᴛ » ', callback_data="settings#sb_add")])
-      buttons.append([InlineKeyboardButton('«  ʙᴀᴄᴋ', callback_data="settings#sharebot")])
-      
-      text = (
-          "<b><u>»  Share Agent Accounts</u></b>\n\n"
-          f"<b>Allocated Bots:</b> {len(bots)}/10\n\n"
-          "<b>These bots handle exclusively the delivery payload of your Share Links.</b>"
-      )
-      await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons))
-
-  elif type.startswith("sbt_"):
-     key_map = {
-         "sbt_welcome": ("welcome_msg", "Welcome Message"),
-         "sbt_delete": ("delete_msg", "Delete Message"),
-         "sbt_caption": ("custom_caption", "Custom Caption"),
-         "sbt_success": ("success_msg", "Success Message"),
-         "sbt_fsub": ("fsub_msg", "FSub Message"),
-     }
-     if type not in key_map:
-         return await query.answer("Unknown action.")
-     db_key, title = key_map[type]
-     await query.message.delete()
-     try:
-         ask = await bot.send_message(
-             user_id,
-             f"<b>❪ CUSTOMIZE TEXT: {title.upper()} ❫</b>\n\n"
-             f"<b>Send the new text to be used.</b>\n"
-             f"<i>Supported variables:</i>\n"
-             f"<code>{{first_name}}</code> — User's first name\n"
-             f"<code>{{last_name}}</code> — User's last name\n"
-             f"<code>{{mention}}</code> — @username or strict ID mention\n\n"
-             "Send <code>/clear</code> to reset to default.\n"
-             "Send <code>/cancel</code> to abort."
-         )
-         resp = await bot.listen(chat_id=user_id, timeout=300)
-         if resp.text == "/cancel":
-             await resp.delete()
-             return await ask.edit_text("<b>Cancelled.</b>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("«  ʙᴀᴄᴋ", callback_data="settings#sharebot")]]))
-         elif resp.text == "/clear":
-             await db.set_share_text(db_key, "")
-             await ask.edit_text(f"»  <b>{title} has been reset to default!</b>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("«  ʙᴀᴄᴋ", callback_data="settings#sharebot")]]))
-         elif resp.text:
-             await db.set_share_text(db_key, resp.text.html if getattr(resp.text, 'html', None) else resp.text)
-             await ask.edit_text(f"»  <b>{title} successfully updated!</b>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("«  ʙᴀᴄᴋ", callback_data="settings#sharebot")]]))
-         await resp.delete()
-     except Exception as e:
-         pass
 
   elif type == "sbt_manage":
       bots = await db.get_share_bots()
@@ -402,7 +306,7 @@ async def settings_query(bot, query):
               await resp.delete()
               return await ask.edit_text(
                   "<b>Cancelled.</b>",
-                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("«  ʙᴀᴄᴋ", callback_data="settings#sbt_manage")]])
+                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("«  ʙᴀᴄᴋ", callback_data="settings#sharebot")]])
               )
 
           raw = (resp.text or "").strip()
@@ -415,7 +319,7 @@ async def settings_query(bot, query):
           if ":" not in tk or len(tk) < 40:
               return await ask.edit_text(
                   "<b>‣  Invalid token format!</b>\nMake sure you send the full token from @BotFather.",
-                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("«  ʀᴇᴛʀʏ", callback_data="settings#sb_add"), InlineKeyboardButton("«  ʙᴀᴄᴋ", callback_data="settings#sbt_manage")]])
+                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("«  ʀᴇᴛʀʏ", callback_data="settings#sb_add"), InlineKeyboardButton("«  ʙᴀᴄᴋ", callback_data="settings#sharebot")]])
               )
 
           # Validate token by starting a temp client
@@ -437,13 +341,13 @@ async def settings_query(bot, query):
 
           await ask.edit_text(
               f"»  <b>Successfully added @{me.username}!</b>\n\nThe delivery bot is now active.",
-              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("«  ʙᴀᴄᴋ", callback_data="settings#sbt_manage")]])
+              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("«  ʙᴀᴄᴋ", callback_data="settings#sharebot")]])
           )
       except Exception as e:
           errmsg = f"‣  <b>Error:</b> <code>{e}</code>"
           try:
               if ask:
-                  await ask.edit_text(errmsg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("«  ʙᴀᴄᴋ", callback_data="settings#sbt_manage")]]))
+                  await ask.edit_text(errmsg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("«  ʙᴀᴄᴋ", callback_data="settings#sharebot")]]))
               else:
                   await bot.send_message(user_id, errmsg)
           except Exception:
@@ -467,13 +371,14 @@ async def settings_query(bot, query):
           ],
           [InlineKeyboardButton('»  ᴄᴜꜱᴛᴏᴍ ᴄᴀᴘᴛɪᴏɴ',    callback_data=f"settings#sb_set_caption_{b_id}")],
           # ─── Bot controls ─────────────────────────────────────────
-          [InlineKeyboardButton('»  ꜰᴏʀᴄᴇ ꜱᴜʙꜱᴄʀɪʙᴇ',  callback_data=f"settings#sb_fsub_{b_id}")],
+          [InlineKeyboardButton('»  Aᴜᴛᴏ-Dᴇʟᴇᴛᴇ', callback_data=f"settings#sb_set_autodel_{b_id}"),
+           InlineKeyboardButton('»  ꜰᴏʀᴄᴇ ꜱᴜʙꜱᴄʀɪʙᴇ',  callback_data=f"settings#sb_fsub_{b_id}")],
           [
               InlineKeyboardButton('»  ꜱᴛᴀᴛꜱ',           callback_data=f"settings#sb_stats_{b_id}"),
               InlineKeyboardButton('»  ʙʀᴏᴀᴅᴄᴀꜱᴛ',       callback_data=f"settings#sb_broadcast_{b_id}")
           ],
           [InlineKeyboardButton('‣  ʀᴇᴍᴏᴠᴇ ʙᴏᴛ ‣ ',      callback_data=f"settings#sb_remove_{b_id}")],
-          [InlineKeyboardButton('«  ʙᴀᴄᴋ',               callback_data="settings#sbt_manage")],
+          [InlineKeyboardButton('«  ʙᴀᴄᴋ',               callback_data="settings#sharebot")],
       ]
       await query.message.edit_text(
           f"<b>❪ SHARE BOT PROFILE ❫</b>\n\n"
@@ -612,6 +517,21 @@ async def settings_query(bot, query):
           "Cᴜsᴛᴏᴍ Cᴀᴘᴛɪᴏɴ",
           "Send the caption to add to delivered media. Any font is accepted.",
           f"settings#sb_view_{b_id}")
+
+  elif type.startswith("sb_set_autodel_"):
+      b_id = type.split("sb_set_autodel_")[1]
+      opts   = [0, 5, 10, 30, 60, 1440]           # minutes; 0 = OFF
+      labels = ["OFF","5m","10m","30m","1h","24h"]
+      about = await db.get_share_bot_about(b_id)
+      cur = about.get('auto_delete', 0)
+      try:    cur_idx = opts.index(cur)
+      except: cur_idx = 0
+      nxt_idx = (cur_idx + 1) % len(opts)
+      about['auto_delete'] = opts[nxt_idx]
+      await db.set_share_bot_about(b_id, about)
+      await query.answer(f"Auto-Delete: {labels[nxt_idx]}")
+      query.data = f"settings#sb_view_{b_id}"
+      return await settings_query(bot, query)
 
   #  Stats & Broadcast 
   elif type.startswith("sb_stats_"):
@@ -858,6 +778,7 @@ async def settings_query(bot, query):
       ch_list = "\n".join(lines) if lines else "None configured."
       if len(fsub_chs) < 6:
           btns.append([InlineKeyboardButton("»  ᴀᴅᴅ ᴄʜᴀɴɴᴇʟ", callback_data=f"settings#sb_fsub_add_{b_id}")])
+      btns.append([InlineKeyboardButton("»  ꜱᴇᴛ ꜰꜱᴜʙ ᴍꜱɢ", callback_data=f"settings#sb_fsub_msg_{b_id}")])
       btns.append([InlineKeyboardButton("«  ʙᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")])
       await query.message.edit_text(
           f"<b>»  Force-Subscribe — Bot Specific</b>\n\n"
@@ -900,6 +821,13 @@ async def settings_query(bot, query):
           await db.set_bot_fsub_channels(b_id, fsub_chs)
           await query.answer("Removed.")
       return await edit_settings(client, query, f"sb_fsub_{b_id}")
+
+  elif type.startswith("sb_fsub_msg_"):
+      b_id = type.split("sb_fsub_msg_")[1]
+      await _sb_set_text_flow(bot, user_id, query, b_id, "fsub_msg",
+          "Fᴏʀᴄᴇ-Sᴜʙ Mᴇssᴀɢᴇ",
+          "Send the new message to prompt users to subscribe.\nAny font is accepted.",
+          f"settings#sb_fsub_{b_id}")
 
   elif type.startswith("sb_fsub_add_"):
       b_id = type[len("sb_fsub_add_"):]
@@ -1794,4 +1722,5 @@ async def next_filters_buttons(user_id):
        ]]
   return InlineKeyboardMarkup(buttons) 
    
+
 

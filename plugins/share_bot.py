@@ -273,8 +273,11 @@ async def _process_start(client, message):
     except Exception as peer_err:
         logger.warning(f"get_chat peer resolution failed: {peer_err}")
 
-    # 4. Global auto-delete setting
-    auto_delete_mins = await db.get_share_autodelete_global()
+    # Send actual files
+    sent_ids = []
+    auto_delete_mins = (await db.get_share_bot_about(bot_id)).get('auto_delete', 0) if bot_id else 0
+    if not auto_delete_mins:
+        auto_delete_mins = await db.get_share_autodelete_global()
 
     # 5. Deliver
     dl_id = f"{user_id}_{uuid_str}"
