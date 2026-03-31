@@ -929,10 +929,10 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 )
 
                 dm_cap = (
-                    f"<b>Report File</b>\n\n<blockquote expandable>{dm_header}{en_body}\n\n{hi_body}</blockquote>"
+                    f"<b>Report File</b>\n\n<blockquote expandable>{dm_header}{en_body}</blockquote>\n\n<blockquote expandable>{hi_body}</blockquote>"
                 )
                 ch_cap = (
-                    f"<b>Report File</b>\n\n<blockquote expandable>{ch_header}{en_body}\n\n{hi_body}</blockquote>"
+                    f"<b>Report File</b>\n\n<blockquote expandable>{ch_header}{en_body}</blockquote>\n\n<blockquote expandable>{hi_body}</blockquote>"
                 )
 
             else:
