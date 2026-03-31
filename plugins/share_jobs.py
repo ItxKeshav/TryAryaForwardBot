@@ -765,10 +765,9 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 for c in str(t):
                     if 'A' <= c <= 'Z': r += chr(0x1D5D4 + ord(c) - ord('A'))
                     elif 'a' <= c <= 'z': r += chr(0x1D5EE + ord(c) - ord('a'))
-                    elif '0' <= c <= '9': r += chr(0x1D7EC + ord(c) - ord('0'))
                     else: r += c
                 return r
-            txt = f"{_bold(story.upper())} {_bold('EPS')} {_bold(first_ep)}–{_bold(last_ep)}"
+            txt = f"{_bold(story.upper())} {_bold('EPS')} {first_ep}–{last_ep}"
             keyboard = []
             for j in range(0, len(chunk), 2):
                 row = [c["btn"] for c in chunk[j:j + 2]]
