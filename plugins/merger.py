@@ -675,9 +675,6 @@ async def _run_job(jid, uid, bot):
         make_video = bool(job.get("make_video", False))
         upload_to_yt = bool(job.get("upload_to_yt", False))
 
-        await _db_up(jid, status="queued", error="", created_at=time.time())
-
-
         # ══════════════════════════════════════════════════════════════════
         # PHASE 0 — Pre-download size scan
         # ══════════════════════════════════════════════════════════════════
