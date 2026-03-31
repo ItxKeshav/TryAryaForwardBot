@@ -175,7 +175,7 @@ async def _dl_worker(worker_id, dl_queue, up_queue, client, to_chat, thread_id):
     while True:
         task = await dl_queue.get()
         if task is None: break
-        seq_idx, msg, caption, forward_tag, remove_caption = task
+        seq_idx, msg, caption, new_text, is_text_replaced, forward_tag, remove_caption = task
         
         try:
             #  Attempt 1: copy_message (if restricted, raises exception)
@@ -187,7 +187,13 @@ async def _dl_worker(worker_id, dl_queue, up_queue, client, to_chat, thread_id):
                     if forward_tag:
                         await client.forward_messages(chat_id=to_chat, from_chat_id=msg.chat.id, message_ids=msg.id, **kw)
                     else:
-                        await client.copy_message(chat_id=to_chat, from_chat_id=msg.chat.id, message_id=msg.id, **kw)
+                        if is_text_replaced and not getattr(msg, 'media', None):
+                            if not new_text or not new_text.strip():
+                                await up_queue.put((seq_idx, 'skip', None, None))
+                                break
+                            await client.send_message(chat_id=to_chat, text=new_text, **kw)
+                        else:
+                            await client.copy_message(chat_id=to_chat, from_chat_id=msg.chat.id, message_id=msg.id, **kw)
                     # Success
                     await up_queue.put((seq_idx, 'done', None, None))
                     break
@@ -259,7 +265,11 @@ async def _dl_worker(worker_id, dl_queue, up_queue, client, to_chat, thread_id):
                         break # exit attempt loop
                     else:
                         # Re-send text message
-                        snd_kwargs = {"chat_id": to_chat, "text": msg.text or ""}
+                        if is_text_replaced and not getattr(msg, 'media', None):
+                            if not new_text or not new_text.strip():
+                                await up_queue.put((seq_idx, 'skip', None, None))
+                                break
+                        snd_kwargs = {"chat_id": to_chat, "text": new_text if new_text is not None else (msg.text or "")}
                         if thread_id: snd_kwargs["message_thread_id"] = thread_id
                         await up_queue.put((seq_idx, 'send_message', snd_kwargs, None))
                         break
@@ -439,10 +449,27 @@ async def _run_task_job(job_id: str, user_id: int):
                     continue
 
                 caption = None
+                new_text = None
+                is_text_replaced = False
                 if getattr(msg, 'media', None):
                     caption = custom_caption(msg, cap_tpl, apply_smart_clean=remove_caption, remove_links_flag=remove_links)
+                else:
+                    from plugins.regix import remove_all_links
+                    new_text = getattr(msg.text, "html", str(msg.text)) if msg.text else ""
+                    if remove_links and new_text:
+                        new_text = remove_all_links(new_text)
+                        is_text_replaced = True
+                        
+                    if configs.get('replacements') and new_text:
+                        orig_text = new_text
+                        for old_txt, new_txt_str in configs.get('replacements').items():
+                            if old_txt is None: continue
+                            new_str = "" if new_txt_str is None else str(new_txt_str)
+                            try: new_text = re.sub(str(old_txt), new_str, str(new_text), flags=re.IGNORECASE)
+                            except Exception: new_text = str(new_text).replace(str(old_txt), new_str)
+                        if orig_text != new_text: is_text_replaced = True
 
-                await dl_queue.put((seq_counter, msg, caption, forward_tag, remove_caption))
+                await dl_queue.put((seq_counter, msg, caption, new_text, is_text_replaced, forward_tag, remove_caption))
                 seq_counter += 1
 
             # Tell workers to stop cleanly

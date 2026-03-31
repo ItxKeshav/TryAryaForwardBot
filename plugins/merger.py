@@ -37,6 +37,7 @@ _CLIENT = CLIENT()
 _mg_tasks: dict[str, asyncio.Task] = {}
 _mg_paused: dict[str, asyncio.Event] = {}
 _mg_waiter: dict[int, asyncio.Future] = {}
+_mg_global_lock = asyncio.Lock()
 
 
 # ─── Future-based ask ────────────────────────────────────────────────────────
@@ -635,11 +636,19 @@ async def _run_job(jid, uid, bot):
     job = await _db_get(jid)
     if not job: return
 
-    # Ultra PC Mode fixed default: High power, high resources
-    CHUNK_SIZE = 25
-    MAX_TOTAL_GB = 150.0  
-    MAX_CHUNK_GB = 15.0
-    MAX_FILES = 999
+    sys_mode = await db.get_sys_mode()
+    if sys_mode == "pc":
+        # Ultra PC Mode: High power, high resources
+        CHUNK_SIZE = 25
+        MAX_TOTAL_GB = 150.0  
+        MAX_CHUNK_GB = 15.0
+        MAX_FILES = 999
+    else:
+        # Standard VPS Mode: Low RAM usage, strict limits
+        CHUNK_SIZE = 5
+        MAX_TOTAL_GB = 6.0
+        MAX_CHUNK_GB = 2.0
+        MAX_FILES = 150
 
     ev = _mg_paused.get(jid)
     if not ev:
@@ -666,6 +675,14 @@ async def _run_job(jid, uid, bot):
         speed      = float(job.get("speed", 1.0))
         make_video = bool(job.get("make_video", False))
         upload_to_yt = bool(job.get("upload_to_yt", False))
+
+        await _db_up(jid, status="queued", error="", created_at=time.time())
+
+        # ── Global queue: only 1 merge running at a time ──
+        async with _mg_global_lock:
+            fresh = await _db_get(jid)
+            if not fresh or fresh.get("status") in ("stopped", "paused"): return
+            await _db_up(jid, status="scanning", error="")
 
         # ══════════════════════════════════════════════════════════════════
         # PHASE 0 — Pre-download size scan

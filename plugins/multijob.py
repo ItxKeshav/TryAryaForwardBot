@@ -170,6 +170,10 @@ async def _mj_forward(
                 except Exception: new_caption = str(new_caption).replace(str(old_txt), new_str)
     else:
         new_text = getattr(msg.text, "html", str(msg.text)) if msg.text else ""
+        if remove_links_flag and new_text:
+            new_text = remove_all_links(new_text)
+            is_text_replaced = True
+            
         if replacements and new_text:
             orig_text = new_text
             for old_txt, new_txt_str in replacements.items():
@@ -193,6 +197,8 @@ async def _mj_forward(
                 )
             else:
                 if is_text_replaced and not msg.media:
+                    if not new_text or not new_text.strip():
+                        return True # silently skip empty text
                     await client.send_message(chat_id=chat, text=new_text, **kw)
                 else:
                     await client.copy_message(
@@ -210,10 +216,12 @@ async def _mj_forward(
                         await client.forward_messages(chat_id=chat, from_chat_id=msg.chat.id, message_ids=msg.id, **kw)
                     else:
                         if is_text_replaced and not msg.media:
+                            if not new_text or not new_text.strip():
+                                return True # silently skip empty text
                             await client.send_message(chat_id=chat, text=new_text, **kw)
                         else:
                             await client.copy_message(chat_id=chat, from_chat_id=msg.chat.id, message_id=msg.id, **kw)
-                    return
+                    return True
                 except Exception as inner_e:
                     inner_err = str(inner_e).upper()
                     if any(x in inner_err for x in ["PEER_ID_INVALID", "CHAT_WRITE_FORBIDDEN", "USER_BANNED", "CHANNEL_PRIVATE", "CHAT_ADMIN_REQUIRED"]):

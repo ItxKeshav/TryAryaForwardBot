@@ -442,11 +442,10 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             # Track/season-episode labels like S01E05
             _re.compile(r'(?i)\b(?:s[0-9]{1,2}e[0-9]{1,2})(?=\s|$)'),
             # Trailing duplicate markers ONLY when preceded by a word character:
-            # " (1)" " (2)" at END of string means duplicate copy — safe to strip.
-            # (12), (80), etc. should NOT be stripped — they are often episode numbers!
-            # Only strip SINGLE digits (1-9) as trailing copy indicators.
-            _re.compile(r'(?<=\w)\s*\(\s*[1-9]\s*\)\s*$'),
-            _re.compile(r'(?<=\w)\s*\[\s*[1-9]\s*\]\s*$'),
+            # " (1)" at END of string means duplicate copy — safe to strip.
+            # But "(12)" or "(56)" alone in the name should NOT be stripped.
+            _re.compile(r'(?<=\w)\s*\(\s*\d{1,2}\s*\)\s*$'),
+            _re.compile(r'(?<=\w)\s*\[\s*\d{1,2}\s*\]\s*$'),
             # Common text noise
             _re.compile(r'(?i)\b(?:copy|final|v\d+|new|latest|audio|track)\b'),
         ]
@@ -887,14 +886,16 @@ async def _build_share_links(bot, user_id, sj, info_msg):
 
         import html
         try:
+            usr_obj = await bot.get_users(user_id)
+            u_name = html.escape(usr_obj.first_name) if usr_obj and usr_obj.first_name else "User"
             poster_me = await poster.get_me()
             p_name = html.escape(poster_me.first_name) if poster_me and poster_me.first_name else "Bot"
             bot_link = f"<a href='https://t.me/{bot_usr}'>{p_name}</a>"
             story_sz = _sc(story)
 
             if sj.get('is_completed'):
-                # Use "Hey Strangers" in BOTH DM and channel — no username tagging
-                common_header = f"›› {_sc('Hey Strangers')}\n\n"
+                dm_header  = f"›› {_sc('Hey')} <a href='tg://user?id={user_id}'>{u_name}</a>\n\n"
+                ch_header  = f"›› {_sc('Hey Strangers')}\n\n"
 
                 en_body = (
                     _sc("This ") + story_sz + _sc(" is completed by ") + bot_link +
@@ -902,7 +903,7 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                         " you with a final report containing all details. Some episodes may"
                         " naturally be missing — nothing can be done about that. But if 10+"
                         " episodes are missing, you can complain in support. Non-logical or"
-                        " unparsed files will be embedded in buttons at their original positions."
+                        " unparsed files will be available in '»  Extra/Skipped files'."
                         " Some duplicates are shown — either real duplicates, or the uploader"
                         " uploaded multiple files with the same name. I am not responsible"
                         " as these files were forwarded via Arya bot and not scraped.")
@@ -911,79 +912,61 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 hi_body = (
                     f"यह {story_sz} {bot_link} द्वारा पूरी कर दी गई है। मैंने सब कुछ सही करने की"
                     " कोशिश की है और आपको सभी विवरणों के साथ एक अंतिम रिपोर्ट भी प्रदान की है।"
-                    " कुछ एपिसोड गायब हो सकते हैं — कृपया घबराएं नहीं, उसका कुछ नहीं किया जा सकता।"
-                    " लेकिन अगर 10+ एपिसोड गायब हैं, तो आप सपोर्ट में शिकायत कर सकते हैं।"
+                    " कुछ एपिसोड स्वाभाविक रूप से गायब हो सकते हैं — कृपया घबराएं नहीं,"
+                    " उसका कुछ नहीं किया जा सकता। लेकिन अगर 10+ एपिसोड गायब हैं, तो आप"
+                    " सपोर्ट में शिकायत कर सकते हैं। गैर-तार्किक या अनपार्स की गई फ़ाइलें"
+                    " '»  Extra/Skipped files' में उपलब्ध होंगी। कुछ डुप्लिकेट दिखाए गए हैं —"
+                    " या तो वे वास्तविक डुप्लिकेट हैं, या अपलोडर ने एक ही नाम से कई फ़ाइलें"
+                    " अपलोड की हैं। मैं जिम्मेदार नहीं हूँ क्योंकि ये फ़ाइलें आर्या बॉट के"
+                    " माध्यम से अग्रेषित की गई थीं, स्क्रैप नहीं की गई थीं।"
                 )
 
-                shared_cap = (
-                    f"<b>Report File</b>\n\n<blockquote>{common_header}{en_body}</blockquote>"
+                dm_cap = (
+                    f"<b>Report File</b>\n\n<blockquote>{dm_header}{en_body}</blockquote>"
                     f"\n\n<blockquote>{hi_body}</blockquote>"
                 )
-                dm_cap = shared_cap
-                ch_cap = shared_cap
+                ch_cap = (
+                    f"<b>Report File</b>\n\n<blockquote>{ch_header}{en_body}</blockquote>"
+                    f"\n\n<blockquote>{hi_body}</blockquote>"
+                )
 
             else:
-                # Ongoing: "Hey Strangers" everywhere, no username, plain text post
-                common_ongoing = (
+                dm_ongoing = (
+                    f"›› {_sc('Hey')} <a href='tg://user?id={user_id}'>{u_name}</a>\n\n"
+                    + _sc("I have posted all the files currently available. "
+                           "As new episodes arrive, I will post them. Enjoy!")
+                )
+                ch_ongoing = (
                     f"›› {_sc('Hey Strangers')}\n\n"
                     + _sc("All currently available files have been posted here. "
                            "New episodes will be added as they arrive. Enjoy and stay tuned!")
                 )
-                dm_cap = f"<b>Status</b>\n\n<blockquote>{common_ongoing}</blockquote>"
-                ch_cap = f"<b>Status</b>\n\n<blockquote>{common_ongoing}</blockquote>"
+                dm_cap = f"<b>Status</b>\n\n<blockquote>{dm_ongoing}</blockquote>"
+                ch_cap = f"<b>Status</b>\n\n<blockquote>{ch_ongoing}</blockquote>"
 
-            # ── Send report/status to admin DM ──
+            # Send to admin DM — independent of channel
             try:
-                report_bytes.seek(0)
                 await bot.send_document(
                     user_id, report_bytes,
                     caption=dm_cap, parse_mode="html",
                     file_name=report_bytes.name
                 )
             except Exception as dm_err:
-                logger.error(f"[Report] DM document send failed: {dm_err}", exc_info=True)
-                try:
-                    await bot.send_message(user_id, dm_cap, parse_mode="html")
-                except Exception as dm_txt_err:
-                    logger.error(f"[Report] DM text fallback also failed: {dm_txt_err}")
+                logger.error(f"[Report] DM send failed: {dm_err}", exc_info=True)
 
-            # ── Send completed post / ongoing status to target channel ──
+            # Send to target channel — always attempted independently
             try:
-                if sj.get('is_completed'):
-                    report_bytes.seek(0)
-                    await poster.send_document(
-                        sj['target'], report_bytes,
-                        caption=ch_cap, parse_mode="html",
-                        file_name=report_bytes.name
-                    )
-                else:
-                    # Ongoing: plain text status post, no document needed
-                    await poster.send_message(
-                        sj['target'], ch_cap, parse_mode="html"
-                    )
+                report_bytes.seek(0)
+                await poster.send_document(
+                    sj['target'], report_bytes,
+                    caption=ch_cap, parse_mode="html",
+                    file_name=report_bytes.name
+                )
             except Exception as ch_err:
-                logger.error(f"[Report] Channel post failed: {ch_err}", exc_info=True)
-                try:
-                    await bot.send_message(
-                        user_id,
-                        f"<b>⚠️ Channel post/report failed:</b> <code>{ch_err}</code>\n"
-                        f"The report was sent to your DM. Links were posted successfully.",
-                        parse_mode="html"
-                    )
-                except Exception:
-                    pass
+                logger.error(f"[Report] Channel send failed: {ch_err}", exc_info=True)
 
         except Exception as rep_err:
             logger.error(f"[Report] Could not prepare report: {rep_err}", exc_info=True)
-            try:
-                await bot.send_message(
-                    user_id,
-                    f"<b>⚠️ Final report/post failed:</b>\n<code>{rep_err}</code>\n\n"
-                    f"The share links were posted successfully. Only the final report/post failed.",
-                    parse_mode="html"
-                )
-            except Exception:
-                pass
 
     except Exception as e:
         import traceback

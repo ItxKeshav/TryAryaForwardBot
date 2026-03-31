@@ -213,7 +213,7 @@ async def pub_(bot, message):
                       
                   sort_buffer.sort(key=_smart_sort_key)
               
-              for message, forward_tag, new_caption, protect, download_mode, sleep in sort_buffer:
+              for message, forward_tag, new_caption, new_text, is_text_replaced, protect, download_mode, sleep in sort_buffer:
                   sts.add('fetched')
                   if forward_tag:
                      MSG.append(message.id)
@@ -228,7 +228,7 @@ async def pub_(bot, message):
                       # This is the ONLY way to guarantee ordering for copy_message.
                       # The pipeline approach (task_queue + workers) inherently races
                       # even with a sequence-buffer in the uploader.
-                      details = {"msg_id": message.id, "media": media(message), "caption": new_caption, 'button': button, "protect": protect, "text": getattr(message.text, "html", str(message.text)) if message.text else ""}
+                      details = {"msg_id": message.id, "media": media(message), "caption": new_caption, "is_text_replaced": is_text_replaced, 'button': button, "protect": protect, "text": new_text if new_text is not None else (getattr(message.text, "html", str(message.text)) if message.text else "")}
                       
                       if download_mode:
                           # Download mode: use the worker pipeline (slow, benefits from async)
@@ -315,16 +315,7 @@ async def pub_(bot, message):
                     sts.add('deleted')
                     continue
 
-                # Links filter: block only pure text messages containing links
-                if 'links' in _disabled_types:
-                    import re as _re_links
-                    _raw_text = getattr(message, 'text', None) or ''
-                    _has_link = bool(_raw_text and _re_links.search(
-                        r'(https?://\S+|www\.\S+|t\.me/\S+)', str(_raw_text), flags=_re_links.IGNORECASE
-                    ))
-                    if _has_link and not message.media:
-                        sts.add('filtered')
-                        continue
+                # Link removal for pure text messages handled via new_text below
                 
                 # Determine message's generic type
                 msg_type = 'text'
@@ -387,7 +378,24 @@ async def pub_(bot, message):
                         except Exception:
                             new_caption = str(new_caption).replace(str(old_txt), new_txt_safe)
                 
-                sort_buffer.append((message, forward_tag, new_caption, protect, download_mode, sleep))
+                new_text = None
+                is_text_replaced = False
+                if not message.media:
+                    new_text = getattr(message.text, "html", str(message.text)) if message.text else ""
+                    if _remove_links_flag and new_text:
+                        new_text = remove_all_links(new_text)
+                        is_text_replaced = True
+                    
+                    if replacements and new_text:
+                        orig_text = new_text
+                        for old_txt, new_txt in replacements.items():
+                            if old_txt is None: continue
+                            new_txt_safe = "" if new_txt is None else str(new_txt)
+                            try: new_text = re.sub(str(old_txt), new_txt_safe, str(new_text), flags=re.IGNORECASE)
+                            except Exception: new_text = str(new_text).replace(str(old_txt), new_txt_safe)
+                        if orig_text != new_text: is_text_replaced = True
+                        
+                sort_buffer.append((message, forward_tag, new_caption, new_text, is_text_replaced, protect, download_mode, sleep))
                 
                 # Flush only when we have a full SORT_WINDOW batch (or immediately if smart is OFF)
                 if len(sort_buffer) >= SORT_WINDOW:
@@ -460,15 +468,26 @@ async def copy(bot, msg, m, sts, download=False, attempt=0, seq_index=None, uplo
         }
         await upload_queue.put((seq_index, 'send_cached_media', kwargs, None))
      elif not download:
-        kwargs = {
-            "chat_id": sts.get('TO'),
-            "from_chat_id": sts.get('FROM'),    
-            "caption": msg.get("caption"),
-            "message_id": msg.get("msg_id"),
-            "reply_markup": msg.get('button'),
-            "protect_content": msg.get("protect")
-        }
-        await upload_queue.put((seq_index, 'copy_message', kwargs, None))
+        if not msg.get("media") and msg.get("is_text_replaced"):
+            if not msg.get("text") or not msg.get("text").strip():
+                return await upload_queue.put((seq_index, 'skip', {}, None))
+            kwargs = {
+                "chat_id": sts.get('TO'),
+                "text": msg.get("text"),
+                "reply_markup": msg.get('button'),
+                "protect_content": msg.get("protect")
+            }
+            await upload_queue.put((seq_index, 'send_message', kwargs, None))
+        else:
+            kwargs = {
+                "chat_id": sts.get('TO'),
+                "from_chat_id": sts.get('FROM'),    
+                "caption": msg.get("caption"),
+                "message_id": msg.get("msg_id"),
+                "reply_markup": msg.get('button'),
+                "protect_content": msg.get("protect")
+            }
+            await upload_queue.put((seq_index, 'copy_message', kwargs, None))
      else:
         raise Exception("DownloadModeEnabled")
    except FloodWait as e:
@@ -550,6 +569,10 @@ async def copy(bot, msg, m, sts, download=False, attempt=0, seq_index=None, uplo
                      c_kwargs = {"chat_id": sts.get("TO"), "from_chat_id": sts.get("FROM"), "message_id": msg.get("msg_id")}
                      await upload_queue.put((seq_index, 'copy_message', c_kwargs, file_path))
              else:
+                 if msg.get("is_text_replaced") and not msg.get("media"):
+                     if not msg.get("text") or not msg.get("text").strip():
+                         sts.add('deleted')
+                         return await upload_queue.put((seq_index, 'skip', {}, None))
                  snd_kwargs = {
                      "chat_id": sts.get("TO"),
                      "text": msg.get("text") or "",
@@ -842,11 +865,11 @@ def smart_clean_caption(caption: str) -> str:
 def remove_all_links(text: str) -> str:
     if not text:
         return ""
-    # Strip HTML anchor tags entirely including inner text (strict link removal)
-    text = re.sub(r'(?i)<a\s+href=[^>]+>.*?</a>', '', text)
-    # Remove raw URLs
-    text = re.sub(r'(?i)\bhttps?://[^\s]+', '', text)
-    text = re.sub(r'(?i)\bwww\.[^\s]+', '', text)
+    # Strip HTML anchor tags entirely, or maybe keep their inner text?
+    # Keeping inner text: replacing <a href="...">Text</a> with Text
+    text = re.sub(r'(?i)<a\s+href="[^"]*".*?>(.*?)</a>', r'\1', text)
+    # Remove raw URLs - enhanced regex
+    text = re.sub(r'(?i)\b(?:https?://|www\.)[^\s]+', '', text)
     text = re.sub(r'(?i)\bt\.me/[^\s]+', '', text)
     # Remove mentions
     text = re.sub(r'(?i)@\w+', '', text)
@@ -862,16 +885,19 @@ def custom_caption(msg, caption, apply_smart_clean=False, remove_links_flag=Fals
   file_name = getattr(media, 'file_name', '')
   file_size = getattr(media, 'file_size', 0)
   
-  if apply_smart_clean == 2:
-      # Wipe All Captions strictly. Block it completely regardless of template.
-      return ""
-      
   fcaption = getattr(msg, 'caption', '')
   if fcaption: fcaption = getattr(fcaption, 'html', str(fcaption))
   
-  if apply_smart_clean is True:
+  if apply_smart_clean == 2:
+      # Wipe All Captions. Block it completely.
+      return ""
+      fcaption = ""
+  elif apply_smart_clean is True:
       # Smart Clean: Remove target patterns
       fcaption = smart_clean_caption(fcaption)
+  elif apply_smart_clean is False:
+      # Keep Original
+      pass
 
   if remove_links_flag and fcaption:
       fcaption = remove_all_links(fcaption)
@@ -889,6 +915,10 @@ def custom_caption(msg, caption, apply_smart_clean=False, remove_links_flag=Fals
       # Smart clean modified the caption, return the new cleaned text
       return fcaption if fcaption else ""
   else:
+      # apply_smart_clean is False => keep original 
+      # BUT if links were removed, we must return the modified version, not None
+      if remove_links_flag:
+          return fcaption if fcaption else ""
       return None  # None tells Pyrogram to keep the original untouched
 
 def get_size(size):

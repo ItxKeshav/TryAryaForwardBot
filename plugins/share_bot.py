@@ -310,8 +310,7 @@ async def _process_start(client, message):
                 if formatted_cap:
                     kwargs["caption"] = formatted_cap
                 sent = await client.copy_message(**kwargs)
-                if sent and sent.id:
-                    sent_ids.append(sent.id)
+                sent_ids.append(sent.id)
             except Exception as copy_err:
                 logger.warning(f"copy_message failed for msg {msg_id}: {copy_err}")
                 fail_count += 1

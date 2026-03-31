@@ -12,33 +12,40 @@ from pyrogram.errors.exceptions.bad_request_400 import ChannelInvalid, ChatAdmin
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
  
 #===================Run Function===================#
-
-@Client.on_message(filters.private & filters.command(["menuimage", "setimage", "setmenuimage"]))
-async def main_bot_menuimage(bot, message):
+@Client.on_message(filters.private & filters.command("sysmode"))
+async def sysmode_cmd(bot, message):
     from config import Config
     if message.from_user.id not in Config.BOT_OWNER_ID:
-        return
-    if message.reply_to_message and message.reply_to_message.photo:
-        photo_file_id = message.reply_to_message.photo.file_id
-        try:
-            import plugins.share_bot as share_mod
-            for bot_id, client in share_mod.share_clients.items():
-                about = await db.get_share_bot_about(bot_id) or {}
-                about['welcome_image_id'] = photo_file_id
-                await db.set_share_bot_about(bot_id, about)
-            await message.reply_text(
-                f"<b>✅ Menu Image Updated!</b>\n\n"
-                f"Updated across all {len(share_mod.share_clients)} share bot(s). "
-                "This image will now show in the Welcome screen."
-            )
-        except Exception as e:
-            await message.reply_text(f"<b>❌ Error:</b> <code>{e}</code>")
-    else:
-        await message.reply_text(
-            "<b>‣ To set the Menu Image:</b>\nPlease reply to an image with <code>/menuimage</code>.\n\n"
-            "The image will be set for all active share bots."
+        return await message.reply("Only the owner can use this command.")
+        
+    current = await db.get_sys_mode()
+    
+    if "pc" in message.text.lower():
+        await db.set_sys_mode("pc")
+        await message.reply(
+            "<b>💻 System Mode Set To: LOCAL PC!</b>\n\n"
+            "<i>• Auto-Merger RAM footprint: <b>High</b></i>\n"
+            "<i>• Chunk size per processing: <b>25 Files</b></i>\n"
+            "<i>• Max total merge size: <b>150 GB</b></i>\n\n"
+            "Bot will now use full system resources!"
         )
-
+    elif "vps" in message.text.lower():
+        await db.set_sys_mode("vps")
+        await message.reply(
+            "<b>☁️ System Mode Set To: VPS SERVER!</b>\n\n"
+            "<i>• Auto-Merger RAM footprint: <b>Low</b></i>\n"
+            "<i>• Chunk size per processing: <b>5 Files</b></i>\n"
+            "<i>• Max total merge size: <b>6 GB</b></i>\n\n"
+            "Bot will now run safely without Out-Of-Memory crashes!"
+        )
+    else:
+        text = (
+            f"<b>⚙️ Current System Mode: {current.upper()}</b>\n\n"
+            f"Control how much RAM the bot uses for heavy tasks like merging:\n\n"
+            f"• <code>/sysmode vps</code> — Safe, low-RAM mode (5 files max chunk)\n"
+            f"• <code>/sysmode pc</code> — High-Performance mode (25 files max chunk)\n"
+        )
+        await message.reply(text)
 
 #===================Run Function===================#
 
