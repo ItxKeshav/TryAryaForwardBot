@@ -884,6 +884,7 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             plain_report.append(f"MISSING EPISODES ({len(missing_eps)}):")
             plain_report.append("  " + ", ".join(str(e) for e in missing_eps))
 
+        plain_report += [
             "=" * 50,
             "Note: Duplicates = multiple files had the same episode number.",
             "ALL were included — nothing was skipped.",
