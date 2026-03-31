@@ -444,8 +444,7 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             # Trailing duplicate markers ONLY when preceded by a word character:
             # " (1)" at END of string means duplicate copy — safe to strip.
             # But "(12)" or "(56)" alone in the name should NOT be stripped.
-            _re.compile(r'(?<=\w)\s*\(\s*\d{1,2}\s*\)\s*$'),
-            _re.compile(r'(?<=\w)\s*\[\s*\d{1,2}\s*\]\s*$'),
+            # Removing entirely to prevent stripping legitimate episode tags like `Show(54).mp4`.
             # Common text noise
             _re.compile(r'(?i)\b(?:copy|final|v\d+|new|latest|audio|track)\b'),
         ]
@@ -755,6 +754,10 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             })
 
         # Calculate unparseable count for the display report (removed per user request)
+        added_msg_ids = set()
+        for mids in ep_to_msgs.values():
+            added_msg_ids.update(mids)
+        unparseable_msgs_list = [m.id for m in all_valid_msgs if m.id not in added_msg_ids]
 
 
         #  PHASE 3: Post to target channel 
@@ -845,7 +848,15 @@ async def _build_share_links(bot, user_id, sj, info_msg):
         #  SEND DOWNLOADABLE REPORT FILE 
         import io, datetime
         now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
-        plain_report = [
+        plain_report = []
+        if unparseable_msgs_list:
+            plain_report.append("-" * 50)
+            plain_report.append(f"UNPARSEABLE FILES: {len(unparseable_msgs_list)}")
+            plain_report.append(f"  These files had no readable episode number in their name.")
+            plain_report.append(f"  They were naturally embedded into the buttons at their original chronological positions.")
+            plain_report.append("  IDs: " + ", ".join(str(m) for m in unparseable_msgs_list))
+            
+        plain_report += [
             "=" * 50,
             "  ARYA BOT  —  Share Links Generation Report",
             "=" * 50,
@@ -948,8 +959,11 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             try:
                 await bot.send_document(
                     user_id, report_bytes,
-                    caption=dm_cap, parse_mode=__import__("pyrogram.enums", fromlist=["ParseMode"]).ParseMode.HTML,
+                    caption="<b>Report File Generated</b>", parse_mode=__import__("pyrogram.enums", fromlist=["ParseMode"]).ParseMode.HTML,
                     file_name=report_bytes.name
+                )
+                await bot.send_message(
+                    user_id, dm_cap, parse_mode=__import__("pyrogram.enums", fromlist=["ParseMode"]).ParseMode.HTML
                 )
             except Exception as dm_err:
                 logger.error(f"[Report] DM send failed: {dm_err}", exc_info=True)
@@ -959,8 +973,11 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 report_bytes.seek(0)
                 await poster.send_document(
                     sj['target'], report_bytes,
-                    caption=ch_cap, parse_mode=__import__("pyrogram.enums", fromlist=["ParseMode"]).ParseMode.HTML,
+                    caption="<b>Report File</b>", parse_mode=__import__("pyrogram.enums", fromlist=["ParseMode"]).ParseMode.HTML,
                     file_name=report_bytes.name
+                )
+                await poster.send_message(
+                    sj['target'], ch_cap, parse_mode=__import__("pyrogram.enums", fromlist=["ParseMode"]).ParseMode.HTML
                 )
             except Exception as ch_err:
                 logger.error(f"[Report] Channel send failed: {ch_err}", exc_info=True)
