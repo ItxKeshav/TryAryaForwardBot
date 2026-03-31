@@ -38,6 +38,12 @@ async def start_clone_bot(FwdBot, data=None):
        logger.warning(f"Could not bind share handlers to clone: {e}")
        
    await FwdBot.start()
+   # Feed peers into cache to avoid PeerIdInvalid
+   try:
+       me = await FwdBot.get_me()
+       if not getattr(me, 'is_bot', False):
+           async for _ in FwdBot.get_dialogs(limit=200): pass
+   except Exception as e: pass
    #
    async def iter_messages(
       chat_id: Union[int, str], 
@@ -178,9 +184,11 @@ class CLIENT:
     
   def client(self, data, user=None):
      if user == None and data.get('is_bot') == False:
-        return Client("USERBOT", self.api_id, self.api_hash, session_string=data.get('session'), max_concurrent_transmissions=7)
+        sname = f"userbot_{data.get('id', 'temp')}"
+        return Client(sname, self.api_id, self.api_hash, session_string=data.get('session'), max_concurrent_transmissions=7, in_memory=True)
      elif user == True:
-        return Client("USERBOT", self.api_id, self.api_hash, session_string=data, max_concurrent_transmissions=7)
+        # data is session string directly, use memory temporarily (wait, add_session handles this right after)
+        return Client("temp_userbot_creation", self.api_id, self.api_hash, session_string=data, max_concurrent_transmissions=7, in_memory=True)
      elif user != False:
         data = data.get('token')
      return Client("BOT", self.api_id, self.api_hash, bot_token=data, in_memory=True, max_concurrent_transmissions=7)  

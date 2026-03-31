@@ -277,10 +277,13 @@ async def _safe_resolve_peer(client, chat_id):
             try:
                 me = await client.get_me()
                 if not getattr(me, 'is_bot', False):
-                    async for _ in client.get_dialogs(): pass
+                    async for _ in client.get_dialogs(limit=200): pass
                 await client.get_chat(chat_id)
             except Exception as e2:
                 logger.warning(f"Failed to resolve {chat_id}: {e2}")
+                raise e2
+        else:
+            raise e
 
 
 # ══════════════════════════════════════════════════════════════════════════════

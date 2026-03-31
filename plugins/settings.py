@@ -10,6 +10,34 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 logger = logging.getLogger(__name__)
 CLIENT = CLIENT()
 
+#  Future-based ask() — immune to pyrofork stale-listener bug 
+_settings_waiting: dict[int, asyncio.Future] = {}
+
+@Client.on_message(filters.private, group=-16)
+async def _settings_input_router(bot, message):
+    uid = message.from_user.id if message.from_user else None
+    if uid and uid in _settings_waiting:
+        fut = _settings_waiting.pop(uid)
+        if not fut.done():
+            fut.set_result(message)
+    raise ContinuePropagation
+
+async def _ask(bot, user_id: int, timeout: int = 300):
+    loop = asyncio.get_event_loop()
+    fut: asyncio.Future = loop.create_future()
+    old = _settings_waiting.pop(user_id, None)
+    if old and not old.done():
+        old.cancel()
+    _settings_waiting[user_id] = fut
+    try:
+        from asyncio import wait_for, TimeoutError
+        res = await wait_for(fut, timeout=timeout)
+        return res
+    except TimeoutError:
+        _settings_waiting.pop(user_id, None)
+        raise
+
+from pyrogram import ContinuePropagation
 
 async def _sb_set_text_flow(bot, user_id, query, b_id: str, key: str,
                              label: str, instructions: str, back_cb: str):
@@ -143,7 +171,7 @@ async def settings_query(bot, query):
      await query.message.delete()
      try:
          text = await bot.send_message(user_id, "<b>❪ ADD CHAT ❫\n\nForward a message from the chat, OR send its Chat ID (e.g. -100...), OR send a link to any message in the chat.\n/cancel - cancel this process</b>")
-         chat_ids = await bot.listen(chat_id=user_id, timeout=300)
+         chat_ids = await _ask(bot, user_id, timeout=300)
          if chat_ids.text == "/cancel":
              await chat_ids.delete()
              return await text.edit_text("<b>process canceled</b>", reply_markup=InlineKeyboardMarkup(buttons))
@@ -430,9 +458,7 @@ async def settings_query(bot, query):
       buttons = [
           # ─── Welcome & About (grouped) ───────────────────────────
           [
-              InlineKeyboardButton('»  ᴡᴇʟᴄᴏᴍᴇ ᴍꜱɢ',    callback_data=f"settings#sb_set_welcome_{b_id}"),
-              InlineKeyboardButton('🖼  ᴡᴇʟᴄᴏᴍᴇ ɪᴍɢ',  callback_data=f"settings#sb_set_welcome_img_{b_id}"),
-              InlineKeyboardButton('‣  ᴀʙᴏᴜᴛ',        callback_data=f"settings#sb_about_{b_id}"),
+              InlineKeyboardButton('»  ᴡᴇʟᴄᴏᴍᴇ & ᴀʙᴏᴜᴛ', callback_data=f"settings#sb_wa_{b_id}"),
           ],
           # ─── Other messages ───────────────────────────────────────
           [
@@ -455,6 +481,22 @@ async def settings_query(bot, query):
           f"<b>»  Username:</b> @{bt['username']}\n"
           f"<b>🆔 ID:</b> <code>{bt['id']}</code>\n\n"
           "<i>All settings below are specific to this bot.</i>",
+          reply_markup=InlineKeyboardMarkup(buttons)
+      )
+
+  elif type.startswith("sb_wa_"):
+      b_id = type.split("sb_wa_")[1]
+      buttons = [
+          [
+              InlineKeyboardButton('»  ᴡᴇʟᴄᴏᴍᴇ ᴍꜱɢ',    callback_data=f"settings#sb_set_welcome_{b_id}"),
+              InlineKeyboardButton('🖼  ᴡᴇʟᴄᴏᴍᴇ ɪᴍɢ',  callback_data=f"settings#sb_set_welcome_img_{b_id}"),
+          ],
+          [InlineKeyboardButton('‣  ᴀʙᴏᴜᴛ',        callback_data=f"settings#sb_about_{b_id}")],
+          [InlineKeyboardButton('«  ʙᴀᴄᴋ',         callback_data=f"settings#sb_view_{b_id}")],
+      ]
+      await query.message.edit_text(
+          f"<b>❪ WELCOME & ABOUT ❫</b>\n\n"
+          "Select what you want to configure for this bot:",
           reply_markup=InlineKeyboardMarkup(buttons)
       )
 
@@ -510,14 +552,14 @@ async def settings_query(bot, query):
           final_file_id = photo.file_id  # default: Arya bot's id (may fail in delivery bot)
           if sb_client:
               try:
-                  # Forward from Arya's chat to delivery bot's saved messages
+                  # Forward from Arya's chat to the admin's DM using the delivery bot
                   relay = await sb_client.send_photo(
-                      chat_id=int(b_id),  # delivery bot sends to itself = Saved Messages
+                      chat_id=user_id,
                       photo=photo.file_id,
                   )
                   if relay and relay.photo:
                       final_file_id = relay.photo.file_id
-                  # Clean up relay message so Saved Messages doesn't fill up
+                  # Clean up relay message from admin's DM
                   try:
                       await relay.delete()
                   except Exception:
@@ -596,7 +638,7 @@ async def settings_query(bot, query):
       )
       
       try:
-          resp = await bot.listen(chat_id=user_id, timeout=300)
+          resp = await _ask(bot, user_id, timeout=300)
           msg_to_send = resp.text or resp.caption or "media"
           
           if getattr(resp, "text", "") and str(resp.text).strip() == "/cancel":

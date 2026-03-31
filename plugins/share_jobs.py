@@ -763,12 +763,12 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             def _bold(t):
                 r = ""
                 for c in str(t):
-                    if 'A' <= c <= 'Z': r += chr(0x1D400 + ord(c) - ord('A'))
-                    elif 'a' <= c <= 'z': r += chr(0x1D41A + ord(c) - ord('a'))
-                    elif '0' <= c <= '9': r += chr(0x1D7CE + ord(c) - ord('0'))
+                    if 'A' <= c <= 'Z': r += chr(0x1D5D4 + ord(c) - ord('A'))
+                    elif 'a' <= c <= 'z': r += chr(0x1D5EE + ord(c) - ord('a'))
+                    elif '0' <= c <= '9': r += chr(0x1D7EC + ord(c) - ord('0'))
                     else: r += c
                 return r
-            txt = f"{_bold(story.upper())} {_bold('EPS')} {first_ep}–{last_ep}"
+            txt = f"{_bold(story.upper())} {_bold('EPS')} {_bold(first_ep)}–{_bold(last_ep)}"
             keyboard = []
             for j in range(0, len(chunk), 2):
                 row = [c["btn"] for c in chunk[j:j + 2]]
@@ -834,8 +834,9 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 miss_preview += f" (+{len(missing_eps)-15} more)"
             report_lines.append(f"»  <b>Missing episodes ({len(missing_eps)}):</b> {miss_preview}")
 
-        if unparseable_count:
-            report_lines.append(f"🚫 <b>Unparseable messages skipped:</b> {unparseable_count}")
+        if unparseable_msgs:
+            report_lines.append(f"🚫  <b>Unparseable messages skipped ({len(unparseable_msgs)}):</b> Added to 'Extra/Skipped Files'")
+
 
         report_lines.append(f"")
         report_lines.append(f"<i>Users click any button to receive their episodes from @{bot_usr}.</i>")
@@ -872,11 +873,12 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             plain_report.append("-" * 50)
             plain_report.append(f"MISSING EPISODES ({len(missing_eps)}):")
             plain_report.append("  " + ", ".join(str(e) for e in missing_eps))
-        if unparseable_count:
+        if unparseable_msgs:
             plain_report.append("-" * 50)
-            plain_report.append(f"UNPARSEABLE FILES: {unparseable_count}")
+            plain_report.append(f"UNPARSEABLE FILES: {len(unparseable_msgs)}")
             plain_report.append(f"  These files had no readable episode number in their name.")
             plain_report.append(f"  They are accessible via the Extra/Skipped Files button.")
+            plain_report.append("  IDs: " + ", ".join(str(m) for m in unparseable_msgs))
         plain_report += [
             "=" * 50,
             "Note: Duplicates = multiple files had the same episode number.",
@@ -889,11 +891,13 @@ async def _build_share_links(bot, user_id, sj, info_msg):
         report_bytes = io.BytesIO(report_text.encode('utf-8'))
         report_bytes.name = f"arya_report_{story.replace(' ','_')}.txt"
 
+        import html
         try:
             usr_obj = await bot.get_users(user_id)
-            u_name = usr_obj.first_name if usr_obj else "User"
+            u_name = html.escape(usr_obj.first_name) if usr_obj and usr_obj.first_name else "User"
             poster_me = await poster.get_me()
-            bot_link = f"<a href='https://t.me/{bot_usr}'>{poster_me.first_name}</a>"
+            p_name = html.escape(poster_me.first_name) if poster_me and poster_me.first_name else "Bot"
+            bot_link = f"<a href='https://t.me/{bot_usr}'>{p_name}</a>"
             story_sz = _sc(story)
 
             if sj.get('is_completed'):
@@ -925,11 +929,11 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 )
 
                 dm_cap = (
-                    f"<blockquote expandable>{dm_header}{en_body}</blockquote>"
+                    f"**Report File**\n\n<blockquote expandable>{dm_header}{en_body}</blockquote>"
                     f"\n\n<blockquote expandable>{hi_body}</blockquote>"
                 )
                 ch_cap = (
-                    f"<blockquote expandable>{ch_header}{en_body}</blockquote>"
+                    f"**Report File**\n\n<blockquote expandable>{ch_header}{en_body}</blockquote>"
                     f"\n\n<blockquote expandable>{hi_body}</blockquote>"
                 )
 
@@ -944,8 +948,8 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                     + _sc("All currently available files have been posted here. "
                            "New episodes will be added as they arrive. Enjoy and stay tuned!")
                 )
-                dm_cap = f"<blockquote expandable>{dm_ongoing}</blockquote>"
-                ch_cap = f"<blockquote expandable>{ch_ongoing}</blockquote>"
+                dm_cap = f"**Status**\n\n<blockquote expandable>{dm_ongoing}</blockquote>"
+                ch_cap = f"**Status**\n\n<blockquote expandable>{ch_ongoing}</blockquote>"
 
             # Send to admin DM — independent of channel
             try:
