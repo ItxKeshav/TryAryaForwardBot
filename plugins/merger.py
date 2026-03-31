@@ -734,7 +734,7 @@ async def _run_job(jid, uid, bot):
         est_size, media_count = await _scan_total_size(client, from_chat, start_id, end_id)
 
         if est_size > MAX_TOTAL_GB * 1024**3 or media_count > MAX_FILES:
-            msg = (f"<b>❌ Pre-scan blocked your request:</b>\n"
+            msg = (f"❌ Pre-scan blocked your request:\n"
                    f"Found {media_count} files ({_sz(est_size)}).\n\n"
                    f"Server limit is {MAX_FILES} files and {MAX_TOTAL_GB:.0f}GB per merge to prevent Out of Memory errors. "
                    f"Please select a smaller range and try again.")
@@ -742,18 +742,18 @@ async def _run_job(jid, uid, bot):
             try:
                 if scan_msg: await scan_msg.edit_text(msg)
                 else: await bot.send_message(uid, msg)
-            except: pass
+            except Exception as e: logger.warning(f"[MG UI] pre-scan blocked error: {e}")
             return
 
         try:
-            txt = (f"<b>✅ Pre-scan complete</b>\n"
+            txt = (f"✅ Pre-scan complete\n"
                    f"📁 {media_count} media files found\n"
-                   f"💾 Estimated total: <b>{_sz(est_size)}</b>\n"
+                   f"💾 Estimated total: {_sz(est_size)}\n"
                    f"🔀 Will process in chunks of {CHUNK_SIZE} files\n"
-                   f"⚡ Speed: <b>{speed}x</b>")
+                   f"⚡ Speed: {speed}x")
             if scan_msg: await scan_msg.edit_text(txt)
             else: await bot.send_message(uid, txt)
-        except: pass
+        except Exception as e: logger.warning(f"[MG UI] pre-scan ok error: {e}")
 
         await asyncio.sleep(1)
 
@@ -821,10 +821,10 @@ async def _run_job(jid, uid, bot):
 
         try:
             await bot.send_message(uid,
-                f"<b>⬇️ Starting download</b>\n"
+                f"⬇️ Starting download\n"
                 f"📁 {total_files} files → {total_chunks} chunk(s) of max {CHUNK_SIZE}\n"
-                f"<i>Each chunk is downloaded, merged, then deleted to save RAM.</i>")
-        except: pass
+                f"Each chunk is downloaded, merged, then deleted to save RAM.")
+        except Exception as e: logger.warning(f"[MG UI] starting download notification error: {e}")
 
         # ══════════════════════════════════════════════════════════════════
         # PHASE 2 — Chunked download + partial merge
@@ -856,8 +856,10 @@ async def _run_job(jid, uid, bot):
 
             try:
                 status_msg = await bot.send_message(uid,
-                    f"<b>⬇️ {chunk_label} — Downloading {len(chunk_msgs)} files</b>")
-            except: pass
+                    f"⬇️ {chunk_label} — Downloading {len(chunk_msgs)} files")
+            except Exception as e:
+                logger.warning(f"[MG UI] chunk downloading status error: {e}")
+                status_msg = None
 
             for ci, msg in enumerate(chunk_msgs):
                 media_obj = None
@@ -888,12 +890,19 @@ async def _run_job(jid, uid, bot):
                 fp = None
                 for att in range(10):  # increased retries
                     try:
-                        fp = await client.download_media(msg, file_name=dlp)
+                        logger.info(f"[MG] Downloading chunk file {ci+1}/{len(chunk_msgs)}: {msg.id}")
+                        fp = await asyncio.wait_for(client.download_media(msg, file_name=dlp), timeout=900)
                         if fp: break
-                    except FloodWait as fw: await asyncio.sleep(fw.value + 2)
+                    except asyncio.TimeoutError:
+                        logger.warning(f"[MG] Timeout downloading {msg.id} (attempt {att+1})")
+                        await asyncio.sleep(3)
+                        continue
+                    except FloodWait as fw:
+                        await asyncio.sleep(fw.value + 2)
                     except Exception as e:
                         if "TimeoutList" in str(e) or "Timeout" in str(e) or "Connection" in str(e):
                             if att < 9: await asyncio.sleep(3); continue
+                        logger.error(f"[MG] Error downloading {msg.id}: {e}")
                         break
                 
                 if not fp or not os.path.exists(fp):
@@ -926,13 +935,12 @@ async def _run_job(jid, uid, bot):
 
                 # Update status every 3 files
                 if ci % 3 == 0:
-                    pct = int((global_seq / total_files) * 100)
                     try:
-                        txt = (f"<b>⬇️ {chunk_label} — Downloading</b>\n"
+                        txt = (f"⬇️ {chunk_label} — Downloading\n"
                                f"<code>{_bar(global_seq, total_files)}</code>\n"
                                f"📁 {global_seq}/{total_files} total • {_sz(dl_total_bytes)}")
                         if status_msg: await status_msg.edit_text(txt)
-                    except: pass
+                    except Exception as e: logger.warning(f"[MG UI] dl update error: {e}")
 
             if not chunk_files:
                 logger.warning(f"[MG {jid}] Chunk {chunk_num} had no downloadable files, skipping.")
@@ -949,8 +957,8 @@ async def _run_job(jid, uid, bot):
 
             try:
                 if status_msg: await status_msg.edit_text(
-                    f"<b>🔀 {chunk_label} — Merging {len(chunk_files)} files→ part {chunk_num}</b>")
-            except: pass
+                    f"🔀 {chunk_label} — Merging {len(chunk_files)} files → part {chunk_num}")
+            except Exception as e: logger.warning(f"[MG UI] merge status update error: {e}")
 
             chunk_files_sorted = sorted(chunk_files, key=lambda p: os.path.basename(p))
             
@@ -962,11 +970,11 @@ async def _run_job(jid, uid, bot):
                     pct = min(100, int((cur_secs / max(chunk_dur, 0.1)) * 100))
                     try:
                         if status_msg: await status_msg.edit_text(
-                            f"<b>🔀 {chunk_label} — Merging {len(chunk_files)} files→ part {chunk_num}</b>\n"
+                            f"🔀 {chunk_label} — Merging {len(chunk_files)} files → part {chunk_num}\n"
                             f"<code>{_bar(pct, 100)}</code>\n"
                             f"⏳ Progress: {pct}%"
                         )
-                    except: pass
+                    except Exception as e: logger.warning(f"[MG UI] chunk prog update error: {e}")
                     last_edit[0] = now
 
             # Chunk parts: apply speed chunk-by-chunk to save MASSIVE amounts of RAM
@@ -992,10 +1000,10 @@ async def _run_job(jid, uid, bot):
             await _db_up(jid, status="downloading")
             try:
                 if status_msg: await status_msg.edit_text(
-                    f"<b>✅ {chunk_label} done</b>\n"
+                    f"✅ {chunk_label} done\n"
                     f"💾 Part size: {_sz(os.path.getsize(part_path))} • "
                     f"Total so far: {_sz(dl_total_bytes)}")
-            except: pass
+            except Exception as e: logger.warning(f"[MG UI] chunk done text error: {e}")
             await asyncio.sleep(1)
 
         # ══════════════════════════════════════════════════════════════════
@@ -1014,9 +1022,9 @@ async def _run_job(jid, uid, bot):
         _spd_text = f'⚡ Applying speed {speed}x during final merge' if abs(speed-1.0)>0.001 else '🎯 Lossless combine (speed=1.0x)'
         try:
             await bot.send_message(uid,
-                f"<b>🔀 Final combine: {len(part_files)} parts → {out_name}{out_ext}</b>\n"
+                f"🔀 Final combine: {len(part_files)} parts → {out_name}{out_ext}\n"
                 f"{_spd_text}{_vid_text}")
-        except: pass
+        except Exception as e: logger.warning(f"[MG UI] final combine initial msg error: {e}")
 
         part_files_sorted = sorted(part_files, key=lambda p: os.path.basename(p))
         final_dur = cumulative_secs
@@ -1024,9 +1032,10 @@ async def _run_job(jid, uid, bot):
         # Dedicated progress message for the final combine
         try:
             final_status_msg = await bot.send_message(uid,
-                f"<b>🔀 Final combine starting…</b>\n"
+                f"🔀 Final combine starting…\n"
                 f"📁 {len(part_files_sorted)} parts → {out_name}{out_ext}")
-        except:
+        except Exception as e:
+            logger.warning(f"[MG UI] final status msg error: {e}")
             final_status_msg = None
 
         last_edit2 = [time.time()]
@@ -1037,11 +1046,11 @@ async def _run_job(jid, uid, bot):
                 try:
                     if final_status_msg:
                         await final_status_msg.edit_text(
-                            f"<b>🔀 Final combine: {len(part_files_sorted)} parts → {out_name}{out_ext}</b>\n"
+                            f"🔀 Final combine: {len(part_files_sorted)} parts → {out_name}{out_ext}\n"
                             f"<code>{_bar(pct, 100)}</code>\n"
                             f"⏳ Progress: {pct}% • {_tm(int(cur_secs))}/{_tm(int(max(final_dur,0.1)))}"
                         )
-                except: pass
+                except Exception as e: logger.warning(f"[MG UI] final combine prog error: {e}")
                 last_edit2[0] = now
 
         # Speed already applied in Phase 2, so enforce 1.0x here
