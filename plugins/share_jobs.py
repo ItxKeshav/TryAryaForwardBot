@@ -474,7 +474,10 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             r = _re.search(r'(?<!\d)(\d{1,4}(?:(?:\s*[-\u2013\u2014]|(?i:\s+to\s+))\s*\d{1,4})+)(?!\d)', c)
             if r:
                 nums = [int(x) for x in _re.findall(r'\d+', r.group(1))]
-                if max(nums) < 5000: return (min(nums), max(nums), True)
+                # Must be strictly ascending (e.g. 1-10) not backwards (e.g. 1126-8)
+                if max(nums) < 5000 and len(nums) >= 2 and nums == sorted(nums) and len(set(nums)) == len(nums):
+                    if (nums[-1] - nums[0]) < 1000:
+                        return (min(nums), max(nums), True)
                 
             # 3. Explicit keywords: "Ep 23", "Episode 23", "Part 23", "Ch 2", hindi
             kw = _re.search(r'(?i)\b(?:ep|episode|e|ch|chapter|part|एपिसोड|भाग)[\s\-\:]*(\d{1,4})(?!\d)', c)
