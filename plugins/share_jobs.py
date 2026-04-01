@@ -477,7 +477,7 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 if max(nums) < 5000: return (min(nums), max(nums), True)
                 
             # 3. Explicit keywords: "Ep 23", "Episode 23", "Part 23", "Ch 2", hindi
-            kw = _re.search(r'(?i)\b(?:ep|episode|e|ch|chapter|part|एपिसोड|भाग)\s*(\d{1,4})(?!\d)', c)
+            kw = _re.search(r'(?i)\b(?:ep|episode|e|ch|chapter|part|एपिसोड|भाग)[\s\-\:]*(\d{1,4})(?!\d)', c)
             if kw:
                 n = int(kw.group(1))
                 if 0 < n < 5000: return (n, n, False)
@@ -611,8 +611,10 @@ async def _build_share_links(bot, user_id, sj, info_msg):
         duplicate_eps:  list = []  # list of ep numbers with >1 file
         grouped_files:  list = []  # list of "(name, start-end)" for grouped files
 
+        range_msg_ids = set()
         for msg, ep_s, ep_e, is_r in parsed_msgs:
             if is_r:
+                range_msg_ids.add(msg.id)
                 # Range file — track for report
                 range_label = f"{ep_s}\u2013{ep_e}"
                 grouped_files.append(range_label)
@@ -636,7 +638,13 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                     ep_to_msgs[ep_s].append(msg.id)
 
         # Identify true duplicates (same ep_num, multiple messages)
-        duplicate_eps = sorted(set(ep for ep, ids in ep_to_msgs.items() if len(ids) > 1))
+        # Exclude generated range overlaps to prevent grouped files from appearing as duplicates
+        duplicate_eps = []
+        for ep, ids in ep_to_msgs.items():
+            non_range_ids = [m for m in ids if m not in range_msg_ids]
+            if len(non_range_ids) > 1:
+                duplicate_eps.append(ep)
+        duplicate_eps = sorted(set(duplicate_eps))
 
 
         all_ep_nums    = sorted(ep_to_msgs.keys())
@@ -722,6 +730,11 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                     if b_s is None:
                         pending_unparsed.append(mid)
                     else:
+                        if len(b_mids) >= batch_size:
+                            buckets.append([b_s, b_e, b_mids])
+                            b_s = b_e + 1
+                            b_e = b_s + batch_size - 1
+                            b_mids = []
                         if mid not in b_mids:
                             b_mids.append(mid)
 
@@ -889,7 +902,10 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             "Note: Duplicates = multiple files had the same episode number.",
             "ALL were included — nothing was skipped.",
             "-" * 50,
-            "This report is auto-generated. | Powered by Arya Bot",
+            "This report is auto generated so it may be slightly incorrect,",
+            "please double check from your side, I do not take responsibility for this.",
+            "-" * 50,
+            "Powered by Arya Bot",
             "=" * 50,
         ]
         report_text = "\n".join(plain_report)
