@@ -435,8 +435,8 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             _re.compile(r'(?i)\b(?:360|480|720|1080|2160|4k)[pi]\b'),
             # Codec/format labels
             _re.compile(r'(?i)\b(?:x264|x265|h\.?264|h\.?265|hevc|avc|aac|mp[34]|m4a|m4v|m4b|mkv|avi|mov|wmv|flv|flac|opus|ogg|wav|webm|3gp|mts|m2ts)\b'),
-            # Calendar years
-            _re.compile(r'(?<!\d)(?:19[0-9]{2}|20[0-9]{2})(?!\d)'),
+            # Calendar years - REMOVED because episodes commonly pass through 1900-2099
+            # _re.compile(r'(?<!\d)(?:19[0-9]{2}|20[0-9]{2})(?!\d)'),
             # File sizes
             _re.compile(r'(?i)\b\d+(?:\.\d+)?\s*(?:mb|gb|kb)\b'),
             # Track/season-episode labels like S01E05
