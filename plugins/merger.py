@@ -625,11 +625,10 @@ async def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", co
                     cmd2 += ["-filter_complex", fc, "-map", map_lbl, "-map", f"{cov_idx}:v",
                              "-id3v2_version", "3",
                              "-metadata:s:v", "title=Album cover",
-                             "-metadata:s:v", "comment=Cover (front)"]
+                             "-metadata:s:v", "comment=Cover (front)",
+                             "-c:a", "libmp3lame", "-b:a", "192k", "-ar", "48000", "-max_muxing_queue_size", "4096"]
                 else:
-                    cmd2 += ["-filter_complex", fc, "-map", map_lbl]
-
-                cmd2 += ["-c:a", "libmp3lame", "-b:a", "192k", "-ar", "48000", "-max_muxing_queue_size", "4096"]
+                    cmd2 += ["-filter_complex", fc, "-map", map_lbl, "-c:a", "libmp3lame", "-b:a", "192k", "-ar", "48000", "-max_muxing_queue_size", "4096"]
         
         if metadata:
             for k, v in (metadata or {}).items():
@@ -1255,7 +1254,7 @@ async def _run_job(jid, uid, bot):
         _yt_time = time.time() - _yt_start if upload_to_yt else 0
         total_time = dl_total_bytes and (up_time + _yt_time)  # compat field
         _total = (job.get("dl_time") or 0) + (job.get("merge_time") or 0) + up_time + _yt_time
-        await _db_up(jid, status="done", total_time=_total, yt_time=_yt_time, file_size=fsize)
+        await _db_up(jid, status="done", total_time=_total, yt_time=_yt_time, file_size=fsize, log_entries=log_entries)
 
         markup = None
         if upload_to_yt and 'yt_vid_id' in locals() and yt_vid_id:
