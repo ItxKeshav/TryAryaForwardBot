@@ -406,13 +406,26 @@ async def _run_job(job_id: str, user_id: int):
                 await _update_job(job_id, batch_end_id=batch_end)
 
             logger.info(f"[Job {job_id}] Batch phase: msg {batch_cursor} → {batch_end}")
-            
             # Progress bar helpers
-            def make_progress_bar(percentage: int) -> str:
-                return "█" * (percentage // 10) + "░" * (10 - (percentage // 10))
-                
-            def get_prog_text(percentage: int) -> str:
-                return f"<b>»  Forwarding Process:</b>\n{make_progress_bar(percentage)} {percentage}%\n\n<i>Please wait...</i>"
+            acc_name = acc.get('name', 'Userbot') if acc else 'Userbot'
+            total_msgs_calc = max(0, batch_end - int(job.get("batch_start_id") or 1) + 1)
+            
+            def get_prog_text(current_count: int, status: str = "running") -> str:
+                if status == "done":
+                    return (
+                        f"➤ <b>✓ ꜰᴏʀᴡᴀʀᴅɪɴɢ ᴄᴏᴍᴘʟᴇᴛᴇ!</b>\n"
+                        f"➤ <b>ᴀᴄᴄᴏᴜɴᴛ:</b> <code>{acc_name}</code>\n\n"
+                        f"➤ ᴀʟʟ <u>{current_count}</u> ꜰɪʟᴇꜱ ʜᴀᴠᴇ ʙᴇᴇɴ ᴍᴏᴠᴇᴅ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ!\n\n"
+                        f"<i>ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴀʀʏᴀ ꜰᴏʀᴡᴀʀᴅ ʙᴏᴛ</i>"
+                    )
+                else:
+                    total_str = str(total_msgs_calc) if total_msgs_calc > 0 else '?'
+                    return (
+                        f"<b>➤ {acc_name}</b>\n"
+                        f"➤ ᴛʀᴀɴꜱꜰᴇʀʀɪɴɢ ꜰɪʟᴇꜱ ᴘʟᴇᴀꜱᴇ ᴡᴀɪᴛ...\n\n"
+                        f"➤ <b>ꜰɪʟᴇꜱ ꜱᴇɴᴛ:</b> <code>{current_count}</code> / <code>{total_str}</code>\n\n"
+                        f"<i>ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴀʀʏᴀ ꜰᴏʀᴡᴀʀᴅ ʙᴏᴛ</i>"
+                    )
 
             if not job.get("prog_msg_created"):
                 try:
@@ -422,7 +435,8 @@ async def _run_job(job_id: str, user_id: int):
                     except Exception: pass
                 except Exception:
                     await _update_job(job_id, prog_msg_created=True)
-            
+
+            job_last_prog_update = time.time()
             consecutive_empty = 0
 
             # ── BOT DM BATCH (userbot + non-channel source) ──────────────────────
@@ -486,6 +500,19 @@ async def _run_job(job_id: str, user_id: int):
                         logger.debug(f"[Job {job_id}] DM batch fwd error {msg.id}: {e}")
 
                     await _update_job(job_id, batch_cursor=msg.id + 1)
+
+                    now_mj = time.time()
+                    if (now_mj - job_last_prog_update) >= 10:
+                        job_last_prog_update = now_mj
+                        try:
+                            prog_id = (await _get_job(job_id)).get("prog_msg_id")
+                            if prog_id:
+                                fresh_j = await _get_job(job_id)
+                                _fwd = fresh_j.get("forwarded", 0) if fresh_j else 0
+                                from pyrogram.enums import ParseMode
+                                await client.edit_message_text(to_chat, prog_id, get_prog_text(_fwd, "running"), parse_mode=ParseMode.HTML)
+                        except Exception: pass
+
                     await asyncio.sleep(sleep_secs)
 
                 # DM batch done — mark complete and fall through to live phase
@@ -494,9 +521,12 @@ async def _run_job(job_id: str, user_id: int):
                 last_seen = max(last_seen, batch_end)
                 logger.info(f"[Job {job_id}] DM batch complete ({len(dm_all)} msgs).")
                 try:
-                    prog_id = (await _get_job(job_id)).get("prog_msg_id")
+                    fresh_j = await _get_job(job_id)
+                    _fwd = fresh_j.get("forwarded", 0) if fresh_j else 0
+                    prog_id = fresh_j.get("prog_msg_id")
                     if prog_id:
-                        await client.edit_message_text(to_chat, prog_id, "<b>✅ Forwarding Completed! All files have been successfully transferred.</b>")
+                        from pyrogram.enums import ParseMode
+                        await client.edit_message_text(to_chat, prog_id, get_prog_text(_fwd, "done"), parse_mode=ParseMode.HTML)
                 except Exception:
                     pass
 
@@ -612,21 +642,23 @@ async def _run_job(job_id: str, user_id: int):
                         logger.debug(f"[Job {job_id}] Batch fwd error for {msg.id}: {e}")
 
                     await _update_job(job_id, batch_cursor=msg.id + 1)
+
+                    now_mj = time.time()
+                    if (now_mj - job_last_prog_update) >= 10:
+                        job_last_prog_update = now_mj
+                        try:
+                            prog_id = (await _get_job(job_id)).get("prog_msg_id")
+                            if prog_id:
+                                fresh_j = await _get_job(job_id)
+                                _fwd = fresh_j.get("forwarded", 0) if fresh_j else 0
+                                from pyrogram.enums import ParseMode
+                                await client.edit_message_text(to_chat, prog_id, get_prog_text(_fwd, "running"), parse_mode=ParseMode.HTML)
+                        except Exception: pass
+
                     await asyncio.sleep(sleep_secs)
 
                 batch_cursor = chunk_end + 1
                 await _update_job(job_id, batch_cursor=batch_cursor)
-                
-                # Update progress bar occasionally
-                try:
-                    prog_id = (await _get_job(job_id)).get("prog_msg_id")
-                    if prog_id:
-                        total_msgs = max(1, batch_end - int(job.get("batch_start_id") or 1))
-                        current_prog = max(0, batch_cursor - int(job.get("batch_start_id") or 1))
-                        pct = min(100, int((current_prog / total_msgs) * 100))
-                        await client.edit_message_text(to_chat, prog_id, get_prog_text(pct))
-                except Exception:
-                    pass
 
             # Batch complete — mark done, advance last_seen past the batch
             await _update_job(job_id, batch_done=True, batch_cursor=batch_end,
@@ -635,9 +667,12 @@ async def _run_job(job_id: str, user_id: int):
             logger.info(f"[Job {job_id}] Batch phase complete. Switching to live mode.")
             
             try:
-                prog_id = (await _get_job(job_id)).get("prog_msg_id")
+                fresh_j = await _get_job(job_id)
+                _fwd = fresh_j.get("forwarded", 0) if fresh_j else 0
+                prog_id = fresh_j.get("prog_msg_id")
                 if prog_id:
-                    await client.edit_message_text(to_chat, prog_id, "<b>✅ Forwarding Completed! All files have been successfully transferred.</b>")
+                    from pyrogram.enums import ParseMode
+                    await client.edit_message_text(to_chat, prog_id, get_prog_text(_fwd, "done"), parse_mode=ParseMode.HTML)
             except Exception:
                 pass
 

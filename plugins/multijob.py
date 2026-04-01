@@ -430,6 +430,17 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
                 current = msg.id + 1
                 await _mj_update(job_id, current_id=current)
                 await _mj_inc(job_id, 1)
+
+                now_mj = time.time()
+                if mj_prog_msg_id and (now_mj - mj_last_prog_update) >= 10:
+                    mj_last_prog_update = now_mj
+                    try:
+                        fresh_j = await _mj_get(job_id)
+                        _fwd = fresh_j.get("forwarded", 0) if fresh_j else 0
+                        from pyrogram.enums import ParseMode
+                        await client.edit_message_text(to_chat, mj_prog_msg_id, _mj_prog_text(_fwd, mj_total, "running"), parse_mode=ParseMode.HTML)
+                    except Exception: pass
+
                 await asyncio.sleep(sleep_secs)
 
             await _mj_update(job_id, status="done", current_id=current)
@@ -654,38 +665,15 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
             current = valid[-1].id + 1
             await _mj_update(job_id, current_id=current)
 
-            #  Update destination progress bar (every 30s) 
+            #  Update destination progress bar (every 10s) 
             now_mj = time.time()
-            if mj_prog_msg_id and (now_mj - mj_last_prog_update) >= 30:
+            if mj_prog_msg_id and (now_mj - mj_last_prog_update) >= 10:
                 mj_last_prog_update = now_mj
                 try:
                     fresh_j = await _mj_get(job_id)
                     _fwd = fresh_j.get("forwarded", 0) if fresh_j else 0
-                    # Dynamic ETA
-                    _elapsed = max(1, now_mj - mj_start_time)
-                    _delta   = _fwd - mj_fwd_at_start
-                    _spd     = _delta / _elapsed
-                    if _spd > 0 and end_id > 0:
-                        _rem = max(0, end_id - current)
-                        _eta_s = int(_rem / _spd)
-                        _h, _r = divmod(_eta_s, 3600)
-                        _m2 = _r // 60
-                        _eta_str = f"{_h}h {_m2}m" if _h else f"{_m2}m"
-                    else:
-                        _eta_str = "Calculating..."
-                    _pct = 0
-                    if end_id > 0 and current > int(job.get("start_id") or 1):
-                        _pct = min(99, int((current - int(job.get("start_id") or 1)) / max(1, end_id - int(job.get("start_id") or 1)) * 100))
-                    _filled = _pct // 5
-                    _bar = "█" * _filled + "░" * (20 - _filled)
-                    _prog_txt = (
-                        f"📤 <b>Multi Job Running — please wait…</b>\n\n"
-                        f"<code>[{_bar}]</code>  <b>{_pct}%</b>\n"
-                        f"<b>Files:</b> <code>{_fwd}</code> / <code>{end_id if end_id > 0 else '?'}</code>\n"
-                        f"»  <b>ETA:</b> {_eta_str}\n\n"
-                        f"<i>Powered by Arya Forward Bot</i>"
-                    )
-                    await client.edit_message_text(to_chat, mj_prog_msg_id, _prog_txt, parse_mode=__import__("pyrogram.enums", fromlist=["ParseMode"]).ParseMode.HTML)
+                    from pyrogram.enums import ParseMode
+                    await client.edit_message_text(to_chat, mj_prog_msg_id, _mj_prog_text(_fwd, mj_total, "running"), parse_mode=ParseMode.HTML)
                 except Exception:
                     pass
 

@@ -123,7 +123,22 @@ async def pub_(bot, message):
                       elif act == 'copy_message': await client.copy_message(**prm)
                       elif act == 'send_cached_media': await client.send_cached_media(**prm)
                       elif act == 'send_message': await client.send_message(**prm)
+
                       sts_obj.add('total_files')
+                      
+                      import time
+                      now_regix_rt = time.time()
+                      if not hasattr(sts_obj, 'last_update_time'):
+                          sts_obj.last_update_time = now_regix_rt
+                      elif (now_regix_rt - sts_obj.last_update_time) >= 10:
+                          sts_obj.last_update_time = now_regix_rt
+                          _fwded = int(sts_obj.get('total_files') or 0)
+                          _dest_chat_ea = sts_obj.get('TO')
+                          _total_msgs_ea = int(sts_obj.get('limit') or 0)
+                          try:
+                              asyncio.create_task(channel_progress_update(client, _dest_chat_ea, _fwded, _total_msgs_ea))
+                          except Exception: pass
+                          
                       return True, None
                   except FloodWait as fw:
                       await asyncio.sleep(fw.value + 2)
@@ -303,9 +318,7 @@ async def pub_(bot, message):
                 pling += 1
                 if pling % 5 == 0:
                    await edit(m, 'Progressing', 10, sts)
-                if pling % 10 == 0:
-                    _fwded = int(sts.get('total_files') or 0)
-                    asyncio.create_task(channel_progress_update(client, _dest_chat, _fwded, _total_msgs))
+                   
                 # Topic (thread) filtering — skip messages not in the requested topic
                 if _from_thread and not _msg_in_topic(message, _from_thread):
                     sts.add('filtered')
@@ -759,29 +772,29 @@ async def send(bot, user, text):
 _channel_progress_msgs: dict = {}
 
 def _build_channel_progress_text(forwarded: int, total: int, status: str = "forwarding") -> str:
-    """Build a clean progress bar text for the destination channel."""
-    if total and total > 0:
-        pct = min(int(forwarded * 100 / total), 100)
-    else:
-        pct = 0
-    filled = pct // 5   # 20 blocks total → each = 5%
-    empty  = 20 - filled
-    bar = "█" * filled + "░" * empty
+    """Build a clean progress bar text for the destination channel matching Arya format."""
     if status == "done":
-        heading = "✅ <b>Forwarding Complete!</b>"
-        status_line = f"<b>All {forwarded} files forwarded successfully.</b>"
+        return (
+            f"➤ <b>✓ ꜰᴏʀᴡᴀʀᴅɪɴɢ ᴄᴏᴍᴘʟᴇᴛᴇ!</b>\n"
+            f"➤ <b>ᴀᴄᴄᴏᴜɴᴛ:</b> <code>System</code>\n\n"
+            f"➤ ᴀʟʟ <u>{forwarded}</u> ꜰɪʟᴇꜱ ʜᴀᴠᴇ ʙᴇᴇɴ ᴍᴏᴠᴇᴅ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ!\n\n"
+            f"<i>ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴀʀʏᴀ ꜰᴏʀᴡᴀʀᴅ ʙᴏᴛ</i>"
+        )
     elif status == "cancelled":
-        heading = "❌ <b>Forwarding Cancelled</b>"
-        status_line = f"<b>Stopped at {forwarded} / {total if total else '?'} files.</b>"
+        return (
+            f"➤ <b>⏹ ꜰᴏʀᴡᴀʀᴅɪɴɢ ᴄᴀɴᴄᴇʟʟᴇᴅ</b>\n"
+            f"➤ <b>ᴀᴄᴄᴏᴜɴᴛ:</b> <code>System</code>\n\n"
+            f"➤ ꜰɪʟᴇꜱ ꜱᴇɴᴛ: <code>{forwarded}</code> / <code>{total if total else '?'}</code>\n\n"
+            f"<i>ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴀʀʏᴀ ꜰᴏʀᴡᴀʀᴅ ʙᴏᴛ</i>"
+        )
     else:
-        heading = "📤 <b>Bot is forwarding, please wait…</b>"
-        status_line = f"<b>Files:</b> <code>{forwarded}</code> / <code>{total if total else '?'}</code>"
-    return (
-        f"{heading}\n\n"
-        f"<code>[{bar}]</code>  <b>{pct}%</b>\n"
-        f"{status_line}\n\n"
-        f"<i>Powered by Arya Forward Bot</i>"
-    )
+        total_str = str(total) if total else '?'
+        return (
+            f"<b>➤ System</b>\n"
+            f"➤ ᴛʀᴀɴꜱꜰᴇʀʀɪɴɢ ꜰɪʟᴇꜱ ᴘʟᴇᴀꜱᴇ ᴡᴀɪᴛ...\n\n"
+            f"➤ <b>ꜰɪʟᴇꜱ ꜱᴇɴᴛ:</b> <code>{forwarded}</code> / <code>{total_str}</code>\n\n"
+            f"<i>ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴀʀʏᴀ ꜰᴏʀᴡᴀʀᴅ ʙᴏᴛ</i>"
+        )
 
 async def channel_progress_start(client, dest_chat: int, total: int, thread_id: int = None) -> None:
     """Send the initial progress message to the destination channel and pin it."""
