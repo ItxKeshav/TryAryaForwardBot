@@ -795,8 +795,8 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 row = [c["btn"] for c in chunk[j:j + 2]]
                 keyboard.append(row)
             keyboard.append([
-                InlineKeyboardButton(_sc("tutorial") + " » ", url="https://t.me/StoriesLinkopningguide"),
-                InlineKeyboardButton(_sc("support") + " » ", url="https://t.me/AryaHelpTG")
+                InlineKeyboardButton(_sc("tutorial"), url="https://t.me/StoriesLinkopningguide"),
+                InlineKeyboardButton(_sc("support"), url="https://t.me/AryaHelpTG")
             ])
             for attempt in range(6):
                 try:
