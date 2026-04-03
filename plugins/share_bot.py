@@ -291,24 +291,49 @@ async def _process_start(client, message):
     dl_id = f"{user_id}_{uuid_str}"
     active_downloads.add(dl_id)
 
-    # Issue 4: Show configurable fetching media (GIF/image/video) or fallback to text
+    # Show configurable fetching media (GIF / Photo / Video) or fallback to text
     fetching_media = await db.get_bot_fetching_media(bot_id) if bot_id else {}
     cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("Cᴀɴᴄᴇʟ", callback_data=f"cancel_dl_{uuid_str}")]])
     fetch_text = "<i>»  Fᴇᴛᴄʜɪɴɢ ʏᴏᴜʀ ꜰɪʟᴇs sᴇᴄᴜʀᴇʟʏ, ᴘʟᴇᴀsᴇ ᴡᴀɪᴛ...</i>"
     sts = None
+
     if fetching_media and fetching_media.get('file_id'):
         fid  = fetching_media['file_id']
         ftyp = fetching_media.get('media_type', 'photo')
         try:
             if ftyp == 'animation':
-                sts = await client.send_animation(user_id, animation=fid, caption=fetch_text, reply_markup=cancel_kb)
+                sts = await client.send_animation(
+                    user_id, animation=fid, caption=fetch_text,
+                    reply_markup=cancel_kb
+                )
             elif ftyp == 'video':
-                sts = await client.send_video(user_id, video=fid, caption=fetch_text, reply_markup=cancel_kb)
+                sts = await client.send_video(
+                    user_id, video=fid, caption=fetch_text,
+                    reply_markup=cancel_kb
+                )
             else:
-                sts = await client.send_photo(user_id, photo=fid, caption=fetch_text, reply_markup=cancel_kb)
+                sts = await client.send_photo(
+                    user_id, photo=fid, caption=fetch_text,
+                    reply_markup=cancel_kb
+                )
+            logger.info(f"[Fetch] Sent {ftyp} to user {user_id} via bot {bot_id}")
         except Exception as _fe:
-            logger.warning(f"[Fetch] Media send failed ({_fe}), falling back to text")
+            # Log the exact error so we know WHY it failed (bad file_id, wrong bot, etc.)
+            logger.warning(
+                f"[Fetch] Media send FAILED for bot={bot_id} user={user_id} "
+                f"type={ftyp} file_id={fid[:30]}... error: {_fe}"
+            )
+            # If it's a bad file_id, clear the stored media so it doesn't keep failing
+            err_str = str(_fe).upper()
+            if any(k in err_str for k in ("FILE_REFERENCE_EXPIRED", "FILE_ID_INVALID", "MEDIA_EMPTY")):
+                logger.warning(f"[Fetch] Clearing broken fetching media for bot {bot_id}")
+                try:
+                    from database import db as _db
+                    await _db.clear_bot_fetching_media(bot_id)
+                except Exception: pass
+
     if sts is None:
+        # Fallback: plain text status
         sts = await message.reply_text(fetch_text, reply_markup=cancel_kb)
 
     sent_ids   = []

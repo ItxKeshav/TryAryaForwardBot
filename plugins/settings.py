@@ -606,90 +606,189 @@ async def settings_query(bot, query):
   elif type.startswith("sb_fetch_media_"):
       b_id = type.split("sb_fetch_media_")[1]
       existing = await db.get_bot_fetching_media(b_id)
-      existing_type = existing.get('media_type', '') if existing else ''
-      status_str = f"Currently set: <b>{existing_type}</b>" if existing else "<i>Not configured — text only</i>"
+
+      # Build current status badge
+      if existing and existing.get('file_id'):
+          ext = existing.get('media_type', 'photo')
+          type_icon = {"animation": "🎞", "video": "🎬", "photo": "🖼"}.get(ext, "🖼")
+          status_str = f"{type_icon} Currently set: <b>{ext}</b> — tap below to replace or clear."
+      else:
+          status_str = "<i>❌ Not configured — delivery shows text only.</i>"
 
       await query.message.delete()
       ask = await bot.send_message(
           user_id,
-          f"<b>🎞 Fetching Media</b>\n\n"
+          f"<b>🎞 Fetching Media Setup</b>\n\n"
           f"{status_str}\n\n"
-          "Send a <b>GIF, Photo, or short Video</b> (max ~5 seconds) to show while\n"
-          "files are being delivered to the user.\n\n"
-          "Send <code>/clear</code> to remove it.\n"
-          "Send <code>/cancel</code> to abort."
+          "<b>How it works:</b>\n"
+          "When a user requests files, this GIF / Image / Video appears while\n"
+          "their files are being prepared — making delivery feel alive & premium.\n\n"
+          "<b>Supported types:</b>\n"
+          "  🎞 GIF / Animation\n"
+          "  🖼 Photo / Image\n"
+          "  🎬 Short Video (max 10 sec)\n\n"
+          "<b>Simply send the media now.</b>\n"
+          "Or send <code>/clear</code> to remove it.\n"
+          "Or send <code>/cancel</code> to abort.",
+          reply_markup=InlineKeyboardMarkup([[
+              InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")
+          ]])
       )
+
       try:
-          resp = await bot.listen(chat_id=user_id, timeout=120)
+          resp = await _ask(bot, user_id, timeout=180)
 
-          if getattr(resp, 'text', None) and '/cancel' in str(resp.text).lower():
-              await resp.delete()
-              return await ask.edit_text(
-                  "<i>Process Cancelled Successfully!</i>",
-                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")]])
-              )
+          if getattr(resp, 'text', None):
+              txt = resp.text.strip().lower()
+              if '/cancel' in txt or 'cancel' in txt:
+                  try: await resp.delete()
+                  except: pass
+                  return await ask.edit_text(
+                      "<i>Process Cancelled Successfully!</i>",
+                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")]])
+                  )
+              if '/clear' in txt:
+                  await db.clear_bot_fetching_media(b_id)
+                  try: await resp.delete()
+                  except: pass
+                  return await ask.edit_text(
+                      "✅ Fetching media <b>removed</b>. Delivery will show text only.",
+                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")]])
+                  )
 
-          if getattr(resp, 'text', None) and '/clear' in resp.text.strip().lower():
-              await db.clear_bot_fetching_media(b_id)
-              await resp.delete()
-              return await ask.edit_text(
-                  "✅ Fetching media removed. Text-only mode restored.",
-                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")]])
-              )
+          # ── Detect media type ──────────────────────────────────────────────
+          file_id   = None
+          media_type = None
 
-          # Detect media type
           if resp.animation:
-              file_id = resp.animation.file_id
+              # GIF / animation: always has file_id directly
+              file_id    = resp.animation.file_id
               media_type = 'animation'
+
           elif resp.video and resp.video.duration <= 10:
-              file_id = resp.video.file_id
+              file_id    = resp.video.file_id
               media_type = 'video'
+
           elif resp.photo:
-              file_id = resp.photo.file_id
+              # In Pyrogram, msg.photo is the LARGEST PhotoSize object
+              # (not a list like in older versions) — just use file_id directly
+              ph = resp.photo
+              file_id    = ph.file_id if hasattr(ph, 'file_id') else ph[-1].file_id
               media_type = 'photo'
+
           else:
-              await resp.delete()
+              try: await resp.delete()
+              except: pass
               return await ask.edit_text(
-                  "❌ Please send a GIF, Photo, or short Video (max 10s).",
+                  "❌ <b>Unsupported type.</b>\n\nPlease send:\n"
+                  "  🎞 A GIF / Animation\n"
+                  "  🖼 A Photo / Image\n"
+                  "  🎬 A Video under 10 seconds\n\n"
+                  "Try again with /settings → Fetching Media.",
                   reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")]])
               )
 
-          # Get the Share Bot client to capture Share Bot-compatible file_id
+          # ── Capture Share Bot-compatible file_id ───────────────────────────
+          # Strategy: have the Share Bot forward the media to itself (saved messages = bot's own chat).
+          # This gives a file_id bound to the Share Bot's session — guaranteed to work at delivery.
           from plugins.share_bot import share_clients
-          sb_client = share_clients.get(str(b_id))
-          sb_file_id = None
+          sb_client   = share_clients.get(str(b_id))
+          final_file_id = file_id   # fallback = main bot's file_id
+          sb_status   = "⚠️ Share Bot offline"
+          sb_ok       = False
+
           if sb_client:
               try:
-                  # Forward the media through Share Bot → admin DM to get a Share Bot file_id
-                  fwd_msg = await sb_client.copy_message(
-                      chat_id=user_id,
-                      from_chat_id=resp.chat.id,
-                      message_id=resp.id
-                  )
-                  if fwd_msg.animation:  sb_file_id = fwd_msg.animation.file_id
-                  elif fwd_msg.video:    sb_file_id = fwd_msg.video.file_id
-                  elif fwd_msg.photo:    sb_file_id = fwd_msg.photo.file_id
-                  # Delete the forwarded preview
-                  try: await fwd_msg.delete()
-                  except: pass
-              except Exception as _fe:
-                  logger.warning(f"[FetchMedia] Share Bot forward failed: {_fe}")
+                  # Step 1 — Main bot copies to a "staging" location the Share Bot can access:
+                  #          forward to the admin's chat using the Share Bot itself.
+                  #          The admin has already chatted with the Share Bot (they set it up),
+                  #          so the Share Bot can send to the admin's chat directly.
+                  #
+                  # CORRECT approach: We download the file_bytes using main bot and re-upload via Share Bot.
+                  # But that's heavy (network). Better: use forward_messages from main bot's DM.
+                  #
+                  # SIMPLEST guaranteed approach: use Share Bot to send the file from its OWN
+                  # saved messages. We do: sb_client.send_* with the main-bot file_id.
+                  # Telegram's CDN file_ids are actually cross-client compatible for send operations
+                  # when the file already exists on the CDN — the server re-uses the file.
+                  # Failed only for "copy_message" from inaccessible chats, not for direct send by file_id.
+                  #
+                  # So: try sb_client.send_* with the main-bot file_id directly.
+                  # If Telegram accepts it (CDN shortcut), great. Otherwise download+re-upload.
 
-          # Fall back to the main-bot file_id if Share Bot unavailable
-          final_file_id = sb_file_id or file_id
+                  sb_me = await sb_client.get_me()
+                  sb_own_chat = sb_me.id   # Share Bot's "Saved Messages"
+
+                  staged = None
+                  try:
+                      # Try direct send with existing file_id
+                      if media_type == 'animation':
+                          staged = await sb_client.send_animation(sb_own_chat, animation=file_id,
+                                                                   caption="[fetch-media-stage]")
+                      elif media_type == 'video':
+                          staged = await sb_client.send_video(sb_own_chat, video=file_id,
+                                                               caption="[fetch-media-stage]")
+                      else:
+                          staged = await sb_client.send_photo(sb_own_chat, photo=file_id,
+                                                               caption="[fetch-media-stage]")
+                  except Exception as _direct_err:
+                      logger.warning(f"[FetchMedia] Direct file_id send failed ({_direct_err}), downloading...")
+                      # Fallback: download via main bot, re-upload via Share Bot
+                      import io
+                      buf = io.BytesIO()
+                      await bot.download_media(resp, file_name=buf)
+                      buf.seek(0)
+                      buf.name = "fetch_media" + (
+                          ".gif" if media_type == "animation" else
+                          ".mp4" if media_type == "video" else ".jpg"
+                      )
+                      if media_type == 'animation':
+                          staged = await sb_client.send_animation(sb_own_chat, animation=buf,
+                                                                   caption="[fetch-media-stage]")
+                      elif media_type == 'video':
+                          staged = await sb_client.send_video(sb_own_chat, video=buf,
+                                                               caption="[fetch-media-stage]")
+                      else:
+                          staged = await sb_client.send_photo(sb_own_chat, photo=buf,
+                                                               caption="[fetch-media-stage]")
+
+                  if staged:
+                      if staged.animation:  final_file_id = staged.animation.file_id
+                      elif staged.video:    final_file_id = staged.video.file_id
+                      elif staged.photo:
+                          ph2 = staged.photo
+                          final_file_id = ph2.file_id if hasattr(ph2, 'file_id') else ph2[-1].file_id
+                      # Clean up staged message
+                      try: await staged.delete()
+                      except: pass
+                      sb_ok = True
+                      sb_status = "✅ via Share Bot"
+
+              except Exception as _fe:
+                  logger.warning(f"[FetchMedia] Share Bot capture failed: {_fe}")
+                  sb_status = f"⚠️ Share Bot error ({type(_fe).__name__})"
+
+          # ── Save to DB ─────────────────────────────────────────────────────
           await db.set_bot_fetching_media(b_id, final_file_id, media_type)
-          status_note = " (via Share Bot ✅)" if sb_file_id else " (⚠️ Share Bot offline — may not show correctly)"
-          await resp.delete()
+          try: await resp.delete()
+          except: pass
+
+          type_icon = {"animation": "🎞", "video": "🎬", "photo": "🖼"}.get(media_type, "🖼")
           await ask.edit_text(
-              f"✅ Fetching media set! Type: <b>{media_type}</b>{status_note}\n"
-              f"Users will see this when receiving files.",
+              f"<b>{type_icon} Fetching Media Saved!</b>\n\n"
+              f"<b>Type:</b> {media_type}\n"
+              f"<b>Source:</b> {sb_status}\n\n"
+              f"Users will see this media while their files are being delivered.\n"
+              f"<i>{'Share Bot will send it directly.' if sb_ok else 'Warning: using main-bot file_id — may not display correctly if Share Bot cannot access it.'}</i>",
               reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")]])
           )
+
       except asyncio.TimeoutError:
           await ask.edit_text(
-              "Timeout.",
+              "⏱ <i>Timed out waiting for media. Please try again.</i>",
               reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")]])
           )
+
 
   elif type.startswith("sb_set_welcome_"):
       b_id = type.split("sb_set_welcome_")[1]
