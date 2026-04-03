@@ -8,20 +8,44 @@ import uuid
 import math
 import asyncio
 import logging
-from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
+from pyrogram import Client, filters, ContinuePropagation
+from pyrogram.types import (
+    InlineKeyboardButton, InlineKeyboardMarkup,
+    ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
+)
 from database import db
 from plugins.test import CLIENT
-from plugins.jobs import _ask
 
 logger = logging.getLogger(__name__)
 _CLIENT = CLIENT()
-import math
-import asyncio
-from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
-from database import db
-from plugins.test import CLIENT
+
+# ── Self-contained Future-based ask() — avoids cross-module routing conflicts ──
+_sj_waiting: dict[int, asyncio.Future] = {}
+
+@Client.on_message(filters.private, group=-14)
+async def _sj_input_router(bot, message):
+    """Route private messages to share_jobs _ask() futures."""
+    uid = message.from_user.id if message.from_user else None
+    if uid and uid in _sj_waiting:
+        fut = _sj_waiting.pop(uid)
+        if not fut.done():
+            fut.set_result(message)
+    raise ContinuePropagation
+
+async def _ask(bot, user_id: int, text: str, reply_markup=None, timeout: int = 300):
+    """Send text and wait for the next private message from user_id."""
+    loop = asyncio.get_event_loop()
+    fut: asyncio.Future = loop.create_future()
+    old = _sj_waiting.pop(user_id, None)
+    if old and not old.done():
+        old.cancel()
+    _sj_waiting[user_id] = fut
+    await bot.send_message(user_id, text, reply_markup=reply_markup)
+    try:
+        return await asyncio.wait_for(fut, timeout=timeout)
+    except asyncio.TimeoutError:
+        _sj_waiting.pop(user_id, None)
+        raise
 
 def _sc(text: str) -> str:
     return text.translate(str.maketrans(
@@ -513,7 +537,6 @@ async def _build_share_links(bot, user_id, sj, info_msg):
         total_scanned = 0
 
         from plugins.utils import format_tg_error
-        from pyrogram.types import ReplyKeyboardMarkup, ReplyKeyboardRemove
 
         if sj.get('is_topic'):
             await safe_edit(f"<i>»  Scanning entire Group Topic {sj['topic_id']}...</i>")
@@ -534,13 +557,16 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                     err_msg = format_tg_error(e, "Topic Scan Error")
                     await safe_edit(f"{err_msg}\n\n<i>Waiting for your response...</i>")
                     try:
-                        ask_res = await bot.ask(user_id, f"{err_msg}\n\n<i>Fix the issue, then click Retry to continue!</i>", 
-                            reply_markup=ReplyKeyboardMarkup([["🔄 Retry Scan"], ["❌ Cancel Process"]], resize_keyboard=True), timeout=600)
-                        if not ask_res.text or any(x in ask_res.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']):
+                        ask_res = await _ask(bot, user_id,
+                            f"{err_msg}\n\n<i>Fix the issue (e.g. ensure bot is Admin), then send 🔄 Retry:</i>",
+                            reply_markup=ReplyKeyboardMarkup([["🔄 Retry Scan"], ["❌ Cancel Process"]], resize_keyboard=True),
+                            timeout=600)
+                        if not ask_res or not ask_res.text or any(x in ask_res.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']):
                             await bot.send_message(user_id, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
                             return
-                        await ask_res.delete()
-                    except Exception:
+                        try: await ask_res.delete()
+                        except: pass
+                    except asyncio.TimeoutError:
                         return await safe_edit("<b>‣ Scan Error:</b> Timed out waiting for retry.")
 
         else:
@@ -570,14 +596,17 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                         err_msg = format_tg_error(e, "Scan Error")
                         await safe_edit(f"{err_msg}\n\n<i>Waiting for your response...</i>")
                         try:
-                            ask_res = await bot.ask(user_id, f"{err_msg}\n\n<i>Fix the issue (e.g. ensure bot/clone is Admin), then click Retry!</i>", 
-                                reply_markup=ReplyKeyboardMarkup([["🔄 Retry Scan"], ["❌ Cancel Process"]], resize_keyboard=True), timeout=600)
-                            if not ask_res.text or any(x in ask_res.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']):
+                            ask_res = await _ask(bot, user_id,
+                                f"{err_msg}\n\n<i>Fix the issue (e.g. ensure bot/clone is Admin), then send 🔄 Retry:</i>",
+                                reply_markup=ReplyKeyboardMarkup([["🔄 Retry Scan"], ["❌ Cancel Process"]], resize_keyboard=True),
+                                timeout=600)
+                            if not ask_res or not ask_res.text or any(x in ask_res.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']):
                                 await bot.send_message(user_id, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
                                 return
-                            await ask_res.delete()
-                            continue # retry the scan!
-                        except Exception:
+                            try: await ask_res.delete()
+                            except: pass
+                            continue  # retry the scan!
+                        except asyncio.TimeoutError:
                             return await safe_edit("<b>‣ Scan Error:</b> Timed out waiting for retry.")
                 
                 total_scanned += len(msg_ids)
@@ -1203,3 +1232,262 @@ async def _build_share_links(bot, user_id, sj, info_msg):
         logger.error(f"Share link generation error:\n{tb}")
     finally:
         new_share_job.pop(user_id, None)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DEEP SCAN SELF-CORRECTION SYSTEM
+# /deepscanbatch — Upload a scan report to diagnose and self-correct missing ep detection
+# ══════════════════════════════════════════════════════════════════════════════
+
+import re as _deepre
+
+def _deep_extract_ep(filename: str) -> tuple[int, int] | None:
+    """
+    Multi-strategy episode extractor for deep scan correction.
+    Tries 6 progressively looser strategies. Returns (ep_start, ep_end) or None.
+    """
+    base = filename
+    # Strip extension
+    dot = base.rfind('.')
+    if dot > 0: base = base[:dot]
+
+    # Strategy 1: zero-padded prefix "000047" or "047" with no letters before
+    m = _deepre.match(r'^0*(\d{1,4})(?:[^0-9]|$)', base)
+    if m:
+        n = int(m.group(1))
+        if 0 < n < 5000: return (n, n)
+
+    # Strategy 2: "Ep47", "EP 47", "episode47"
+    m = _deepre.search(r'(?i)(?:ep|episode|e)[\s\-\.#]*(\d{1,4})(?!\d)', base)
+    if m:
+        n = int(m.group(1))
+        if 0 < n < 5000: return (n, n)
+
+    # Strategy 3: range "47-53" or "47–53"
+    m = _deepre.search(r'(?<!\d)(\d{1,4})\s*[-–—]\s*(\d{1,4})(?!\d)', base)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        if 0 < a < 5000 and a < b < 5000: return (a, b)
+
+    # Strategy 4: underscored sequence "001_047"
+    m = _deepre.search(r'_0*(\d{1,4})(?:[_\-\s]|$)', base)
+    if m:
+        n = int(m.group(1))
+        if 0 < n < 5000: return (n, n)
+
+    # Strategy 5: last number in filename (loosest)
+    nums = [int(x) for x in _deepre.findall(r'(?<![0-9])\d{1,4}(?![0-9])', base) if 0 < int(x) < 5000]
+    if nums: return (nums[-1], nums[-1])
+
+    return None
+
+
+def _analyze_scan_report(report_text: str) -> dict:
+    """
+    Parse a plain-text scan report file (as generated by share_jobs or db_scanner)
+    and build a structured diagnosis.
+    Returns: {
+        story, total_files, ep_range, missing, unassigned,
+        file_entries: [{msg_id, filename, ep, parsed_ok, suggested_ep}]
+    }
+    """
+    lines = report_text.splitlines()
+    result = {
+        "story": "", "total_files": 0, "ep_range": (0, 0),
+        "missing": [], "unassigned": [],
+        "file_entries": [], "raw_lines": len(lines)
+    }
+
+    # Parse header info
+    for line in lines[:30]:
+        m = _deepre.search(r'Story\s*:\s*(.+)', line)
+        if m: result["story"] = m.group(1).strip()
+        m = _deepre.search(r'Files processed\s*:\s*(\d+)', line)
+        if m: result["total_files"] = int(m.group(1))
+        m = _deepre.search(r'Episode range\s*:\s*(\d+)\s*[–\-]\s*(\d+)', line)
+        if m: result["ep_range"] = (int(m.group(1)), int(m.group(2)))
+        m = _deepre.search(r"Truly missing.*?:\s*(.+)", line)
+        if m:
+            nums = [int(x) for x in _deepre.findall(r'\d+', m.group(1))]
+            result["missing"].extend(nums)
+
+    # Parse file entries — look for lines with msg_id + filename patterns
+    for line in lines:
+        # Pattern: "  123456  |  000047_Filename.mp3  |  Ep 47"
+        # or simple: "000047_Story.mp3"
+        m = _deepre.search(r'(\d{5,})\s*[|\-:]\s*([^\|]+?)(?:\s*[|\-:]\s*(.+))?$', line)
+        if m:
+            msg_id = int(m.group(1))
+            fname = m.group(2).strip()
+            parsed_ep_str = (m.group(3) or "").strip()
+            suggested = _deep_extract_ep(fname)
+            entry = {
+                "msg_id": msg_id,
+                "filename": fname,
+                "reported_ep": parsed_ep_str,
+                "suggested_ep": suggested,
+                "parsed_ok": suggested is not None,
+            }
+            result["file_entries"].append(entry)
+
+    return result
+
+
+@Client.on_message(filters.private & filters.command(["deepscanbatch", "batchdiag"]))
+async def cmd_deep_scan_batch(bot, message):
+    """
+    /deepscanbatch — Upload a txt scan report, get a deep diagnosis of why files
+    were wrongly marked as missing, and receive a corrected summary.
+    """
+    from config import Config
+    uid = message.from_user.id
+    if uid not in Config.BOT_OWNER_ID:
+        return await message.reply_text("⛔ Owner only.")
+
+    help_txt = (
+        "<b>»  Deep Scan Self-Correction</b>\n\n"
+        "Upload the <b>.txt report file</b> from a previous Batch Links run "
+        "(the one with episode entries and filenames).\n\n"
+        "The bot will:\n"
+        "• Re-parse all filenames with 5 fallback strategies\n"
+        "• Identify which 'missing' episodes are actually present with bad filename\n"
+        "• Generate a corrected diagnosis report\n"
+        "• Show you exactly which files failed to parse and why\n\n"
+        "<i>Send the .txt file now, or /cancel to abort.</i>"
+    )
+    await message.reply_text(help_txt)
+
+    try:
+        resp = await _ask(bot, uid, "📎 <i>Waiting for your scan report file...</i>", timeout=300)
+    except asyncio.TimeoutError:
+        return await bot.send_message(uid, "<i>Timed out. Use /deepscanbatch again.</i>")
+
+    if resp.text and any(x in resp.text.lower() for x in ['/cancel', 'cancel', '⛔']):
+        return await bot.send_message(uid, "<i>Cancelled.</i>", reply_markup=ReplyKeyboardRemove())
+
+    doc = resp.document
+    if not doc:
+        return await bot.send_message(uid, "⚠️ Please send a <b>.txt file</b> (not text message).")
+    if doc.file_size > 5 * 1024 * 1024:
+        return await bot.send_message(uid, "⚠️ File too large (max 5MB).")
+
+    sts = await bot.send_message(uid, "<i>Downloading and analyzing report...</i>")
+
+    import io
+    try:
+        buf = io.BytesIO()
+        await bot.download_media(resp, file_name=buf)
+        buf.seek(0)
+        report_text = buf.read().decode('utf-8', errors='replace')
+    except Exception as e:
+        return await sts.edit_text(f"<b>❌ Download failed:</b> <code>{e}</code>")
+
+    await sts.edit_text("<i>Running deep analysis...</i>")
+
+    diagnosis = _analyze_scan_report(report_text)
+
+    # Re-analyze all filenames in the report
+    file_entries = diagnosis["file_entries"]
+    total_entries = len(file_entries)
+    parsed_ok   = [e for e in file_entries if e["parsed_ok"]]
+    failed_parse = [e for e in file_entries if not e["parsed_ok"]]
+
+    # Find entries reported as missing but our deep extractor can parse
+    corrected = []
+    for e in failed_parse:
+        sug = _deep_extract_ep(e["filename"])
+        if sug:
+            corrected.append(e)
+
+    # Build diagnosis lines
+    lines_out = [
+        f"<b>»  Deep Scan Diagnosis</b>",
+        f"<b>Story:</b> {diagnosis['story'] or 'Unknown'}",
+        f"<b>Report lines:</b> {diagnosis['raw_lines']}",
+        f"<b>File entries found:</b> {total_entries}",
+        f"",
+        f"<b>✅ Correctly parsed by original system:</b> {len(parsed_ok)}",
+        f"<b>⚠️ Failed original parse:</b> {len(failed_parse)}",
+        f"<b>🔧 Deep extractor can fix:</b> {len(corrected)}",
+        f"",
+    ]
+
+    if diagnosis["missing"]:
+        lines_out.append(f"<b>❌ Episodes reported as missing by original system:</b> {len(diagnosis['missing'])}")
+        miss_str = ", ".join(str(e) for e in sorted(diagnosis["missing"])[:20])
+        if len(diagnosis["missing"]) > 20:
+            miss_str += f" (+{len(diagnosis['missing'])-20} more)"
+        lines_out.append(f"  <code>{miss_str}</code>")
+        lines_out.append("")
+
+    if corrected:
+        lines_out.append(f"<b>🔧 Files the deep extractor could parse (were NOT missing):</b>")
+        for e in corrected[:15]:
+            sug = e["suggested_ep"]
+            ep_label = f"Ep {sug[0]}–{sug[1]}" if sug[0] != sug[1] else f"Ep {sug[0]}"
+            lines_out.append(f"  • <code>{e['filename'][:50]}</code> → <b>{ep_label}</b>")
+        if len(corrected) > 15:
+            lines_out.append(f"  ... and {len(corrected)-15} more files")
+        lines_out.append("")
+
+    if failed_parse:
+        still_unknown = [e for e in failed_parse if not e.get("suggested_ep")]
+        if still_unknown:
+            lines_out.append(f"<b>❓ Truly unparseable files (even with deep scan):</b> {len(still_unknown)}")
+            lines_out.append("<i>These files genuinely have no episode number in their name.</i>")
+            lines_out.append("<i>→ They will be embedded chronologically in buttons (NOT missing).</i>")
+            lines_out.append("")
+
+    # Corrected missing count
+    actually_missing = max(0, len(diagnosis["missing"]) - len(corrected))
+    lines_out += [
+        f"<b>─────────────────────</b>",
+        f"<b>🎯 CORRECTED VERDICT:</b>",
+        f"  • Files originally flagged missing: <code>{len(diagnosis['missing'])}</code>",
+        f"  • Files deep-scan can recover: <code>{len(corrected)}</code>",
+        f"  • <b>Truly missing (not in DB at all): <code>{actually_missing}</code></b>",
+        f"",
+        f"<i>💡 To fix: Run Batch Links again — the re-runs benefit from the improved parser.</i>",
+        f"<i>If filenames are genuinely missing episode numbers, rename them in the DB channel and re-run.</i>",
+    ]
+
+    # Save full corrected report as file
+    import datetime
+    now = datetime.datetime.now()
+    report_bytes_out = io.BytesIO()
+    full_report_lines = [
+        "=" * 60,
+        "  ARYA BOT — Deep Scan Correction Report",
+        "=" * 60,
+        f"Generated: {now.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Story    : {diagnosis['story'] or 'Unknown'}",
+        f"Total entries in report: {total_entries}",
+        "-" * 60,
+        f"Correctly parsed by original: {len(parsed_ok)}",
+        f"Failed original parse:        {len(failed_parse)}",
+        f"Deep extractor can fix:       {len(corrected)}",
+        f"Actually missing (confirmed):  {actually_missing}",
+        "=" * 60,
+        "FILES THAT DEEP SCAN RECOVERED (were NOT missing):",
+        "-" * 60,
+    ]
+    for e in corrected:
+        sug = e["suggested_ep"]
+        full_report_lines.append(f"  MsgID {e['msg_id']:>10}  |  {e['filename'][:60]}  |  Ep {sug[0]}–{sug[1]}")
+
+    full_report_lines += ["", "=" * 60, "TRULY UNPARSEABLE FILES (no ep number at all):", "-" * 60]
+    for e in failed_parse:
+        if not e.get("suggested_ep"):
+            full_report_lines.append(f"  MsgID {e['msg_id']:>10}  |  {e['filename'][:60]}")
+
+    report_bytes_out.write("\n".join(full_report_lines).encode('utf-8'))
+    report_bytes_out.seek(0)
+    report_bytes_out.name = f"deep_scan_{diagnosis['story'] or 'report'}_{now.strftime('%Y%m%d_%H%M')}.txt"
+
+    final_txt = "\n".join(lines_out)
+    try:
+        await sts.edit_text(final_txt)
+    except Exception:
+        await bot.send_message(uid, final_txt)
+
+    await bot.send_document(uid, report_bytes_out, caption="📎 Full deep scan correction report", file_name=report_bytes_out.name)
