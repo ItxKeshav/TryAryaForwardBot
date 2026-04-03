@@ -399,19 +399,15 @@ async def settings_query(bot, query):
       if not bt: return await query.answer("Bot not found!")
 
       buttons = [
-          # ─── Welcome & About (grouped) ───────────────────────────
-          [
-              InlineKeyboardButton('Wᴇʟᴄᴏᴍᴇ & Aʙᴏᴜᴛ', callback_data=f"settings#sb_wa_{b_id}"),
-          ],
-          # ─── Other messages ───────────────────────────────────────
+          [InlineKeyboardButton('Wᴇʟᴄᴏᴍᴇ & Aʙᴏᴜᴛ', callback_data=f"settings#sb_wa_{b_id}")],
           [
               InlineKeyboardButton('Dᴇʟᴇᴛᴇ Msɢ',      callback_data=f"settings#sb_set_delete_{b_id}"),
               InlineKeyboardButton('Sᴜᴄᴄᴇss Msɢ',    callback_data=f"settings#sb_set_success_{b_id}"),
           ],
           [InlineKeyboardButton('Cᴜsᴛᴏᴍ Cᴀᴘᴛɪᴏɴ',    callback_data=f"settings#sb_set_caption_{b_id}")],
-          # ─── Bot controls ─────────────────────────────────────────
           [InlineKeyboardButton('Aᴜᴛᴏ-Dᴇʟᴇᴛᴇ', callback_data=f"settings#sb_set_autodel_{b_id}"),
            InlineKeyboardButton('Fᴏʀᴄᴇ Sᴜʙsᴄʀɪʙᴇ',  callback_data=f"settings#sb_fsub_{b_id}")],
+          [InlineKeyboardButton('🎞 Fᴇᴛᴄʜɪɴɢ Mᴇᴅɪᴀ', callback_data=f"settings#sb_fetch_media_{b_id}")],
           [
               InlineKeyboardButton('Sᴛᴀᴛs',           callback_data=f"settings#sb_stats_{b_id}"),
               InlineKeyboardButton('Bʀᴏᴀᴅᴄᴀsᴛ',       callback_data=f"settings#sb_broadcast_{b_id}")
@@ -605,6 +601,70 @@ async def settings_query(bot, query):
           await ask.edit_text(
               "Timeout.",
               reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_menu_mgr_{b_id}")]])
+          )
+
+  elif type.startswith("sb_fetch_media_"):
+      b_id = type.split("sb_fetch_media_")[1]
+      existing = await db.get_bot_fetching_media(b_id)
+      existing_type = existing.get('media_type', '') if existing else ''
+      status_str = f"Currently set: <b>{existing_type}</b>" if existing else "<i>Not configured — text only</i>"
+
+      await query.message.delete()
+      ask = await bot.send_message(
+          user_id,
+          f"<b>🎞 Fetching Media</b>\n\n"
+          f"{status_str}\n\n"
+          "Send a <b>GIF, Photo, or short Video</b> (max ~5 seconds) to show while\n"
+          "files are being delivered to the user.\n\n"
+          "Send <code>/clear</code> to remove it.\n"
+          "Send <code>/cancel</code> to abort."
+      )
+      try:
+          resp = await bot.listen(chat_id=user_id, timeout=120)
+
+          if getattr(resp, 'text', None) and '/cancel' in str(resp.text).lower():
+              await resp.delete()
+              return await ask.edit_text(
+                  "<i>Process Cancelled Successfully!</i>",
+                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")]])
+              )
+
+          if getattr(resp, 'text', None) and '/clear' in resp.text.strip().lower():
+              await db.clear_bot_fetching_media(b_id)
+              await resp.delete()
+              return await ask.edit_text(
+                  "✅ Fetching media removed. Text-only mode restored.",
+                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")]])
+              )
+
+          # Detect media type
+          if resp.animation:
+              file_id = resp.animation.file_id
+              media_type = 'animation'
+          elif resp.video and resp.video.duration <= 10:
+              file_id = resp.video.file_id
+              media_type = 'video'
+          elif resp.photo:
+              file_id = resp.photo.file_id
+              media_type = 'photo'
+          else:
+              await resp.delete()
+              return await ask.edit_text(
+                  "❌ Please send a GIF, Photo, or short Video (max 10s).",
+                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")]])
+              )
+
+          await db.set_bot_fetching_media(b_id, file_id, media_type)
+          await resp.delete()
+          await ask.edit_text(
+              f"✅ Fetching media set! Type: <b>{media_type}</b>\n"
+              f"Users will see this when receiving files.",
+              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")]])
+          )
+      except asyncio.TimeoutError:
+          await ask.edit_text(
+              "Timeout.",
+              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")]])
           )
 
   elif type.startswith("sb_set_welcome_"):

@@ -291,12 +291,25 @@ async def _process_start(client, message):
     dl_id = f"{user_id}_{uuid_str}"
     active_downloads.add(dl_id)
 
-    sts = await message.reply_text(
-        "<i>»  Fᴇᴛᴄʜɪɴɢ ʏᴏᴜʀ ꜰɪʟᴇs sᴇᴄᴜʀᴇʟʏ, ᴘʟᴇᴀsᴇ ᴡᴀɪᴛ...</i>",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("Cᴀɴᴄᴇʟ", callback_data=f"cancel_dl_{uuid_str}")
-        ]])
-    )
+    # Issue 4: Show configurable fetching media (GIF/image/video) or fallback to text
+    fetching_media = await db.get_bot_fetching_media(bot_id) if bot_id else {}
+    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("Cᴀɴᴄᴇʟ", callback_data=f"cancel_dl_{uuid_str}")]])
+    fetch_text = "<i>»  Fᴇᴛᴄʜɪɴɢ ʏᴏᴜʀ ꜰɪʟᴇs sᴇᴄᴜʀᴇʟʏ, ᴘʟᴇᴀsᴇ ᴡᴀɪᴛ...</i>"
+    sts = None
+    if fetching_media and fetching_media.get('file_id'):
+        fid  = fetching_media['file_id']
+        ftyp = fetching_media.get('media_type', 'photo')
+        try:
+            if ftyp == 'animation':
+                sts = await client.send_animation(user_id, animation=fid, caption=fetch_text, reply_markup=cancel_kb)
+            elif ftyp == 'video':
+                sts = await client.send_video(user_id, video=fid, caption=fetch_text, reply_markup=cancel_kb)
+            else:
+                sts = await client.send_photo(user_id, photo=fid, caption=fetch_text, reply_markup=cancel_kb)
+        except Exception as _fe:
+            logger.warning(f"[Fetch] Media send failed ({_fe}), falling back to text")
+    if sts is None:
+        sts = await message.reply_text(fetch_text, reply_markup=cancel_kb)
 
     sent_ids   = []
     fail_count = 0
@@ -368,6 +381,28 @@ async def _process_start(client, message):
                         f"will auto-delete after 3 hours. "
                         f"To re-access, simply click the same link button again.{fail_note}</i>")
             await message.reply_text(txt)
+
+        # Issue 3: Increment global delivery counter + send Thank-You message
+        if bot_id:
+            await db.increment_bot_delivery_count(bot_id, total)
+        prev_total = await db.get_bot_delivery_count(bot_id) if bot_id else total
+        grand_total = prev_total  # already incremented above
+        u_name = message.from_user.first_name or "you"
+        thank_txt = (
+            f"{_get_base_header(message.from_user)}"
+            f"<b>»  {_sc('Thank you for using us!')}</b>\n\n"
+            f"‣  {_sc('Your')} <b>{total}</b> {_sc('files are included,')}"
+            f" {_sc('making a total of')} <b>{grand_total:,}</b> {_sc('files delivered so far')} 🎉\n\n"
+            f"<i>{_sc('Come back anytime — your link buttons never expire!')}\n"
+            f"{_sc('Simply tap the same link button again to re-access your files.')}</i>"
+        )
+        donate_btn = InlineKeyboardMarkup([[
+            InlineKeyboardButton("❤️  " + _sc("Support Us"), url="https://razorpay.me/@SusJeetX")
+        ]])
+        try:
+            await message.reply_text(thank_txt, reply_markup=donate_btn)
+        except Exception as _te:
+            logger.warning(f"[ThankYou] send failed: {_te}")
 
     except Exception as e:
         active_downloads.discard(dl_id)
