@@ -32,6 +32,7 @@ from pyrogram.types import (
 
 logger = logging.getLogger(__name__)
 _CLIENT = CLIENT()
+from plugins.job_queue import AryaJobQueue
 
 #  In-memory task registry 
 _mj_tasks:  dict[str, asyncio.Task]  = {}
@@ -297,6 +298,7 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
     pause_ev = _mj_paused[job_id]
 
     client = None
+    _mj_queue_acquired = False
     try:
         acc = await db.get_bot(user_id, job["account_id"])
         if not acc:
@@ -305,6 +307,23 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
 
         client  = await start_clone_bot(_CLIENT.client(acc))
         is_bot  = acc.get("is_bot", True)
+
+        # ── Queue system: limit concurrent Multi Jobs ─────────────────────────
+        pos = await AryaJobQueue.acquire(job_id, "multijob")
+        _mj_queue_acquired = True
+        if pos > 0 and bot:
+            try:
+                await bot.send_message(user_id,
+                    f"⏳ <b>Multi Job Queued</b>\n\n"
+                    f"All {AryaJobQueue.max_slots('multijob')} Multi Job slots are busy.\n"
+                    f"Job <code>[{job_id[-6:]}]</code> will start automatically at position #{pos}.\n"
+                    f"You can close Telegram; it runs in the background.")
+            except Exception: pass
+            # Now we hold the slot — notify start
+            try:
+                await bot.send_message(user_id,
+                    f"▶️ Multi Job <code>[{job_id[-6:]}]</code> now has a slot and is starting.")
+            except Exception: pass
 
         from_chat   = job["from_chat"]
         to_chat     = job["to_chat"]
@@ -669,8 +688,11 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
                 
                 await asyncio.sleep(sleep_secs)
 
-            # Advance cursor
-            current = valid[-1].id + 1
+            # Advance cursor — guard against valid being empty after topic-filter
+            if valid:
+                current = valid[-1].id + 1
+            else:
+                current += BATCH_SIZE  # skip the batch that had no topic-matching msgs
             await _mj_update(job_id, current_id=current)
 
             #  Update destination progress bar (every 10s) 
@@ -712,6 +734,8 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
     finally:
         _mj_tasks.pop(job_id, None)
         _mj_paused.pop(job_id, None)
+        if _mj_queue_acquired:
+            AryaJobQueue.release(job_id, "multijob")
         if client:
             try: await client.stop()
             except Exception: pass

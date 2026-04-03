@@ -37,7 +37,14 @@ _CLIENT = CLIENT()
 _mg_tasks: dict[str, asyncio.Task] = {}
 _mg_paused: dict[str, asyncio.Event] = {}
 _mg_waiter: dict[int, asyncio.Future] = {}
-_mg_global_lock = asyncio.Lock()
+
+# ─── Global concurrency queue ─────────────────────────────────────────────────
+# All merger jobs share this semaphore.  Only MAX_CONCURRENT_MERGES jobs
+# actually RUN at once; additional jobs are automatically QUEUED and started
+# the moment a slot frees up.  Shared with Live/Multi Job via AryaJobQueue.
+MAX_CONCURRENT_MERGES = 1   # keep at 1 — merges are extremely CPU+RAM heavy
+_mg_semaphore = asyncio.Semaphore(MAX_CONCURRENT_MERGES)
+_mg_global_lock = asyncio.Lock()  # kept for backward compat
 
 
 # ─── Future-based ask ────────────────────────────────────────────────────────
@@ -721,6 +728,7 @@ async def _run_job(jid, uid, bot):
     client = None
     wdir = f"merge_tmp/{jid}"
     os.makedirs(wdir, exist_ok=True)
+    _sem_acquired = False  # Track semaphore for release in finally
 
     try:
         acc = await db.get_bot(uid, job["account_id"])
@@ -741,11 +749,31 @@ async def _run_job(jid, uid, bot):
 
         await _db_up(jid, status="queued", error="", created_at=time.time())
 
-        # ── Global queue: only 1 merge running at a time ──
-        async with _mg_global_lock:
-            fresh = await _db_get(jid)
-            if not fresh or fresh.get("status") in ("stopped", "paused"): return
-            await _db_up(jid, status="scanning", error="")
+        # ── Semaphore queue: notify user of position, then wait ───────────────
+        if _mg_semaphore._value == 0:   # all slots busy
+            queue_pos = max(1, len(_mg_tasks))  # rough position estimate
+            try:
+                await bot.send_message(uid,
+                    f"⏳ <b>Merger Queue</b>\n\n"
+                    f"All merge slot(s) are busy (max {MAX_CONCURRENT_MERGES} at once).\n"
+                    f"Your job <code>[{jid[-6:]}]</code> is <b>queued at position #{queue_pos}</b>.\n"
+                    f"It will start automatically when a slot frees up. "
+                    f"You can freely close Telegram; the job will run in the background.")
+            except Exception: pass
+
+        # Acquire semaphore — blocks until a slot is free
+        await _mg_semaphore.acquire()
+        _sem_acquired = True
+
+        fresh = await _db_get(jid)
+        if not fresh or fresh.get("status") in ("stopped", "paused"):
+            return  # semaphore released in finally
+        # Notify user their job is now starting (if it was queued)
+        try:
+            await bot.send_message(uid,
+                f"▶️ <b>Merger Starting</b> — Job <code>[{jid[-6:]}]</code> now has a slot and is beginning.")
+        except Exception: pass
+        await _db_up(jid, status="scanning", error="")
 
         # ══════════════════════════════════════════════════════════════════
         # PHASE 0 — Pre-download size scan
@@ -922,25 +950,51 @@ async def _run_job(jid, uid, bot):
                 dlp = os.path.join(chunk_dir, seq_name)
 
                 fp = None
-                for att in range(10):  # increased retries
+                MAX_DL_RETRIES = 15  # extra retries for CDN-empty-file bug
+                for att in range(MAX_DL_RETRIES):
+                    # Use a fresh temp path every attempt to work around
+                    # Telegram CDN serving a cached empty/corrupt file
+                    temp_dlp = dlp if att == 0 else dlp.replace(ext, f"_r{att}{ext}")
                     try:
-                        fp = await client.download_media(msg, file_name=dlp)
+                        fp = await client.download_media(msg, file_name=temp_dlp)
                         if fp and os.path.exists(fp):
-                            if os.path.getsize(fp) > 0:
+                            fsz_check = os.path.getsize(fp)
+                            if fsz_check > 100:   # ≥100 bytes = real file
+                                # Rename back to canonical path
+                                if fp != dlp:
+                                    try:
+                                        os.replace(fp, dlp)
+                                        fp = dlp
+                                    except Exception: pass
                                 break
                             else:
+                                # CDN returned empty/tiny file — remove and retry
+                                logger.warning(f"[MG {jid}] Attempt {att+1}: {os.path.basename(fp)} is {fsz_check}B, retrying (CDN cache miss)")
                                 try: os.remove(fp)
                                 except Exception: pass
                                 fp = None
-                    except FloodWait as fw: await asyncio.sleep(fw.value + 2)
+                                # Progressive back-off: 3s, 6s, 12s...
+                                await asyncio.sleep(min(3 * (att + 1), 30))
+                    except FloodWait as fw:
+                        await asyncio.sleep(fw.value + 2)
                     except Exception as e:
-                        if "Timeout" in str(e) or "Connection" in str(e) or "Read" in str(e) or "MessageNotModified" in str(e):
-                            if att < 9: await asyncio.sleep(3); continue
-                        break
-                
-                if not fp or not os.path.exists(fp):
-                    await _db_up(jid, status="error", error=f"Failed to download media for episode {global_seq+1} (msg {msg.id}).")
-                    try: await bot.send_message(uid, f"<b>❌ Fatal Error:</b> Could not download message {msg.id} after 10 attempts! Aborting merge to prevent gaps.")
+                        estr = str(e)
+                        if any(k in estr for k in ("Timeout", "Connection", "Read", "MessageNotModified", "reset")):
+                            await asyncio.sleep(min(3 * (att + 1), 30))
+                        else:
+                            logger.error(f"[MG {jid}] Download error msg {msg.id}: {e}")
+                            if att >= 5: break  # give up on non-transient errors sooner
+
+                if not fp or not os.path.exists(fp) or os.path.getsize(fp) < 100:
+                    await _db_up(jid, status="error",
+                        error=f"Failed to download media for file #{global_seq+1} (msg {msg.id}) after {MAX_DL_RETRIES} attempts.")
+                    try:
+                        await bot.send_message(uid,
+                            f"<b>❌ Fatal Download Error</b>\n\n"
+                            f"Could not download message <code>{msg.id}</code> "
+                            f"after {MAX_DL_RETRIES} attempts (including CDN retry).\n"
+                            f"The file may have been deleted from Telegram or the source channel.\n\n"
+                            f"Aborting to prevent gaps in the merged output.")
                     except: pass
                     return
                 
@@ -1341,6 +1395,9 @@ async def _run_job(jid, uid, bot):
     finally:
         _mg_tasks.pop(jid, None)
         _mg_paused.pop(jid, None)
+        if _sem_acquired:
+            try: _mg_semaphore.release()
+            except Exception: pass
         try:
             if os.path.exists(wdir):
                 fresh = await _db_get(jid)
