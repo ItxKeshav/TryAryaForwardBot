@@ -146,6 +146,14 @@ async def main():
     # Start stats tracking task
     asyncio.create_task(stats_tracker())
 
+    # Start system resource monitor (auto-pause on RAM/CPU overload)
+    try:
+        from plugins.sysmon import start_monitor
+        start_monitor(bot)
+        logging.info("System resource monitor started.")
+    except Exception as e:
+        logging.warning(f"Could not start system monitor: {e}")
+
     await idle()
     try:
         from plugins.share_bot import share_clients
