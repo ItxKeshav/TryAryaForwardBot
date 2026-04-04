@@ -278,12 +278,12 @@ async def enhance_offer_handler(bot, message: Message):
             return  # not an image
 
     await message.reply_text(
-        "<b>✨ AI Image Enhancer</b>\n\n"
+        "<b>A I  I ᴍ ᴀ ɢ ᴇ  E ɴ ʜ ᴀ ɴ ᴄ ᴇ ʀ</b>\n\n"
         f"Upscale this image using <b>{MODELS[cfg.get('model','esrgan')]['name']}</b> "
         f"at <b>{cfg.get('scale', 2)}x</b> quality?\n\n"
         "<i>Tap the button below to start. Processing takes ~30–60 seconds.</i>",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✨ Enhance Image", callback_data="enh#do")]
+            [InlineKeyboardButton("A I  E ɴ ʜ ᴀ ɴ ᴄ ᴇ", callback_data="enh#do")]
         ]),
         quote=True,
     )

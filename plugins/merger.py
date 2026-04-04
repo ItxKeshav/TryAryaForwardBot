@@ -969,7 +969,21 @@ async def _run_job(jid, uid, bot):
                         fp = await client.download_media(target_msg, file_name=temp_dlp)
                         if fp and os.path.exists(fp):
                             fsz_check = os.path.getsize(fp)
-                            if fsz_check > 100:   # ≥100 bytes = real file
+                            expected_sz = getattr(media_obj, 'file_size', 0)
+                            
+                            is_valid = fsz_check > 100
+                            # Prevent silent partial download drops
+                            if expected_sz > 0 and fsz_check < expected_sz:
+                                is_valid = False
+                                
+                            # Prevent FFmpeg "moov atom not found" corrupt headers
+                            if is_valid:
+                                p_info = _probe(fp)
+                                if not p_info.get("codec"):
+                                    logger.warning(f"[MG {jid}] Chunk {att+1} corrupted (ffprobe failed).")
+                                    is_valid = False
+
+                            if is_valid:
                                 # Rename back to canonical path
                                 if fp != dlp:
                                     try:
@@ -978,8 +992,8 @@ async def _run_job(jid, uid, bot):
                                     except Exception: pass
                                 break
                             else:
-                                # CDN returned empty/tiny file — remove and retry
-                                logger.warning(f"[MG {jid}] Attempt {att+1}: {os.path.basename(fp)} is {fsz_check}B, retrying (CDN cache miss)")
+                                # CDN returned empty/tiny/corrupt file — remove and retry
+                                logger.warning(f"[MG {jid}] Attempt {att+1}: {os.path.basename(fp)} is {fsz_check}B / {expected_sz}B, retrying (Corrupt/Partial)")
                                 try: os.remove(fp)
                                 except Exception: pass
                                 fp = None

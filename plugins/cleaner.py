@@ -20,7 +20,7 @@ from pyrogram import Client, filters, ContinuePropagation
 from pyrogram.errors import FloodWait
 from pyrogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove,
-    Message, CallbackQuery
+    Message, CallbackQuery, ReplyKeyboardMarkup
 )
 
 logger = logging.getLogger(__name__)
@@ -309,6 +309,19 @@ async def _cl_run_job(job_id: str):
             else:
                 # Finished entirely
                 await _cl_update_job(job_id, {"status": "completed", "error": ""})
+                
+                # Send Final Report
+                try:
+                    await _CLIENT.send_message(
+                        uid,
+                        f"<b>🎉 Cʟᴇᴀɴᴇʀ Jᴏʙ Cᴏᴍᴘʟᴇᴛᴇᴅ!</b>\n\n"
+                        f"<b>🧹 Jᴏʙ Nᴀᴍᴇ:</b> {base_name}\n"
+                        f"<b>📄 Fɪʟᴇs Cʟᴇᴀɴᴇᴅ & Rᴇɴᴀᴍᴇᴅ:</b> {done} / {job.get('total_files', 0)}\n"
+                        f"<b>🎯 Rᴀɴɢᴇ Cᴏᴠᴇʀᴇᴅ:</b> <code>{base_name} {job.get('starting_number')}</code> ➠ <code>{base_name} {curr_num - 1}</code>\n\n"
+                        f"<i>All files successfully scrubbed of corruption, re-encoded (128kbps), metadata sanitized, and uploaded.</i>"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send cleaner report: {e}")
             
             try:
                 if os.path.exists(local_cover): os.remove(local_cover)
@@ -386,32 +399,60 @@ async def _cl_callbacks(bot, update: CallbackQuery):
     elif action == "new":
         await update.message.edit_reply_markup(None)
         
-        # 1. Ask Source
-        from_chat = dest_chat = None
-        m1 = await bot.send_message(uid, "<b>Step 1:</b> Send Start Message Link for Audio sequence:")
-        try:
-            r1 = await _cl_ask(bot, uid, 120); start_ch, sid = _parse_link(r1.text)
-            r1d = await _cl_ask(bot, uid, "Send End Message Link:"); end_ch, eid = _parse_link(r1d.text)
-            if start_ch != end_ch or not sid or not eid:
-                return await bot.send_message(uid, "Invalid links. Must be from same chat.")
-            from_chat, sid, eid = start_ch, min(sid, eid), max(sid, eid)
-        except: return await bot.send_message(uid, "Timeout.")
+        # Step 1: Account
+        accounts = await db.get_bots(uid)
+        if not accounts:
+            return await bot.send_message(uid, "<b>❌ No accounts found. Add one in /settings.</b>")
+            
+        kb = [[f"{'🤖' if a.get('is_bot',True) else '👤'} {a['name']}"] for a in accounts]
+        kb.append(["❌ Cancel"])
+        m1 = await _cl_ask(bot, uid, "<b>🧹 New Cleaner Job</b>\n\n<b>Step 1/6:</b> Select account to read from:", 
+                           reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
+        if not m1.text or any(x in m1.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']):
+            return await bot.send_message(uid, "<i>Process Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
+            
+        sel_name = m1.text.split(" ", 1)[1] if " " in m1.text else m1.text
+        acc = next((a for a in accounts if a["name"] == sel_name), None)
+        if not acc: return await bot.send_message(uid, "<b>❌ Invalid account.</b>", reply_markup=ReplyKeyboardRemove())
+        acc_id = acc["session_string"] if not acc.get('is_bot') else acc["bot_token"]
 
-        # 2. Ask Dest
-        try:
-            r2 = await _cl_ask(bot, uid, "<b>Step 2:</b> Send Destination Chat ID or Link:")
-            dest_ch, _ = _parse_link(r2.text)
-            if not dest_ch: dest_ch = int(r2.text) if r2.text.strip().lstrip("-").isdigit() else r2.text.strip()
-            dest_chat = dest_ch
-        except: return await bot.send_message(uid, "Timeout.")
+        # Step 2: Start link
+        m2 = await _cl_ask(bot, uid, "<b>Step 2/6:</b> Send <b>start message link</b> of the files to clean:", reply_markup=ReplyKeyboardRemove())
+        if not m2.text or any(x in m2.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']): return await bot.send_message(uid, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
+        from_chat, sid = _parse_link(m2.text)
+        
+        # Step 3: End link
+        m3 = await _cl_ask(bot, uid, "<b>Step 3/6:</b> Send <b>end message link</b>:")
+        if not m3.text or any(x in m3.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']): return await bot.send_message(uid, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
+        _, eid = _parse_link(m3.text)
+        if sid > eid: sid, eid = eid, sid
 
-        # 3. Base Name & Number
-        try:
-            r3 = await _cl_ask(bot, uid, "<b>Step 3:</b> Send Base Name\n(e.g. `Bhagavad Gita` -> becomes `Bhagavad Gita 1.mp3`)")
-            base_name = r3.text.strip()
-            r4 = await _cl_ask(bot, uid, "<b>Step 4:</b> Starting Number? (Send `1` or `101` etc.)")
-            start_num = int(r4.text.strip())
-        except: return await bot.send_message(uid, "Timeout or invalid number.")
+        # Step 4: Destination
+        channels = await db.get_user_channels(uid)
+        dest_chat = None
+        if channels:
+            ch_kb = [[f"📢 {ch['title']}"] for ch in channels]
+            ch_kb.append(["⏭ Skip (DM only)"]); ch_kb.append(["❌ Cancel"])
+            m4 = await _cl_ask(bot, uid, f"<b>Step 4/6:</b> Select destination channel:", 
+                               reply_markup=ReplyKeyboardMarkup(ch_kb, resize_keyboard=True, one_time_keyboard=True))
+            if not m4.text or any(x in m4.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']): return await bot.send_message(uid, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
+            if "Skip" not in m4.text:
+                title = m4.text.replace("📢 ","").strip()
+                ch = next((c for c in channels if c["title"] == title), None)
+                if ch: dest_chat = int(ch["chat_id"])
+        if not dest_chat:
+            await bot.send_message(uid, "<b>Step 4/6:</b> Sending to DM.", reply_markup=ReplyKeyboardRemove())
+            dest_chat = uid
+
+        # Step 5: Base Name
+        m5 = await _cl_ask(bot, uid, "<b>Step 5/6:</b> Send <b>Base Name</b> for the files\n<i>(e.g., Send `Saaya` -> outputs `Saaya 1.mp3`)</i>", reply_markup=ReplyKeyboardRemove())
+        if not m5.text or any(x in m5.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']): return await bot.send_message(uid, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
+        base_name = re.sub(r'[<>:"/\\|?*]', '_', m5.text.strip())
+
+        # Step 6: Start Num
+        m6 = await _cl_ask(bot, uid, "<b>Step 6/6:</b> Send <b>Starting Number</b> (e.g., `1` or `201`)")
+        if not m6.text or any(x in m6.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']): return await bot.send_message(uid, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
+        start_num = int(m6.text.strip())
 
         df = await _cl_get_defaults(uid)
         
@@ -425,7 +466,7 @@ async def _cl_callbacks(bot, update: CallbackQuery):
             "artist": df.get('artist', 'Arya Audio'),
             "year": df.get('year', ''),
             "cover_file_id": df.get('cover', ''),
-            "account_id": "bot"
+            "account_id": acc.get("id") or acc_id
         }
         await _cl_save_job(job)
         
