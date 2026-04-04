@@ -318,19 +318,14 @@ async def _process_start(client, message):
                 )
             logger.info(f"[Fetch] Sent {ftyp} to user {user_id} via bot {bot_id}")
         except Exception as _fe:
-            # Log the exact error so we know WHY it failed (bad file_id, wrong bot, etc.)
+            # Log the exact error so we know WHY it failed
             logger.warning(
                 f"[Fetch] Media send FAILED for bot={bot_id} user={user_id} "
                 f"type={ftyp} file_id={fid[:30]}... error: {_fe}"
             )
-            # If it's a bad file_id, clear the stored media so it doesn't keep failing
-            err_str = str(_fe).upper()
-            if any(k in err_str for k in ("FILE_REFERENCE_EXPIRED", "FILE_ID_INVALID", "MEDIA_EMPTY")):
-                logger.warning(f"[Fetch] Clearing broken fetching media for bot {bot_id}")
-                try:
-                    from database import db as _db
-                    await _db.clear_bot_fetching_media(bot_id)
-                except Exception: pass
+            # Do NOT clear the DB — just fall back to text for this request.
+            # File references can expire; the admin can re-upload to refresh.
+            sts = None
 
     if sts is None:
         # Fallback: plain text status

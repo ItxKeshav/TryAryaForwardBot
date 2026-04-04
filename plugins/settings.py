@@ -1857,18 +1857,11 @@ async def main_buttons(user_id=None):
            InlineKeyboardButton('Cʜᴀɴɴᴇʟs',
                         callback_data='settings#channels')
            ],[
-           InlineKeyboardButton('Cᴀᴘᴛɪᴏɴ',
-                        callback_data='settings#caption'),
-           InlineKeyboardButton('️ Mᴏɴɢᴏᴅʙ',
-                        callback_data='settings#database')
-           ],[
            InlineKeyboardButton('Fɪʟᴛᴇʀs',
                         callback_data='settings#filters'),
-           InlineKeyboardButton('️ Bᴜᴛᴛᴏɴs',
-                        callback_data='settings#button')
-           ],[
            InlineKeyboardButton('Exᴛʀᴀ Sᴇᴛᴛɪɴɢs',
-                        callback_data='settings#nextfilters'),
+                        callback_data='settings#nextfilters')
+           ],[
            InlineKeyboardButton('EN/हि',
                         callback_data='settings#lang')
            ],[
@@ -2056,6 +2049,11 @@ async def next_filters_buttons(user_id):
        ],[
        InlineKeyboardButton('️ Kᴇʏᴡᴏʀᴅs ️',
                     callback_data='settings#get_keyword')
+       ],[
+       InlineKeyboardButton('️ Bᴜᴛᴛᴏɴs',
+                    callback_data='settings#button'),
+       InlineKeyboardButton('️ Mᴏɴɢᴏᴅʙ',
+                    callback_data='settings#database')
        ],[
        InlineKeyboardButton('❮ Bᴀᴄᴋ Tᴏ Mᴇɴᴜ', 
                     callback_data="settings#main")
