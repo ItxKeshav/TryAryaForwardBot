@@ -356,12 +356,23 @@ async def _monitor_loop(bot):
             jobs = _count_running_jobs()
             total_active = jobs["mj_active"] + jobs["lj_active"] + jobs["mg_active"]
 
+            avail_gb = snap["ram_avail_gb"]
+
+            # Dynamic Resource Scaling: Ensure local PCs can run faster by relying on actual available RAM
+            is_ram_emer = (r > 98 and avail_gb < 0.2)
+            is_ram_crit = (r > 95 and avail_gb < 0.4)
+            is_ram_warn = (r > 92 and avail_gb < 0.8)
+
+            is_cpu_emer = c >= 98
+            is_cpu_crit = c >= 95
+            is_cpu_warn = c >= 90
+
             # Determine current level
-            if r >= RAM_EMERGENCY or c >= CPU_EMERGENCY:
+            if is_ram_emer or is_cpu_emer:
                 level = "emergency"
-            elif r >= RAM_CRITICAL or c >= CPU_CRITICAL:
+            elif is_ram_crit or is_cpu_crit:
                 level = "critical"
-            elif r >= RAM_WARN or c >= CPU_WARN:
+            elif is_ram_warn or is_cpu_warn:
                 level = "warning"
             else:
                 level = "ok"
@@ -383,14 +394,14 @@ async def _monitor_loop(bot):
                     if level == "warning":
                         # Just warn, no pause — include Stats button so user doesn't need to type
                         txt = (
-                            f"⚠️ <b>System Warning</b>\n\n"
-                            f"🧠 RAM: <code>{r:.1f}%</code>  ⚡ CPU: <code>{c:.1f}%</code>\n\n"
-                            f"The system is under moderate load. "
-                            f"Jobs are still running but watch the load."
+                            f"<b><u>System Load Warning</u></b>\n\n"
+                            f"<b>RAM:</b> <code>{r:.1f}%</code> | <b>CPU:</b> <code>{c:.1f}%</code>\n\n"
+                            f"<i>The system is currently under moderate load. "
+                            f"Background jobs are still running, but please monitor the performance.</i>"
                         )
                         warn_btns = InlineKeyboardMarkup([[
-                            InlineKeyboardButton("📊 Sᴛᴀᴛs", callback_data="sysmon#stats"),
-                            InlineKeyboardButton("🗑 Cʟᴇᴀɴᴜᴘ", callback_data="sysmon#cleanup"),
+                            InlineKeyboardButton("Sᴛᴀᴛs", callback_data="sysmon#stats"),
+                            InlineKeyboardButton("Cʟᴇᴀɴᴜᴘ", callback_data="sysmon#cleanup"),
                         ]])
                         for uid in Config.BOT_OWNER_ID:
                             try: await bot.send_message(uid, txt, reply_markup=warn_btns)
@@ -412,19 +423,18 @@ async def _monitor_loop(bot):
                         )
 
                         txt = (
-                            f"🔴 <b>CRITICAL — Auto-Pause Triggered</b>\n\n"
-                            f"🧠 RAM: <code>{r:.1f}%</code>  ⚡ CPU: <code>{c:.1f}%</code>\n\n"
-                            f"<b>Action taken:</b>\n"
-                            f"• ⏸ Paused <code>{len(mj_p)}</code> Multi Job(s)\n"
-                            f"• ⏸ Paused <code>{len(lj_p)}</code> Live Job(s)\n"
+                            f"<b><u>CRITICAL: Auto-Pause Triggered</u></b>\n\n"
+                            f"<b>RAM:</b> <code>{r:.1f}%</code> | <b>CPU:</b> <code>{c:.1f}%</code>\n\n"
+                            f"<i>Action automatically taken to stabilize system:</i>\n"
+                            f"• Paused <b>{len(mj_p)}</b> Multi Job(s)\n"
+                            f"• Paused <b>{len(lj_p)}</b> Live Job(s)\n"
                             f"• {merger_note}\n\n"
-                            f"All paused jobs are saved at their current position.\n"
-                            f"Use <b>/resumeall</b> to resume when load drops, "
-                            f"or <b>/sysstat</b> for details."
+                            f"<i>All paused jobs are safely bookmarked. "
+                            f"Use <b>/resumeall</b> to seamlessly continue when the load drops.</i>"
                         )
                         btns = InlineKeyboardMarkup([[
-                            InlineKeyboardButton("▶️ Rᴇsᴜᴍᴇ Aʟʟ", callback_data="sysmon#resumeall"),
-                            InlineKeyboardButton("📊 Sᴛᴀᴛs", callback_data="sysmon#stats"),
+                            InlineKeyboardButton("Resume All", callback_data="sysmon#resumeall"),
+                            InlineKeyboardButton("Stats", callback_data="sysmon#stats"),
                         ]])
                         for uid in Config.BOT_OWNER_ID:
                             try: await bot.send_message(uid, txt, reply_markup=btns)
@@ -438,23 +448,22 @@ async def _monitor_loop(bot):
                         mg_p = await _pause_mergers(reason, force_all=True)
 
                         txt = (
-                            f"🚨 <b>EMERGENCY — ALL TASKS PAUSED</b>\n\n"
-                            f"🧠 RAM: <code>{r:.1f}%</code>  ⚡ CPU: <code>{c:.1f}%</code>\n\n"
-                            f"System reached emergency threshold!\n\n"
-                            f"<b>Action taken:</b>\n"
-                            f"• ⏸ Paused <code>{len(mj_p)}</code> Multi Job(s)\n"
-                            f"• ⏸ Paused <code>{len(lj_p)}</code> Live Job(s)\n"
-                            f"• ⏸ Paused <code>{len(mg_p)}</code> Merger(s)\n\n"
-                            f"⚠️ Consider cleaning temp files to free disk/RAM:\n"
-                            f"Use <b>/cleanup</b> to delete temp folders.\n"
-                            f"Use <b>/resumeall</b> once system recovers."
+                            f"<b><u>EMERGENCY: All Tasks Auto-Paused</u></b>\n\n"
+                            f"<b>RAM:</b> <code>{r:.1f}%</code> | <b>CPU:</b> <code>{c:.1f}%</code>\n"
+                            f"<i>System has reached an emergency threshold.</i>\n\n"
+                            f"<i>Action immediately taken:</i>\n"
+                            f"• Paused <b>{len(mj_p)}</b> Multi Job(s)\n"
+                            f"• Paused <b>{len(lj_p)}</b> Live Job(s)\n"
+                            f"• Paused <b>{len(mg_p)}</b> Merger(s)\n\n"
+                            f"<i>You should consider clearing temporary files to free memory. "
+                            f"Use <b>/cleanup</b> to wipe cache, and <b>/resumeall</b> once recovered.</i>"
                         )
                         btns = InlineKeyboardMarkup([
                             [
-                                InlineKeyboardButton("▶️ Rᴇsᴜᴍᴇ Aʟʟ", callback_data="sysmon#resumeall"),
-                                InlineKeyboardButton("🗑 Cʟᴇᴀɴᴜᴘ", callback_data="sysmon#cleanup"),
+                                InlineKeyboardButton("Resume All", callback_data="sysmon#resumeall"),
+                                InlineKeyboardButton("Cleanup Now", callback_data="sysmon#cleanup"),
                             ],
-                            [InlineKeyboardButton("📊 Sᴛᴀᴛs", callback_data="sysmon#stats")],
+                            [InlineKeyboardButton("Stats", callback_data="sysmon#stats")],
                         ])
                         for uid in Config.BOT_OWNER_ID:
                             try: await bot.send_message(uid, txt, reply_markup=btns)

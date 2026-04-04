@@ -439,7 +439,7 @@ async def _process_start(client, message):
             f"</blockquote>"
         )
         donate_btn = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❤️ Support Us / हमें Support करें", url="https://razorpay.me/@SusJeetX")
+            InlineKeyboardButton("❤️  " + _sc("Support Us") + " / हमें Support करें", url="https://razorpay.me/@SusJeetX")
         ]])
         try:
             await message.reply_text(thank_txt, reply_markup=donate_btn)
@@ -604,7 +604,7 @@ async def _process_delivery_button(client, query):
         ]
         markup = InlineKeyboardMarkup(buttons)
         try:
-            if is_photo: await msg.edit_caption(caption=txt, reply_markup=markup)
+            if is_media_msg: await msg.edit_caption(caption=txt, reply_markup=markup)
             else: await msg.edit_text(txt, reply_markup=markup)
         except Exception:
             pass
