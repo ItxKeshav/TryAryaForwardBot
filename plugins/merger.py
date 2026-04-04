@@ -356,18 +356,26 @@ def _probe(fp):
     info = {"type": "audio", "codec": ""}
     try:
         r = subprocess.run(
-            ["ffprobe","-v","quiet","-show_entries","stream=codec_type,codec_name",
+            ["ffprobe","-v","error","-show_entries","stream=codec_type,codec_name",
              "-of","csv=p=0",fp], capture_output=True, text=True, timeout=30)
-        for line in r.stdout.strip().split("\n"):
+        
+        err_out = (r.stderr or "").lower()
+        if "moov atom not found" in err_out or "invalid data" in err_out or "error" in err_out:
+            return info  # Return completely empty if corrupted
+            
+        for line in (r.stdout or "").strip().split("\n"):
             parts = line.strip().split(",")
             if len(parts) >= 2:
                 if parts[1] == "video": info["type"] = "video"; info["codec"] = parts[0]
                 elif parts[1] == "audio" and not info["codec"]: info["codec"] = parts[0]
+                
+        # If successfully executed but no codec found, maybe it's just an unrecognized valid wrapper.
+        # But if it had an error in stderr, we wouldn't reach here.
+        if not info["codec"]:
+            ext = os.path.splitext(fp)[1].lower()
+            if ext in (".mp4",".mkv",".avi",".webm",".mov",".flv",".ts"): info["type"] = "video"
+            info["codec"] = ext.lstrip(".")
     except: pass
-    if not info["codec"]:
-        ext = os.path.splitext(fp)[1].lower()
-        if ext in (".mp4",".mkv",".avi",".webm",".mov",".flv",".ts"): info["type"] = "video"
-        info["codec"] = ext.lstrip(".")
     return info
 
 

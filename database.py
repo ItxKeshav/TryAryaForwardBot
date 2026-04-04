@@ -226,6 +226,14 @@ class Database:
     async def remove_share_bot_config(self, bot_id: str):
         await self.share_config.delete_one({'_id': f'bot_{bot_id}'})
 
+    # ── AI Enhancer Config ──────────────────────────────────────────────────
+    async def get_enhancer_config(self) -> dict:
+        doc = await self.share_config.find_one({'_id': 'ai_enhancer_cfg'})
+        return doc or {}
+
+    async def set_enhancer_config(self, cfg: dict):
+        await self.share_config.update_one({'_id': 'ai_enhancer_cfg'}, {'$set': cfg}, upsert=True)
+
     # ── Channel Index (full file list per database channel) ───────
     async def save_channel_index(self, chat_id: int, entries: list, meta: dict = None):
         """Save (or replace) the full scan index for a channel."""

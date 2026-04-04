@@ -245,12 +245,17 @@ async def _cl_run_job(job_id: str):
                     clean_title = f"{base_name} {curr_num}"
                     clean_file  = f"{clean_title}.mp3"
                     
+                    album_val = job.get("album") or art
+                    year_val = str(job.get("year", yr) or yr or "")
+                    
                     meta = {
                         "title": clean_title,
                         "artist": art,
-                        "album": art,
-                        "year": str(yr) if yr else ""
+                        "album": album_val,
+                        "year": year_val
                     }
+                    if job.get("genre"):
+                        meta["genre"] = str(job.get("genre"))
 
                     # Download
                     in_path  = f"temp_cl_in_{job_id}_{msg_id}.tmp"
@@ -445,17 +450,30 @@ async def _cl_callbacks(bot, update: CallbackQuery):
             dest_chat = uid
 
         # Step 5: Base Name
-        m5 = await _cl_ask(bot, uid, "<b>Step 5/6:</b> Send <b>Base Name</b> for the files\n<i>(e.g., Send `Saaya` -> outputs `Saaya 1.mp3`)</i>", reply_markup=ReplyKeyboardRemove())
+        m5 = await _cl_ask(bot, uid, "<b>Step 5/7:</b> Send <b>Base Name</b> for the files\n<i>(e.g., Send `Saaya` -> outputs `Saaya 1.mp3`)</i>", reply_markup=ReplyKeyboardRemove())
         if not m5.text or any(x in m5.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']): return await bot.send_message(uid, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
         base_name = re.sub(r'[<>:"/\\|?*]', '_', m5.text.strip())
 
-        # Step 6: Start Num
-        m6 = await _cl_ask(bot, uid, "<b>Step 6/6:</b> Send <b>Starting Number</b> (e.g., `1` or `201`)")
+        # Step 6: Advanced Metadata
+        m6 = await _cl_ask(bot, uid, "<b>Step 6/7:</b> Advanced Metadata Configuration.\nSend details in format: <code>Artist | Year | Album | Genre</code>\n\n<i>Or click Skip to use global defaults.</i>", reply_markup=ReplyKeyboardMarkup([["Skip", "⛔ Cᴀɴᴄᴇʟ"]], resize_keyboard=True, one_time_keyboard=True))
         if not m6.text or any(x in m6.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']): return await bot.send_message(uid, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
-        start_num = int(m6.text.strip())
-
-        df = await _cl_get_defaults(uid)
         
+        df = await _cl_get_defaults(uid)
+        adv_artist = df.get('artist', 'Arya Audio')
+        adv_year = df.get('year', '')
+        adv_album = getattr(df, 'get', lambda x,y:y)('album', '')
+        
+        if "Skip" not in m6.text:
+            parts = [p.strip() for p in m6.text.split('|')]
+            if len(parts) > 0 and parts[0]: adv_artist = parts[0]
+            if len(parts) > 1 and parts[1]: adv_year   = parts[1]
+            if len(parts) > 2 and parts[2]: adv_album  = parts[2]
+
+        # Step 7: Start Num
+        m7 = await _cl_ask(bot, uid, "<b>Step 7/7:</b> Send <b>Starting Number</b> (e.g., `1` or `201`)", reply_markup=ReplyKeyboardRemove())
+        if not m7.text or any(x in m7.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']): return await bot.send_message(uid, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
+        start_num = int(m7.text.strip() if m7.text.strip().isdigit() else 1)
+
         job_id = str(uuid.uuid4())
         job = {
             "job_id": job_id, "user_id": uid, "status": "queued",
@@ -463,8 +481,9 @@ async def _cl_callbacks(bot, update: CallbackQuery):
             "start_id": sid, "end_id": eid,
             "total_files": (eid - sid) + 1, "files_done": 0,
             "base_name": base_name, "starting_number": start_num,
-            "artist": df.get('artist', 'Arya Audio'),
-            "year": df.get('year', ''),
+            "artist": adv_artist,
+            "year": adv_year,
+            "album": adv_album,
             "cover_file_id": df.get('cover', ''),
             "account_id": acc.get("id") or acc_id
         }
