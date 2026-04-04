@@ -1373,10 +1373,8 @@ async def cmd_deep_scan_batch(bot, message):
 
     sts = await bot.send_message(uid, "<i>Downloading and analyzing report...</i>")
 
-    import io
     try:
-        buf = io.BytesIO()
-        await bot.download_media(resp, file_name=buf)
+        buf = await bot.download_media(resp, in_memory=True)
         buf.seek(0)
         report_text = buf.read().decode('utf-8', errors='replace')
     except Exception as e:
