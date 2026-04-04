@@ -1133,11 +1133,17 @@ async def _run_job(jid, uid, bot):
                    if not os.path.exists(p) or os.path.getsize(p) == 0]
             if bad:
                 desc = "; ".join(f"{os.path.basename(p)} ({r})" for p, r in bad)
-                emsg = f"Pre-merge check failed — {len(bad)} file(s) not usable: {desc}"
-                logger.error("[MG %s] %s", jid, emsg)
-                await _db_up(jid, status="error", error=emsg)
-                await bot.send_message(uid, f"<b>❌ {emsg}</b>")
-                return
+                emsg = f"Pre-merge check warned — {len(bad)} file(s) not usable: {desc}"
+                logger.warning("[MG %s] %s", jid, emsg)
+                try:
+                    await bot.send_message(uid, f"⚠️ <b>{emsg}</b>\n<i>Skipping these files to prevent crash...</i>")
+                except: pass
+                
+                # Filter out bad files and continue so the 23-hour merge isn't killed
+                chunk_files_sorted = [p for p in chunk_files_sorted if os.path.exists(p) and os.path.getsize(p) > 0]
+                if not chunk_files_sorted:
+                    logger.warning("[MG %s] Chunk %d is completely empty after filtering, skipping chunk.", jid, chunk_num)
+                    continue
 
             # Chunk parts: apply speed chunk-by-chunk to save MASSIVE amounts of RAM
             ok, err = await _ffmpeg_merge(
