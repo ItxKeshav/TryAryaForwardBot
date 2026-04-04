@@ -9,7 +9,6 @@ from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, 
 import database as db
 from config import Config
 from plugins.settings import main_buttons
-from helper.utils import _ask
 
 # Models available on Replicate
 MODELS = {
