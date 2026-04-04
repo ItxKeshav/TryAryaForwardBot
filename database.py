@@ -231,8 +231,8 @@ class Database:
         doc = await self.share_config.find_one({'_id': 'ai_enhancer_cfg'})
         return doc or {}
 
-    async def set_enhancer_config(self, cfg: dict):
-        await self.share_config.update_one({'_id': 'ai_enhancer_cfg'}, {'$set': cfg}, upsert=True)
+    async def update_enhancer_config(self, **kwargs):
+        await self.share_config.update_one({'_id': 'ai_enhancer_cfg'}, {'$set': kwargs}, upsert=True)
 
     # ── Channel Index (full file list per database channel) ───────
     async def save_channel_index(self, chat_id: int, entries: list, meta: dict = None):

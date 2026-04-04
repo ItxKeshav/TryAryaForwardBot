@@ -1872,7 +1872,7 @@ async def main_buttons(user_id=None):
            ],[
            InlineKeyboardButton('Bᴀᴛᴄʜ Lɪɴᴋs Bᴏᴛ Sᴇᴛᴜᴘ',
                         callback_data='settings#sharebot'),
-           InlineKeyboardButton('✨ AI Eɴʜᴀɴᴄᴇʀ',
+           InlineKeyboardButton('A I  E ɴ ʜ ᴀ ɴ ᴄ ᴇ ʀ',
                         callback_data='settings#enhancer')
            ],[
            InlineKeyboardButton('❮ Bᴀᴄᴋ Tᴏ Mᴇɴᴜ', callback_data='back')
