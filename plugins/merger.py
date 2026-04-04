@@ -591,7 +591,7 @@ async def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", co
             # Common video encoding options
             cmd_v += [
                 "-c:v", "libx264", "-preset", "superfast", "-tune", "stillimage",
-                "-c:a", "aac", "-b:a", "192k",
+                "-c:a", "copy",
                 "-movflags", "+faststart", "-shortest",
                 "-max_muxing_queue_size", "4096"
             ]
