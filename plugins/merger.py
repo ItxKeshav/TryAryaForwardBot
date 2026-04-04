@@ -37,6 +37,7 @@ _CLIENT = CLIENT()
 _mg_tasks: dict[str, asyncio.Task] = {}
 _mg_paused: dict[str, asyncio.Event] = {}
 _mg_waiter: dict[int, asyncio.Future] = {}
+_mg_dl_choices: dict[str, str | None] = {}   # key→ "skip"|"retry"|"abort"|None
 
 # ─── Global concurrency queue ─────────────────────────────────────────────────
 # All merger jobs share this semaphore.  Only MAX_CONCURRENT_MERGES jobs
@@ -950,7 +951,7 @@ async def _run_job(jid, uid, bot):
                 dlp = os.path.join(chunk_dir, seq_name)
 
                 fp = None
-                MAX_DL_RETRIES = 15  # extra retries for CDN-empty-file bug
+                MAX_DL_RETRIES = 20  # extra retries for CDN-empty-file bug
                 for att in range(MAX_DL_RETRIES):
                     # Use a fresh temp path every attempt to work around
                     # Telegram CDN serving a cached empty/corrupt file
@@ -986,17 +987,76 @@ async def _run_job(jid, uid, bot):
                             if att >= 5: break  # give up on non-transient errors sooner
 
                 if not fp or not os.path.exists(fp) or os.path.getsize(fp) < 100:
-                    await _db_up(jid, status="error",
-                        error=f"Failed to download media for file #{global_seq+1} (msg {msg.id}) after {MAX_DL_RETRIES} attempts.")
-                    try:
-                        await bot.send_message(uid,
-                            f"<b>❌ Fatal Download Error</b>\n\n"
-                            f"Could not download message <code>{msg.id}</code> "
-                            f"after {MAX_DL_RETRIES} attempts (including CDN retry).\n"
-                            f"The file may have been deleted from Telegram or the source channel.\n\n"
-                            f"Aborting to prevent gaps in the merged output.")
+                    # ── Download failed: ask user SKIP / RETRY / ABORT ─────────────
+                    from pyrogram.types import InlineKeyboardButton as IKB, InlineKeyboardMarkup as IKM
+                    _dl_key = f"mg_dl_choice_{jid}"
+                    _mg_dl_choices.pop(_dl_key, None)
+
+                    err_notice = await bot.send_message(
+                        uid,
+                        f"⚠️ <b>Download Failed — File #{global_seq+1}</b>\n\n"
+                        f"Message ID: <code>{msg.id}</code>\n"
+                        f"Tried <b>{MAX_DL_RETRIES} times</b> — the file may be temporarily unavailable or deleted.\n\n"
+                        f"<b>What would you like to do?</b>\n"
+                        f"• <b>Skip</b> — skip this file and continue the merge\n"
+                        f"• <b>Retry</b> — try downloading again (20 more attempts)\n"
+                        f"• <b>Abort</b> — stop the entire merge job",
+                        reply_markup=IKM([[
+                            IKB("⏭ Sᴋɪᴘ",  callback_data=f"mg_dl#skip#{jid}"),
+                            IKB("🔄 Rᴇᴛʀʏ", callback_data=f"mg_dl#retry#{jid}"),
+                            IKB("⛔ Aʙᴏʀᴛ", callback_data=f"mg_dl#abort#{jid}"),
+                        ]])
+                    )
+
+                    # Wait up to 90s for user choice; default=skip
+                    _mg_dl_choices[_dl_key] = None
+                    for _wi in range(90):
+                        await asyncio.sleep(1)
+                        choice = _mg_dl_choices.get(_dl_key)
+                        if choice is not None:
+                            break
+                    else:
+                        choice = "skip"  # auto-skip after timeout
+                    _mg_dl_choices.pop(_dl_key, None)
+
+                    try: await err_notice.delete()
                     except: pass
-                    return
+
+                    if choice == "abort":
+                        await _db_up(jid, status="error",
+                            error=f"User aborted after download failure on file #{global_seq+1} (msg {msg.id}).")
+                        await bot.send_message(uid, "⛔ <b>Merge Aborted</b> by your request.")
+                        return
+
+                    elif choice == "retry":
+                        # Reset fp and retry the entire download loop again
+                        fp = None
+                        for att2 in range(MAX_DL_RETRIES):
+                            temp_dlp2 = dlp.replace(ext, f"_r2_{att2}{ext}")
+                            try:
+                                fp = await client.download_media(msg, file_name=temp_dlp2)
+                                if fp and os.path.exists(fp) and os.path.getsize(fp) > 100:
+                                    if fp != dlp:
+                                        try: os.replace(fp, dlp); fp = dlp
+                                        except: pass
+                                    break
+                                else:
+                                    if fp and os.path.exists(fp): os.remove(fp)
+                                    fp = None
+                                    await asyncio.sleep(min(3 * (att2 + 1), 30))
+                            except Exception:
+                                await asyncio.sleep(min(3 * (att2 + 1), 30))
+                        if not fp or not os.path.exists(fp) or os.path.getsize(fp) < 100:
+                            await bot.send_message(uid,
+                                f"⚠️ <b>Retry also failed for file #{global_seq+1}</b>. Skipping.")
+                            choice = "skip"
+
+                    if choice == "skip" or (choice == "retry" and (not fp or os.path.getsize(fp) < 100)):
+                        await bot.send_message(uid,
+                            f"⏭ <b>Skipped file #{global_seq+1}</b> (msg {msg.id}).\n"
+                            f"<i>The merge will continue without this file. A gap may exist in the output.</i>")
+                        global_seq += 1
+                        continue  # skip to next file in chunk
                 
                 fsz = os.path.getsize(fp)
                 chunk_bytes += fsz
@@ -2134,3 +2194,25 @@ async def _create_flow(bot, uid, mtype="audio"):
     except Exception as e:
         logger.error(f"[MG create] {e}")
         await bot.send_message(uid, f"<b>❌ Error:</b> <code>{e}</code>", reply_markup=ReplyKeyboardRemove())
+
+
+# ── Download fail choice callback ─────────────────────────────────────────────
+@Client.on_callback_query(filters.regex(r"^mg_dl#(skip|retry|abort)#(.+)"))
+async def mg_dl_choice_cb(bot, query):
+    """Handle the Skip / Retry / Abort choice from the download failure prompt."""
+    import re as _re
+    m = _re.match(r"^mg_dl#(skip|retry|abort)#(.+)", query.data)
+    if not m:
+        return await query.answer()
+    action = m.group(1)   # "skip" | "retry" | "abort"
+    jid    = m.group(2)
+
+    _dl_key = f"mg_dl_choice_{jid}"
+    _mg_dl_choices[_dl_key] = action
+
+    labels = {"skip": "⏭ Skipping file…", "retry": "🔄 Retrying download…", "abort": "⛔ Aborting merge…"}
+    await query.answer(labels.get(action, "Ok"), show_alert=False)
+    try:
+        await query.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass

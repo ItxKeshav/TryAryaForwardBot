@@ -484,11 +484,20 @@ async def _send_welcome(client, message, bot_id: str = None):
 
     try:
         if welcome_img:
-            await client.send_photo(user.id, photo=welcome_img, caption=txt, reply_markup=markup)
+            # Handle new dict format {"file_id": ..., "media_type": ...} vs old string format (photo)
+            wid  = welcome_img.get('file_id') if isinstance(welcome_img, dict) else welcome_img
+            wtyp = welcome_img.get('media_type', 'photo') if isinstance(welcome_img, dict) else 'photo'
+
+            if wtyp == 'animation':
+                await client.send_animation(user.id, animation=wid, caption=txt, reply_markup=markup)
+            elif wtyp == 'video':
+                await client.send_video(user.id, video=wid, caption=txt, reply_markup=markup)
+            else:
+                await client.send_photo(user.id, photo=wid, caption=txt, reply_markup=markup)
         else:
             await message.reply_text(txt, reply_markup=markup)
     except Exception as _wel_err:
-        logger.warning(f"[Welcome] Image send failed ({_wel_err}), falling back to text")
+        logger.warning(f"[Welcome] Media send failed ({_wel_err}), falling back to text")
         try:
             await message.reply_text(txt, reply_markup=markup)
         except Exception:
@@ -546,9 +555,9 @@ async def _send_about(client, query_or_msg, bot_id: str = None, edit: bool = Tru
     buttons = [[InlineKeyboardButton("«  " + _sc("Back"), callback_data="sbd#back")]]
     markup  = InlineKeyboardMarkup(buttons)
 
-    is_photo_msg = bool(getattr(msg, 'photo', None))
+    is_media_msg = bool(getattr(msg, 'photo', None) or getattr(msg, 'animation', None) or getattr(msg, 'video', None))
     try:
-        if is_photo_msg:
+        if is_media_msg:
             await msg.edit_caption(caption=txt, reply_markup=markup)
         else:
             await msg.edit_text(txt, reply_markup=markup,
@@ -561,7 +570,7 @@ async def _process_delivery_button(client, query):
     cmd = query.data.split('#')[1] if '#' in query.data else ''
     bot_id = str(client.me.id) if client.me else None
     msg = query.message
-    is_photo = bool(getattr(msg, 'photo', None))
+    is_media_msg = bool(getattr(msg, 'photo', None) or getattr(msg, 'animation', None) or getattr(msg, 'video', None))
 
     if cmd == "help":
         await query.answer()
@@ -572,13 +581,13 @@ async def _process_delivery_button(client, query):
         ]
         markup = InlineKeyboardMarkup(buttons)
         try:
-            if is_photo: await msg.edit_caption(caption=txt, reply_markup=markup)
+            if is_media_msg: await msg.edit_caption(caption=txt, reply_markup=markup)
             else: await msg.edit_text(txt, reply_markup=markup)
         except Exception: pass
 
     elif cmd == "about":
         await query.answer()
-        await _send_about(client, query, bot_id)
+        await _send_about(client, query, bot_id=bot_id, edit=True)
 
     elif cmd == "back":
         await query.answer()

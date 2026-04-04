@@ -526,7 +526,7 @@ async def settings_query(bot, query):
               await db.set_share_bot_about(b_id, about)
               await resp.delete()
               return await ask.edit_text(
-                  "»  Menu images removed.",
+                  "»  Menu media removed.",
                   reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_menu_mgr_{b_id}")]])
               )
 
@@ -534,26 +534,38 @@ async def settings_query(bot, query):
           if len(about.get('menu_image_ids', [])) >= 10:
               await resp.delete()
               return await ask.edit_text(
-                  "<b>‣  Limit Reached:</b> You can only set up to 10 rotating menu images.\nSend <code>/clear</code> first to reset the list.",
+                  "<b>‣  Limit Reached:</b> You can only set up to 10 rotating menu items.\nSend <code>/clear</code> first to reset the list.",
                   reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_menu_mgr_{b_id}")]])
               )
 
-          photo = resp.photo
-          if not photo:
+          media_obj = None
+          menu_media_type = None
+          if resp.animation:
+              media_obj = resp.animation
+              menu_media_type = 'animation'
+          elif resp.video and resp.video.duration <= 10:
+              media_obj = resp.video
+              menu_media_type = 'video'
+          elif resp.photo:
+              media_obj = resp.photo
+              menu_media_type = 'photo'
+
+          if not media_obj:
               await resp.delete()
               return await ask.edit_text(
-                  "‣  No photo received. Please send an image.",
+                  "‣  Unsupported media. Please send a Photo, GIF, or short Video (≤10s).",
                   reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_menu_mgr_{b_id}")]])
               )
 
-          final_file_id = None
+          final_file_id = media_obj.file_id
           import os
           from pyrogram import Client
           from plugins.share_bot import share_clients
-          
+          from config import Config
+
           sb_client = share_clients.get(str(b_id))
           should_stop = False
-          
+
           if not sb_client:
               bot_info = next((bx for bx in await db.get_bots(user_id) if str(bx['id']) == b_id), None)
               if bot_info:
@@ -565,36 +577,44 @@ async def settings_query(bot, query):
                       sb_client = None
 
           if sb_client:
-              dl_path = await bot.download_media(photo)
+              dl_path = await bot.download_media(resp)
               if dl_path:
                   try:
-                      # Relay photo natively inside bot context!
-                      relay = await sb_client.send_photo(chat_id=user_id, photo=dl_path)
-                      if relay and relay.photo:
-                          final_file_id = relay.photo.file_id
+                      if menu_media_type == 'animation':
+                          relay = await sb_client.send_animation(chat_id=user_id, animation=dl_path)
+                          final_file_id = relay.animation.file_id
+                      elif menu_media_type == 'video':
+                          relay = await sb_client.send_video(chat_id=user_id, video=dl_path)
+                          final_file_id = relay.video.file_id
+                      else:
+                          relay = await sb_client.send_photo(chat_id=user_id, photo=dl_path)
+                          ph = relay.photo
+                          final_file_id = ph.file_id if hasattr(ph, 'file_id') else ph[-1].file_id
                       try: await relay.delete()
                       except Exception: pass
-                  except Exception: pass
+                  except Exception as _re:
+                      logger.warning(f"[MenuImg] relay failed: {_re}")
                   try: os.remove(dl_path)
                   except Exception: pass
-                  
+
           if should_stop and sb_client:
               try: await sb_client.stop()
               except Exception: pass
 
           if not final_file_id:
                await ask.edit_text(
-                   "<b>‣  ERROR:</b> Failed to process image file securely. Ensure the bot token is active.",
+                   "<b>‣  ERROR:</b> Failed to process media file securely. Ensure the bot token is active.",
                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_menu_mgr_{b_id}")]])
                )
                return
 
           about = await db.get_share_bot_about(b_id)
-          about.setdefault('menu_image_ids', []).append(final_file_id)
+          about.setdefault('menu_image_ids', []).append({"file_id": final_file_id, "media_type": menu_media_type})
           await db.set_share_bot_about(b_id, about)
           await resp.delete()
+          type_icon = {"animation": "🎞", "video": "🎬", "photo": "🖼"}.get(menu_media_type, "🖼")
           await ask.edit_text(
-              "»  ✅ Menu image configured successfully!",
+              f"»  ✅ {type_icon} Menu media saved! Type: <b>{menu_media_type}</b>",
               reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_menu_mgr_{b_id}")]])
           )
       except asyncio.TimeoutError:

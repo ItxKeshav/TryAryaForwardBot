@@ -39,7 +39,7 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 # ── Thresholds ─────────────────────────────────────────────────────────────────
-RAM_WARN      = 75   # %
+RAM_WARN      = 80   # %  (was 75 — too aggressive, triggered during normal high use)
 RAM_CRITICAL  = 88   # %
 RAM_EMERGENCY = 95   # %
 CPU_WARN      = 80   # %
@@ -47,7 +47,8 @@ CPU_CRITICAL  = 92   # %
 CPU_EMERGENCY = 97   # %
 
 MONITOR_INTERVAL  = 30   # seconds between each check
-ALERT_COOLDOWN    = 300  # seconds between repeat alerts (avoid spam)
+ALERT_COOLDOWN_WARN  = 1800  # 30 min cooldown for WARNING alerts (moderate load — don't spam)
+ALERT_COOLDOWN_CRIT  = 300   # 5 min cooldown for CRITICAL/EMERGENCY (real problem — act fast)
 
 # ── State ──────────────────────────────────────────────────────────────────────
 _last_alert_ts: dict[str, float] = {}   # level → timestamp
@@ -366,22 +367,33 @@ async def _monitor_loop(bot):
                 level = "ok"
 
             # Only act if we have jobs and can notify
+            if level != "ok":
+                # When system is OK, reset warning cooldown so next spike is fresh
+                pass
+            else:
+                # Level is OK — reset warning cooldown so next flare sends a fresh alert
+                _last_alert_ts.pop("warning", None)
+
             if level != "ok" and total_active > 0:
+                cooldown = ALERT_COOLDOWN_WARN if level == "warning" else ALERT_COOLDOWN_CRIT
                 last = _last_alert_ts.get(level, 0)
-                if now - last >= ALERT_COOLDOWN:
+                if now - last >= cooldown:
                     _last_alert_ts[level] = now
 
                     if level == "warning":
-                        # Just warn, no pause
+                        # Just warn, no pause — include Stats button so user doesn't need to type
                         txt = (
                             f"⚠️ <b>System Warning</b>\n\n"
                             f"🧠 RAM: <code>{r:.1f}%</code>  ⚡ CPU: <code>{c:.1f}%</code>\n\n"
                             f"The system is under moderate load. "
-                            f"Jobs are still running but watch the load.\n"
-                            f"Use /sysstat to see details."
+                            f"Jobs are still running but watch the load."
                         )
+                        warn_btns = InlineKeyboardMarkup([[
+                            InlineKeyboardButton("📊 Sᴛᴀᴛs", callback_data="sysmon#stats"),
+                            InlineKeyboardButton("🗑 Cʟᴇᴀɴᴜᴘ", callback_data="sysmon#cleanup"),
+                        ]])
                         for uid in Config.BOT_OWNER_ID:
-                            try: await bot.send_message(uid, txt)
+                            try: await bot.send_message(uid, txt, reply_markup=warn_btns)
                             except Exception: pass
 
                     elif level == "critical":
