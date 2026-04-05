@@ -653,18 +653,28 @@ async def _process_delivery_button(client, query):
             f"<b>‣  {_sc('amount:')}</b>  {am_txt}\n"
             f"<b>‣  {_sc('upi id:')}</b>  <code>heyjeetx@naviaxis</code>\n"
             f"<b>‣  {_sc('name:')}</b>  Jeetesh Meena\n\n"
-            f"{instruction_txt}\n\n"
-            f"🔗 <a href='{upi_uri}'><b>[ {_sc('tap to open upi app directly')} ]</b></a>"
+            f"{instruction_txt}"
         )
         
-        import urllib.parse
+        import urllib.parse, urllib.request
+        import asyncio
         encoded_uri = urllib.parse.quote(upi_uri)
         qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=500x500&margin=2&data={encoded_uri}"
         
-        # Only put standard HTTP links in Inline Buttons
-        buttons = [
-            [InlineKeyboardButton("🌍 " + _sc("pay via razorpay instead"), url="https://razorpay.me/@SusJeetX")]
-        ]
+        # Bypass Telegram URI block by wrapping intent link through dynamic TinyURL
+        try:
+            loop = asyncio.get_event_loop()
+            t_url = 'https://tinyurl.com/api-create.php?url=' + encoded_uri
+            tiny_link = await loop.run_in_executor(None, lambda: urllib.request.urlopen(t_url, timeout=3).read().decode('utf-8'))
+        except Exception as e:
+            logger.error(f"TinyURL Error: {e}")
+            tiny_link = ""
+            
+        buttons = []
+        if tiny_link and tiny_link.startswith("http"):
+            buttons.append([InlineKeyboardButton("💳 " + _sc("open upi app to pay"), url=tiny_link)])
+            
+        buttons.append([InlineKeyboardButton("🌍 " + _sc("pay via razorpay instead"), url="https://razorpay.me/@SusJeetX")])
         
         try:
             await msg.delete()
