@@ -44,24 +44,38 @@ async def _ai_ask(bot, user_id: int):
 
 def _get_ai_markup(cfg):
     has_key = bool(cfg.get("replicate_key"))
-    key_text = _sc("api key set") if has_key else _sc("api key not set")
-    buttons = [
-        [InlineKeyboardButton(f"🔑 {key_text}", callback_data="ai_set_key")],
-        [InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#main")]
-    ]
+    key_text = _sc("change api key") if has_key else _sc("set api key")
+    is_active = cfg.get("is_active", False)
+    face_enh = cfg.get("face_enhance", False)
+    
+    buttons = []
     if has_key:
-        buttons.insert(0, [InlineKeyboardButton("🗑 Rᴇᴍᴏᴠᴇ Kᴇʏ", callback_data="ai_remove_key")])
+        state_txt = "🟢 ON" if is_active else "🔴 OFF"
+        face_txt = "✅ Face/Blur Fix" if face_enh else "❌ Face/Blur Fix"
+        
+        buttons.append([
+            InlineKeyboardButton(f"Power: {state_txt}", callback_data="ai_toggle_power"),
+            InlineKeyboardButton(f"{face_txt}", callback_data="ai_toggle_face")
+        ])
+        buttons.append([InlineKeyboardButton("🗑 Rᴇᴍᴏᴠᴇ Kᴇʏ", callback_data="ai_remove_key")])
+        
+    buttons.append([InlineKeyboardButton(f"🔑 {key_text}", callback_data="ai_set_key")])
+    buttons.append([InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#main")])
+    
     return InlineKeyboardMarkup(buttons)
 
 def _get_ai_text(cfg):
     has_key = bool(cfg.get("replicate_key"))
-    status = "READY" if has_key else "NOT CONFIGURED"
+    is_active = cfg.get("is_active", False)
+    status_str = "READY / " + ("ON" if is_active else "OFF") if has_key else "NOT CONFIGURED"
+    
     return (
         f"<b>❪ A I   E N H A N C E R ❫</b>\n\n"
-        f"<b>Status:</b> <code>{status}</code>\n\n"
+        f"<b>Status:</b> <code>{status_str}</code>\n\n"
         "This tool uses Replicate's Real-ESRGAN model to upscale and improve the quality of images and covers automatically.\n\n"
+        "<b>Face/Blur Fix Mode:</b> Enable this to turn on pixel restoration and human-like high-quality enhancement.\n\n"
         "<b>How to use:</b>\n"
-        "Once your API key is configured, simply send any image or document directly to the bot in this chat. The bot will automatically intercept it, upscale it, and reply with the enhanced version."
+        "When the power is ON, simply send any image or document directly to the bot in this chat. The bot will automatically intercept it, upscale it, and reply with the enhanced version."
     )
 
 @Client.on_callback_query(filters.regex(r"^settings#enhancer$"))
@@ -69,13 +83,24 @@ async def ai_menu_cb(bot, query: CallbackQuery):
     cfg = await db.get_enhancer_config()
     await query.message.edit_text(_get_ai_text(cfg), reply_markup=_get_ai_markup(cfg))
 
-@Client.on_callback_query(filters.regex(r"^ai_(set_key|remove_key)$"))
+@Client.on_callback_query(filters.regex(r"^ai_(set_key|remove_key|toggle_power|toggle_face)$"))
 async def ai_settings_actions(bot, query: CallbackQuery):
     action = query.data.split("_", 1)[1]
     uid = query.from_user.id
+    cfg = await db.get_enhancer_config()
+    
+    if action == "toggle_power":
+        await db.update_enhancer_config(is_active=not cfg.get("is_active", False))
+        cfg = await db.get_enhancer_config()
+        return await query.message.edit_text(_get_ai_text(cfg), reply_markup=_get_ai_markup(cfg))
+        
+    if action == "toggle_face":
+        await db.update_enhancer_config(face_enhance=not cfg.get("face_enhance", False))
+        cfg = await db.get_enhancer_config()
+        return await query.message.edit_text(_get_ai_text(cfg), reply_markup=_get_ai_markup(cfg))
     
     if action == "remove_key":
-        await db.update_enhancer_config(replicate_key="")
+        await db.update_enhancer_config(replicate_key="", is_active=False)
         cfg = await db.get_enhancer_config()
         return await query.message.edit_text(_get_ai_text(cfg), reply_markup=_get_ai_markup(cfg))
 
@@ -84,7 +109,7 @@ async def ai_settings_actions(bot, query: CallbackQuery):
         try:
             resp = await _ai_ask(bot, uid)
             if resp.text and not resp.text.startswith("/cancel"):
-                await db.update_enhancer_config(replicate_key=resp.text.strip())
+                await db.update_enhancer_config(replicate_key=resp.text.strip(), is_active=True)
                 await resp.delete()
                 await m1.delete()
                 cfg = await db.get_enhancer_config()
@@ -95,18 +120,15 @@ async def ai_settings_actions(bot, query: CallbackQuery):
 
 @Client.on_message(filters.private & (filters.photo | filters.document))
 async def handle_direct_enhance(bot, message: Message):
-    # Only process if API key is configured
+    # Only process if API key is configured AND power is ON
     cfg = await db.get_enhancer_config()
     api_key = cfg.get("replicate_key", "")
-    if not api_key:
+    is_active = cfg.get("is_active", False)
+    if not api_key or not is_active:
         return
         
     uid = message.from_user.id
-    
-    # Do not intercept if user is in the middle of a command flow (like setting a cover)
-    # We check common waiters. Instead of importing them, we'll just check if there's any active reply expectation.
-    # A safe heuristic: if it's a direct bare photo/doc (no caption) or just generally sent.
-    # Well, we'll just process it regardless, but give a "Processing..." message.
+    face_enhance = cfg.get("face_enhance", False)
     
     prog = await message.reply_text("<i>✨ Enhancing media via Replicate...</i>", quote=True)
     try:
@@ -119,15 +141,21 @@ async def handle_direct_enhance(bot, message: Message):
         
         payload = {
             "version": REPLICATE_MODEL_VERSION,
-            "input": {"image": uri, "scale": 2}
+            "input": {
+                "image": uri, 
+                "scale": 2,
+                "face_enhance": face_enhance
+            }
         }
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         
         async with aiohttp.ClientSession() as session:
             async with session.post("https://api.replicate.com/v1/predictions", json=payload, headers=headers) as r:
+                if r.status == 402:
+                    raise Exception("Payment Required (Your Replicate account is out of credits or has billing issues)")
                 if r.status != 201:
                     err = await r.text()
-                    raise Exception(f"API Error {r.status}")
+                    raise Exception(f"API Error {r.status}: {err[:50]}")
                 pred = await r.json()
                 poll_url = pred["urls"]["get"]
                 

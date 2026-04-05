@@ -603,17 +603,48 @@ async def _process_delivery_button(client, query):
         await _send_about(client, query, bot_id=bot_id, edit=True)
 
     elif cmd == "donate":
-        await query.answer("Thank you for considering a donation!", show_alert=True)
-        upi_txt = (
-            "<b>💖 Tʜᴀɴᴋ ʏᴏᴜ ꜰᴏʀ ʏᴏᴜʀ sᴜᴘᴘᴏʀᴛ!</b>\n\n"
-            "<b>💳 UPI ID:</b> <code>heyjeetx@naviaxis</code>\n"
-            "<b>👤 Name:</b> Jeetesh Meena\n\n"
-            "<i>Every contribution helps us maintain our servers and keep delivering amazing stories.</i>"
+        await query.answer()
+        sup_text = (
+            "<b>💖 Cʜᴏᴏsᴇ Sᴜᴘᴘᴏʀᴛ Aᴍᴏᴜɴᴛ ᴏʀ Mᴇᴛʜᴏᴅ</b>\n\n"
+            "Your support keeps our servers running and allows us to deliver uninterrupted, high-quality content.\n\n"
+            "<b>💳 Direct UPI Details:</b>\n"
+            "<b>UPI ID:</b> <code>heyjeetx@naviaxis</code>\n"
+            "<b>Name:</b> Jeetesh Meena"
         )
+        buttons = [
+            [
+                InlineKeyboardButton("💸 ₹50", url="https://razorpay.me/@SusJeetX"),
+                InlineKeyboardButton("💸 ₹100", url="https://razorpay.me/@SusJeetX"),
+                InlineKeyboardButton("💸 ₹500", url="https://razorpay.me/@SusJeetX")
+            ],
+            [
+                InlineKeyboardButton("📱 Support via QR Code", callback_data="sbd#pay_qr")
+            ],
+            [
+                InlineKeyboardButton("💳 Custom Amount (Razorpay)", url="https://razorpay.me/@SusJeetX")
+            ]
+        ]
         try:
-            await client.send_message(query.from_user.id, upi_txt)
+            await client.send_message(query.from_user.id, sup_text, reply_markup=InlineKeyboardMarkup(buttons))
         except Exception:
             pass
+
+    elif cmd == "pay_qr":
+        await query.answer()
+        # Ensure we provide an encoded UPI URI
+        upi_uri = "upi://pay?pa=heyjeetx@naviaxis&pn=Jeetesh%20Meena"
+        import urllib.parse
+        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=500x500&data={urllib.parse.quote(upi_uri)}"
+        caption = (
+            "<b>📱 Sᴄᴀɴ Tᴏ Sᴜᴘᴘᴏʀᴛ</b>\n\n"
+            "Open your camera or any UPI App (GPay, PhonePe, Paytm) to scan this QR code directly.\n\n"
+            "<i>UPI ID: heyjeetx@naviaxis</i>"
+        )
+        try:
+            await client.send_photo(query.from_user.id, photo=qr_url, caption=caption)
+        except Exception as e:
+            logger.error(f"Support QR Error: {e}")
+            await client.send_message(query.from_user.id, caption)
 
     elif cmd == "back":
         await query.answer()
