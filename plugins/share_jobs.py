@@ -1268,7 +1268,6 @@ async def _build_share_links(bot, user_id, sj, info_msg):
 
         if sj.get('live_threshold', 0) > 0:
             try:
-                import uuid, asyncio
                 from plugins.live_batch import _lb_save_job, _lb_paused, _lb_tasks, _lb_run_job
                 job_id = str(uuid.uuid4())
                 ljob = {
@@ -1294,11 +1293,19 @@ async def _build_share_links(bot, user_id, sj, info_msg):
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
-        try:
-            await sts.edit_text(f"<b>Error during link generation:</b>\n<code>{e}</code>")
-        except Exception:
-            await bot.send_message(user_id, f"<b>Error during link generation:</b>\n<code>{e}</code>")
         logger.error(f"Share link generation error:\n{tb}")
+        retry_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔁 Rᴇᴛʀʏ", callback_data="sl#complete"),
+            InlineKeyboardButton("✖️ Dɪsᴍɪss", callback_data="start_cmd")
+        ]])
+        err_txt = (
+            f"<b>❌ Error during link generation:</b>\n<code>{e}</code>\n\n"
+            f"<i>Click Retry to start a new job, or Dismiss to cancel.</i>"
+        )
+        try:
+            await sts.edit_text(err_txt, reply_markup=retry_kb)
+        except Exception:
+            await bot.send_message(user_id, err_txt, reply_markup=retry_kb)
     finally:
         new_share_job.pop(user_id, None)
 
