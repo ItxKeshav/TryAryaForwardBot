@@ -499,20 +499,36 @@ async def _send_welcome(client, message, bot_id: str = None):
             wid  = welcome_img.get('file_id') if isinstance(welcome_img, dict) else welcome_img
             wtyp = welcome_img.get('media_type', 'photo') if isinstance(welcome_img, dict) else 'photo'
 
-            if wtyp == 'animation':
-                await client.send_animation(user.id, animation=wid, caption=txt, reply_markup=markup)
-            elif wtyp == 'video':
-                await client.send_video(user.id, video=wid, caption=txt, reply_markup=markup)
-            else:
-                await client.send_photo(user.id, photo=wid, caption=txt, reply_markup=markup)
-        else:
-            await message.reply_text(txt, reply_markup=markup)
+            try:
+                if wtyp == 'animation':
+                    await client.send_animation(user.id, animation=wid, caption=txt, reply_markup=markup)
+                elif wtyp == 'video':
+                    await client.send_video(user.id, video=wid, caption=txt, reply_markup=markup)
+                else:
+                    await client.send_photo(user.id, photo=wid, caption=txt, reply_markup=markup)
+                return  # success — skip text fallback
+            except Exception as _media_err:
+                logger.warning(f"[Welcome] Media send failed ({_media_err}), auto-clearing bad image and falling back to text")
+                # Auto-clear stale/expired file_ids from DB so the error won't repeat
+                try:
+                    if bot_id:
+                        about = await db.get_share_bot_about(bot_id) or {}
+                        img_ids = about.get('menu_image_ids', [])
+                        bad_fid = wid
+                        cleaned = [x for x in img_ids if (x.get('file_id') if isinstance(x, dict) else x) != bad_fid]
+                        await db.db.share_config.update_one(
+                            {'_id': f'bot_{bot_id}_about'},
+                            {'$set': {'menu_image_ids': cleaned}},
+                            upsert=True
+                        )
+                except Exception:
+                    pass
+
+        # Reached here either because welcome_img is None or media send failed
+        await message.reply_text(txt, reply_markup=markup)
     except Exception as _wel_err:
-        logger.warning(f"[Welcome] Media send failed ({_wel_err}), falling back to text")
-        try:
-            await message.reply_text(txt, reply_markup=markup)
-        except Exception:
-            pass
+        logger.warning(f"[Welcome] Text fallback also failed: {_wel_err}")
+        pass
 
 
 async def _send_help(client, message, bot_id: str = None):

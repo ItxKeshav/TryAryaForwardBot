@@ -576,4 +576,18 @@ class Database:
         """Count running Live Jobs."""
         return await self.db.jobs.count_documents({'status': 'running'})
 
+    # ── AI Enhancer Config ────────────────────────────────────────────────────
+    async def get_enhancer_config(self) -> dict:
+        """Returns the global AI Enhancer config dict."""
+        doc = await self.stats.find_one({'_id': 'ai_enhancer_config'})
+        return doc or {}
+
+    async def update_enhancer_config(self, **kwargs):
+        """Update one or more keys in the AI Enhancer config."""
+        await self.stats.update_one(
+            {'_id': 'ai_enhancer_config'},
+            {'$set': kwargs},
+            upsert=True
+        )
+
 db = Database(Config.DATABASE_URI, Config.DATABASE_NAME)

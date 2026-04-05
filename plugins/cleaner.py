@@ -20,7 +20,7 @@ from pyrogram import Client, filters, ContinuePropagation
 from pyrogram.errors import FloodWait
 from pyrogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove,
-    Message, CallbackQuery, ReplyKeyboardMarkup
+    Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton
 )
 
 logger = logging.getLogger(__name__)
@@ -376,9 +376,9 @@ async def _cl_callbacks(bot, update: CallbackQuery):
 
     elif action == "cfg":
         cfg_type = data[2]
-        ask_msg = await bot.send_message(uid, f"Send the new default **{cfg_type.title()}** (or /skip to clear):")
+        ask_txt = f"Send the new default <b>{cfg_type.title()}</b>" + (" (or send a Photo for cover art)" if cfg_type == "cover" else "") + "\n<i>Send /skip to clear.</i>"
         try:
-            resp = await _cl_ask(bot, uid, 120)
+            resp = await _cl_ask(bot, uid, ask_txt, timeout=120)
             if not resp: raise asyncio.TimeoutError
             txt = (resp.text or "").strip()
             
