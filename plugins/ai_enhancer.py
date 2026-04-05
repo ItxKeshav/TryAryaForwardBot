@@ -6,7 +6,7 @@ import aiohttp
 from pyrogram import Client, filters, ContinuePropagation
 from pyrogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
-import database as db
+from database import db
 
 def _sc(text: str) -> str:
     return text.translate(str.maketrans(

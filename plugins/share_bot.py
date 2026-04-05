@@ -434,9 +434,12 @@ async def _process_start(client, message):
         f"और सेवाओं को बेहतर बनाने में अत्यंत सहायक है।"
         f"</blockquote>"
     )
-    donate_btn = InlineKeyboardMarkup([[
-        InlineKeyboardButton("»  " + _sc("Support Us") + " / हमें Support करें  «", url="https://razorpay.me/@SusJeetX")
-    ]])
+    donate_btn = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("💳 " + _sc("Support via UPI"), callback_data="sbd#donate"),
+            InlineKeyboardButton("🔗 " + _sc("Razorpay"), url="https://razorpay.me/@SusJeetX")
+        ]
+    ])
     try:
         await message.reply_text(thank_txt, reply_markup=donate_btn)
     except Exception as _te:
@@ -598,6 +601,19 @@ async def _process_delivery_button(client, query):
     elif cmd == "about":
         await query.answer()
         await _send_about(client, query, bot_id=bot_id, edit=True)
+
+    elif cmd == "donate":
+        await query.answer("Thank you for considering a donation!", show_alert=True)
+        upi_txt = (
+            "<b>💖 Tʜᴀɴᴋ ʏᴏᴜ ꜰᴏʀ ʏᴏᴜʀ sᴜᴘᴘᴏʀᴛ!</b>\n\n"
+            "<b>💳 UPI ID:</b> <code>heyjeetx@naviaxis</code>\n"
+            "<b>👤 Name:</b> Jeetesh Meena\n\n"
+            "<i>Every contribution helps us maintain our servers and keep delivering amazing stories.</i>"
+        )
+        try:
+            await client.send_message(query.from_user.id, upi_txt)
+        except Exception:
+            pass
 
     elif cmd == "back":
         await query.answer()
