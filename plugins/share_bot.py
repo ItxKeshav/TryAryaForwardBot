@@ -605,23 +605,25 @@ async def _process_delivery_button(client, query):
     elif cmd == "donate":
         await query.answer()
         sup_text = (
-            "<b>💖 Cʜᴏᴏsᴇ Sᴜᴘᴘᴏʀᴛ Aᴍᴏᴜɴᴛ ᴏʀ Mᴇᴛʜᴏᴅ</b>\n\n"
-            "Your support keeps our servers running and allows us to deliver uninterrupted, high-quality content.\n\n"
-            "<b>💳 Direct UPI Details:</b>\n"
-            "<b>UPI ID:</b> <code>heyjeetx@naviaxis</code>\n"
-            "<b>Name:</b> Jeetesh Meena"
+            f"<b>💖 " + _sc("support arya bot") + "</b>\n\n"
+            f"<i>Your support keeps our servers running and allows us to deliver uninterrupted, high-quality content.</i>\n\n"
+            f"<b>💳 " + _sc("direct upi details:") + "</b>\n"
+            f"<b>‣  " + _sc("upi id:") + "</b>  <code>heyjeetx@naviaxis</code>\n"
+            f"<b>‣  " + _sc("name:") + "</b>  Jeetesh Meena\n\n"
+            f"<b>" + _sc("please choose an amount below to generate a direct payment qr code!") + "</b>"
         )
         buttons = [
             [
-                InlineKeyboardButton("💸 ₹50", url="https://razorpay.me/@SusJeetX"),
-                InlineKeyboardButton("💸 ₹100", url="https://razorpay.me/@SusJeetX"),
-                InlineKeyboardButton("💸 ₹500", url="https://razorpay.me/@SusJeetX")
+                InlineKeyboardButton("💸 ₹50", callback_data="sbd#pay_upi#50"),
+                InlineKeyboardButton("💸 ₹100", callback_data="sbd#pay_upi#100"),
+                InlineKeyboardButton("💸 ₹200", callback_data="sbd#pay_upi#200")
             ],
             [
-                InlineKeyboardButton("📱 Support via QR Code", callback_data="sbd#pay_qr")
+                InlineKeyboardButton("💸 ₹500", callback_data="sbd#pay_upi#500"),
+                InlineKeyboardButton("📝 " + _sc("custom amount"), callback_data="sbd#pay_upi#custom")
             ],
             [
-                InlineKeyboardButton("💳 Custom Amount (Razorpay)", url="https://razorpay.me/@SusJeetX")
+                InlineKeyboardButton("🌍 " + _sc("non-upi / intl (razorpay)"), url="https://razorpay.me/@SusJeetX")
             ]
         ]
         try:
@@ -629,22 +631,40 @@ async def _process_delivery_button(client, query):
         except Exception:
             pass
 
-    elif cmd == "pay_qr":
+    elif cmd == "pay_upi":
+        parts = query.data.split('#')
+        am = parts[2] if len(parts) > 2 else "custom"
         await query.answer()
-        # Ensure we provide an encoded UPI URI
-        upi_uri = "upi://pay?pa=heyjeetx@naviaxis&pn=Jeetesh%20Meena"
-        import urllib.parse
-        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=500x500&data={urllib.parse.quote(upi_uri)}"
+        
+        if am == "custom":
+            upi_uri = "upi://pay?pa=heyjeetx@naviaxis&pn=Jeetesh%20Meena&cu=INR"
+            am_txt = "<code>Any Custom Amount</code>"
+        else:
+            upi_uri = f"upi://pay?pa=heyjeetx@naviaxis&pn=Jeetesh%20Meena&am={am}&cu=INR"
+            am_txt = f"<code>₹{am}</code>"
+            
         caption = (
-            "<b>📱 Sᴄᴀɴ Tᴏ Sᴜᴘᴘᴏʀᴛ</b>\n\n"
-            "Open your camera or any UPI App (GPay, PhonePe, Paytm) to scan this QR code directly.\n\n"
-            "<i>UPI ID: heyjeetx@naviaxis</i>"
+            f"<b>📱 " + _sc("scan to support") + "</b>\n\n"
+            f"<b>‣  " + _sc("amount:") + "</b>  {am_txt}\n"
+            f"<b>‣  " + _sc("upi id:") + "</b>  <code>heyjeetx@naviaxis</code>\n"
+            f"<b>‣  " + _sc("name:") + "</b>  Jeetesh Meena\n\n"
+            f"<i>Open your camera or any UPI App (GPay, PhonePe, Paytm) to scan this QR code. You can also tap the button below to directly open your installed payment app!</i>"
         )
+        
+        import urllib.parse
+        encoded_uri = urllib.parse.quote(upi_uri)
+        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=500x500&data={encoded_uri}"
+        
+        buttons = [
+            [InlineKeyboardButton("💳 " + _sc("open upi app to pay"), url=upi_uri)],
+            [InlineKeyboardButton("🌍 " + _sc("pay via razorpay instead"), url="https://razorpay.me/@SusJeetX")]
+        ]
+        
         try:
-            await client.send_photo(query.from_user.id, photo=qr_url, caption=caption)
+            await msg.delete()
+            await client.send_photo(query.from_user.id, photo=qr_url, caption=caption, reply_markup=InlineKeyboardMarkup(buttons))
         except Exception as e:
             logger.error(f"Support QR Error: {e}")
-            await client.send_message(query.from_user.id, caption)
 
     elif cmd == "back":
         await query.answer()
