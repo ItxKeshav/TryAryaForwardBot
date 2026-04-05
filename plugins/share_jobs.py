@@ -1001,6 +1001,45 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 last_b = buckets[-1]
                 buckets[-1] = (last_b[0], min(last_b[1], last_ep_num), last_b[2])
 
+        #  PRE-SCAN INTERVENTION 
+        prescan_report_lines = [
+            f"<b>🔍 PRE-SCAN DIAGNOSIS</b>",
+            f"\n<blockquote expandable>",
+            f"»  <b>Files located:</b> {total_count}",
+            f"🎯 <b>Detected Bounds:</b> {first_ep_num}–{last_ep_num}",
+        ]
+        
+        if not GROUPED_MODE:
+            if unassigned_count > 0:
+                prescan_report_lines.append(f"📎 <b>{unassigned_count} files lack episode labels</b> (Will embed silently inside buttons)")
+            if truly_missing_count > 0:
+                miss_preview = ", ".join(str(e) for e in missing_eps[:15])
+                if len(missing_eps) > 15: miss_preview += f" (+{len(missing_eps)-15} more)"
+                prescan_report_lines.append(f"❌ <b>{truly_missing_count} Truly Missing Episodes:</b> {miss_preview}")
+            elif unassigned_count == 0:
+                prescan_report_lines.append(f"✅ <b>Zero Missing Episodes!</b> All slots correctly found.")
+        elif duplicate_eps:
+             prescan_report_lines.append(f"‣  <b>Duplicates Detected:</b> {len(duplicate_eps)}")
+             
+        prescan_report_lines.append(f"</blockquote>")
+        prescan_report_lines.append(f"\n<i>Do you want to proceed and generate links for these files?</i>")
+        
+        try:
+            prescan_msg = await _ask(bot, user_id, "\n".join(prescan_report_lines), reply_markup=ReplyKeyboardMarkup([
+                ["✅ Proceed & Generate"],
+                ["❌ Cancel Job"]
+            ], resize_keyboard=True, one_time_keyboard=True), timeout=1800)
+            
+            if getattr(prescan_msg, 'text', None) and "Cancel" in prescan_msg.text:
+                await bot.send_message(user_id, "<b>❌ Process Cancelled during Pre-Scan.</b>", reply_markup=ReplyKeyboardRemove())
+                return await safe_edit("<b>❌ Process Cancelled during Pre-Scan.</b>")
+                
+            await bot.send_message(user_id, "<i>»  Pre-Scan Accepted. Generating unique secure links...</i>", reply_markup=ReplyKeyboardRemove())
+            await safe_edit("<i>»  Pre-Scan Accepted. Generating unique secure links...</i>")
+        except Exception:
+            await bot.send_message(user_id, "<b>⏳ Pre-Scan Timed Out (30 mins). Job Cancelled.</b>", reply_markup=ReplyKeyboardRemove())
+            return await safe_edit("<b>⏳ Pre-Scan Timed Out (30 mins). Job Cancelled.</b>")
+
         raw_buttons = []
         for b_s, b_e, mids in buckets:
             if not mids:
