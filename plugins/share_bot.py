@@ -425,31 +425,32 @@ async def _process_start(client, message):
         u_name = message.from_user.first_name or "you"
         last   = (" " + message.from_user.last_name) if getattr(message.from_user, "last_name", None) else ""
         full_name = f"{u_name}{last}"
+        
+        b_name = client.me.first_name if getattr(client, "me", None) else "this bot"
 
         thank_txt = (
-            f"<a href='tg://user?id={message.from_user.id}'>{full_name}</a> ❣️\n\n"
-            f"<b>» {total} file(s) sent successfully!</b>\n"
-            f"Total delivered by this bot: <b>{grand_total:,}</b> files 🎉\n\n"
+            f"<b>»</b> <a href='tg://user?id={message.from_user.id}'>{full_name}</a>\n\n"
+            f"<b>‣ {total} file(s) sent successfully!</b>\n"
+            f"<b>‣</b> Total delivered by {b_name}: <b>{grand_total:,}</b> files\n\n"
             f"<blockquote expandable>"
-            f"🇬🇧 <b>English</b>\n"
-            f"Thank you for using us! We truly appreciate your trust and love. 🙏\n\n"
-            f"Your files have been delivered. These links <b>never expire</b> — "
-            f"you can tap the same button anytime to re-access your files, no need to ask again!\n\n"
-            f"If you enjoy our service and want us to keep delivering amazing stories, "
-            f"please consider supporting us with a small donation. Every contribution "
-            f"helps us maintain servers, add more stories, and keep this service running for you. ❤️\n\n"
-            f"──────────────────────\n\n"
-            f"🇮🇳 <b>Hindi</b>\n"
-            f"हमारी सेवा का उपयोग करने के लिए आपका बहुत-बहुत धन्यवाद! 🙏\n\n"
-            f"आपकी फाइलें डिलीवर हो गई हैं। ये लिंक <b>कभी expire नहीं होते</b> — "
-            f"आप कभी भी उसी बटन को दबाकर फाइलें दोबारा देख सकते हैं, बिना किसी से पूछे!\n\n"
-            f"अगर आपको हमारी सेवा पसंद आई और आप चाहते हैं कि हम आगे भी "
-            f"इस तरह की stories और content लाते रहें, तो कृपया हमें एक छोटा सा donation देकर "
-            f"support करें। आपका हर योगदान हमें आगे बढ़ने की शक्ति देता है। ❤️"
+            f"Thank you for using our service! Your files have been successfully delivered. "
+            f"These links are permanent and never expire — you can simply tap the same button anytime "
+            f"to re-access your files instantly.\n\n"
+            f"If you enjoy our platform and want us to keep delivering amazing stories, "
+            f"please consider supporting us with a small donation. Every contribution helps us maintain "
+            f"our servers and expand our library."
+            f"</blockquote>"
+            f"<blockquote expandable>"
+            f"हमारी सेवा का उपयोग करने के लिए आपका धन्यवाद! आपकी फाइलें सुगमता से डिलीवर हो गई हैं। "
+            f"ये लिंक कभी expire नहीं होते — आप भविष्य में कभी भी उसी बटन पर क्लिक करके अपनी फाइलें "
+            f"दोबारा प्राप्त कर सकते हैं।\n\n"
+            f"अगर आपको हमारी सेवा पसंद आई है और आप चाहते हैं कि हम निरंतर उत्कृष्ट कहानियाँ "
+            f"लाते रहें, तो कृपया हमें donation देकर support करें। आपका सहयोग हमारे सर्वर "
+            f"और सेवाओं को बेहतर बनाने में अत्यंत सहायक है।"
             f"</blockquote>"
         )
         donate_btn = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❤️  " + _sc("Support Us") + " / हमें Support करें", url="https://razorpay.me/@SusJeetX")
+            InlineKeyboardButton("»  " + _sc("Support Us") + " / हमें Support करें  «", url="https://razorpay.me/@SusJeetX")
         ]])
         try:
             await message.reply_text(thank_txt, reply_markup=donate_btn)
