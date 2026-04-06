@@ -161,16 +161,14 @@ def _build_cl_info(job: dict) -> str:
 # ─── FFmpeg Engine ───────────────────────────────────────────────────────────
 async def _process_audio_ffmpeg(input_path, output_path, cover_path, meta: dict):
     """
-    Runs FFmpeg to clean audio:
-    - -af afftdn=nf=-25 (Noise reduction)
-    - Re-encodes to libmp3lame 128k
-    - Strips all original metadata (-map_metadata -1)
-    - Adds new Artist, Title, Year.
+    Re-encodes audio to clean 128kbps MP3 with fresh metadata and optional cover art.
+    NOTE: afftdn (noise reduction) intentionally removed — it takes 3-5 minutes per
+    file on CPU and is unnecessary for already-recorded audio.
     """
-    cmd = ["ffmpeg", "-y", "-hide_banner"]
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
     cmd += ["-i", input_path]
     
-    if cover_path and os.path.exists(cover_path):
+    if cover_path and os.path.exists(cover_path) and os.path.getsize(cover_path) > 1024:
         cmd += ["-i", cover_path]
         cmd += ["-map", "0:a:0", "-map", "1:v:0"]
         cmd += ["-c:v", "mjpeg", "-id3v2_version", "3"]
@@ -178,8 +176,7 @@ async def _process_audio_ffmpeg(input_path, output_path, cover_path, meta: dict)
     else:
         cmd += ["-map", "0:a:0"]
 
-    cmd += ["-af", "afftdn=nf=-25"]
-    cmd += ["-c:a", "libmp3lame", "-b:a", "128k"]
+    cmd += ["-c:a", "libmp3lame", "-b:a", "128k", "-q:a", "2"]
     cmd += ["-map_metadata", "-1"]
 
     for k, v in meta.items():
@@ -197,8 +194,8 @@ async def _process_audio_ffmpeg(input_path, output_path, cover_path, meta: dict)
     
     try:
         rc, stderr = await loop.run_in_executor(None, _sync_run)
-        if rc != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) < 1000:
-            return False, stderr[-1000:]
+        if rc != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) < 100:
+            return False, stderr[-1500:]
         return True, ""
     except Exception as e:
         return False, str(e)
@@ -289,9 +286,21 @@ async def _cl_run_job(job_id: str, bot=None):
             elif not cov_fid:
                 local_cover = None
 
+            # ── Resolve peer cache for source and destination channels ──
+            # Without this, fresh in-memory sessions get PEER_ID_INVALID when
+            # trying to get_messages or send_audio to channels not in their cache.
+            logger.info(f"[Cleaner {job_id}] Resolving channel peers...")
+            for _peer in [from_ch, (dest_ch if dest_ch != uid else None)]:
+                if _peer:
+                    try:
+                        await client.get_chat(_peer)
+                        logger.info(f"[Cleaner {job_id}] Resolved peer: {_peer}")
+                    except Exception as pe:
+                        logger.warning(f"[Cleaner {job_id}] Could not pre-resolve peer {_peer}: {pe}")
+
             fail_count = 0
             phase_start = time.time()
-            job_failed = False  # flag to break outer while True loop on fatal errors
+            job_failed = False
 
             def _extract_ep_label(fname: str) -> str:
                 """
@@ -331,7 +340,14 @@ async def _cl_run_job(job_id: str, bot=None):
 
                 try:
                     msg = await client.get_messages(from_ch, msg_id)
-                    if not msg or msg.empty or not (msg.audio or msg.voice or msg.document):
+                    # Skip empty messages or non-audio content
+                    if not msg or msg.empty:
+                        continue
+                    
+                    is_audio = bool(msg.audio or msg.voice)
+                    is_audio_doc = (msg.document and 
+                                    'audio' in (getattr(msg.document, 'mime_type', '') or ''))
+                    if not (is_audio or is_audio_doc):
                         continue
 
                     # ── Determine output title: preserve original episode/range if present ──
@@ -372,13 +388,12 @@ async def _cl_run_job(job_id: str, bot=None):
                     if not ok:
                         raise Exception(f"FFmpeg Edit Failed: {err[:500]}")
 
-                    # ── Choose the correct client for upload ──
-                    # DM (dest_ch == uid): MUST use main bot — clone bot has never met the user
-                    # Channel: use clone client — it was added as admin to the channel
+                    # ── Upload with fallback ──
+                    # Primary: main bot for DM, clone client for channels
+                    # Fallback: always try main bot if clone fails with peer error
                     upload_client = bot if (dest_ch == uid and bot) else client
-
-                    # Upload
                     thumb = local_cover if (local_cover and os.path.exists(local_cover)) else None
+                    uploaded = False
                     for attempt in range(5):
                         try:
                             await upload_client.send_audio(
@@ -390,23 +405,32 @@ async def _cl_run_job(job_id: str, bot=None):
                                 file_name=clean_file,
                                 thumb=thumb,
                             )
+                            uploaded = True
                             break
                         except FloodWait as fw:
                             await asyncio.sleep(fw.value + 2)
                         except Exception as ue:
+                            ue_str = str(ue)
+                            # If peer unknown and we haven't tried bot yet, switch to bot
+                            if ("PEER_ID_INVALID" in ue_str or "CHANNEL_INVALID" in ue_str) \
+                               and upload_client is not bot and bot:
+                                logger.warning(f"[Cleaner {job_id}] Upload PEER_ID_INVALID, switching to main bot")
+                                upload_client = bot
+                                continue
                             if attempt >= 4:
                                 raise Exception(f"Upload failed: {ue}")
-                            await asyncio.sleep(3)
+                            await asyncio.sleep(3 * (attempt + 1))
+                    
+                    if not uploaded:
+                        raise Exception("Upload: all 5 attempts exhausted")
 
                     try: os.remove(out_path)
                     except: pass
 
-                    # ── Only advance curr_num if we used sequential numbering ──
-                    if not ep_label:
-                        pass  # curr_num already incremented above
                     done += 1
-                    fail_count = 0
+                    fail_count = 0   # reset per successfully processed file
                     await _cl_update_job(job_id, {"files_done": done})
+                    logger.info(f"[Cleaner {job_id}] Done {done}: {clean_title}")
                     await asyncio.sleep(0.5)
 
                 except FloodWait as fw:
