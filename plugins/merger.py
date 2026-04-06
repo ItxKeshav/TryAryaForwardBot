@@ -759,21 +759,28 @@ async def _run_job(jid, uid, bot):
 
         await _db_up(jid, status="queued", error="", created_at=time.time())
 
-        # ── Semaphore queue: notify user of position, then wait ───────────────
-        if _mg_semaphore._value == 0:   # all slots busy
-            queue_pos = max(1, len(_mg_tasks))  # rough position estimate
-            try:
-                await bot.send_message(uid,
-                    f"⏳ <b>Merger Queue</b>\n\n"
-                    f"All merge slot(s) are busy (max {MAX_CONCURRENT_MERGES} at once).\n"
-                    f"Your job <code>[{jid[-6:]}]</code> is <b>queued at position #{queue_pos}</b>.\n"
-                    f"It will start automatically when a slot frees up. "
-                    f"You can freely close Telegram; the job will run in the background.")
-            except Exception: pass
+        fresh = await _db_get(jid)
+        is_force = fresh.get("force_active", False) if fresh else False
 
-        # Acquire semaphore — blocks until a slot is free
-        await _mg_semaphore.acquire()
-        _sem_acquired = True
+        if not is_force:
+            # ── Semaphore queue: notify user of position, then wait ───────────────
+            if _mg_semaphore._value == 0:   # all slots busy
+                queue_pos = max(1, len(_mg_tasks))  # rough position estimate
+                try:
+                    await bot.send_message(uid,
+                        f"⏳ <b>Merger Queue</b>\n\n"
+                        f"All merge slot(s) are busy (max {MAX_CONCURRENT_MERGES} at once).\n"
+                        f"Your job <code>[{jid[-6:]}]</code> is <b>queued at position #{queue_pos}</b>.\n"
+                        f"It will start automatically when a slot frees up.\n"
+                        f"You can freely close Telegram; the job will run in the background.")
+                except Exception: pass
+
+            # Acquire semaphore — blocks until a slot is free
+            await _mg_semaphore.acquire()
+            _sem_acquired = True
+        else:
+            _sem_acquired = False
+            await _db_up(jid, force_active=False)
 
         fresh = await _db_get(jid)
         if not fresh or fresh.get("status") in ("stopped", "paused"):
@@ -1579,8 +1586,11 @@ async def _render_list(bot, uid, msg_or_q, mtype):
             jid = j["job_id"]
             short = jid[-6:]
             row = []
-            if st in ("downloading", "merging", "uploading"):
+            if st in ("downloading", "merging", "uploading", "scanning"):
                 row.append(InlineKeyboardButton(f"⏸ Pᴀᴜsᴇ [{short}]", callback_data=f"mg#pause#{jid}"))
+                row.append(InlineKeyboardButton(f"⏹ Sᴛᴏᴘ [{short}]", callback_data=f"mg#stop#{jid}"))
+            elif st == "queued":
+                row.append(InlineKeyboardButton(f"⚡ Fᴏʀᴄᴇ [{short}]", callback_data=f"mg#force_ask#{jid}"))
                 row.append(InlineKeyboardButton(f"⏹ Sᴛᴏᴘ [{short}]", callback_data=f"mg#stop#{jid}"))
             elif st == "paused":
                 row.append(InlineKeyboardButton(f"▶️ Rᴇsᴜᴍᴇ [{short}]", callback_data=f"mg#resume#{jid}"))
@@ -1646,6 +1656,42 @@ async def mg_cb(bot, query):
         mtype = action.split("_", 1)[1]
         await query.message.delete()
         return await _create_flow(bot, uid, mtype)
+
+    # ── Force Activate ────────────────────────────────────────────────────
+    if action == "force_ask":
+        txt = (
+            "⚠️ <b>WARNING: FORCE START</b>\n\n"
+            "You are about to bypass the safety queue and force this job to start concurrently.\n\n"
+            "<b>Potential Issues:</b>\n"
+            "• <b>Server Overload:</b> Multiple heavy jobs (like merging) can exhaust server RAM/CPU, crashing the bot.\n"
+            "• <b>Telegram Limits:</b> Downloading/uploading too many files simultaneously drastically increases your risk of FloodWaits or temporary bans.\n"
+            "• <b>Slower Overall Speed:</b> Running 2 tasks simultaneously is often slower than running them sequentially.\n\n"
+            "Are you sure you want to force start this job immediately?"
+        )
+        job = await _db_get(param)
+        mtype = job.get("merge_type", "audio") if job else "audio"
+        kb = [
+            [InlineKeyboardButton("✅ Yes, Force Start Anyway", callback_data=f"mg#force_do#{param}")],
+            [InlineKeyboardButton("❌ Cancel (Keep in Queue)", callback_data=f"mg#{mtype}_list")]
+        ]
+        return await query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+
+    elif action == "force_do":
+        await _db_up(param, force_active=True, status="scanning")
+        if param in _mg_paused: _mg_paused[param].set()
+        
+        # Cancel the task stuck in the semaphore and restart it
+        if param in _mg_tasks and not _mg_tasks[param].done():
+            _mg_tasks[param].cancel()
+            await asyncio.sleep(0.5)
+            
+        _start_task(param, uid, bot)
+        
+        await query.answer("🚀 Job forcefully activated!", show_alert=False)
+        job = await _db_get(param)
+        mtype = job.get("merge_type", "audio") if job else "audio"
+        query.data = f"mg#{mtype}_list"
+        return await mg_cb(bot, query)
 
     # ── Info ──────────────────────────────────────────────────────────────
     if action == "info":

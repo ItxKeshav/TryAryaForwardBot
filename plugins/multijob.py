@@ -308,9 +308,15 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
         client  = await start_clone_bot(_CLIENT.client(acc))
         is_bot  = acc.get("is_bot", True)
 
-        # ── Queue system: limit concurrent Multi Jobs ─────────────────────────
-        pos = await AryaJobQueue.acquire(job_id, "multijob")
-        _mj_queue_acquired = True
+        is_force = job.get("force_active", False)
+        if is_force:
+            await _mj_update(job_id, force_active=False)
+            pos = 0
+        else:
+            # ── Queue system: limit concurrent Multi Jobs ─────────────────────────
+            pos = await AryaJobQueue.acquire(job_id, "multijob")
+            _mj_queue_acquired = True
+            
         if pos > 0 and bot:
             try:
                 await bot.send_message(user_id,
@@ -826,7 +832,19 @@ async def _render_mj_list(bot, user_id: int, msg_or_query):
             jid  = j["job_id"]
             short = jid[-6:]
             row = []
+            is_queued = False
             if st == "running":
+                # MultiJob uses "running" even when waiting in AryaJobQueue
+                from plugins.job_queue import AryaJobQueue
+                try: 
+                    if AryaJobQueue.queue_position(jid, "multijob") > 0:
+                        is_queued = True
+                except: pass
+
+            if is_queued:
+                row.append(InlineKeyboardButton(f"⚡ Fᴏʀᴄᴇ [{short}]", callback_data=f"mj#force_ask#{jid}"))
+                row.append(InlineKeyboardButton(f"⏹ Sᴛᴏᴘ [{short}]", callback_data=f"mj#stop#{jid}"))
+            elif st == "running":
                 row.append(InlineKeyboardButton(f"⏸ Pᴀᴜsᴇ [{short}]", callback_data=f"mj#pause#{jid}"))
                 row.append(InlineKeyboardButton(f"⏹ Sᴛᴏᴘ [{short}]", callback_data=f"mj#stop#{jid}"))
             elif st == "paused":
@@ -1026,6 +1044,49 @@ async def mj_start_cb(bot, query):
     await query.answer("▶️ Job started!", show_alert=False)
     await _render_mj_list(bot, user_id, query)
 
+
+@Client.on_callback_query(filters.regex(r'^mj#force_ask#'))
+async def mj_force_ask_cb(bot, query):
+    job_id = query.data.split("#", 2)[2]
+    txt = (
+        "⚠️ <b>WARNING: FORCE START</b>\n\n"
+        "You are about to bypass the safety queue and force this Multi Job to start concurrently.\n\n"
+        "<b>Potential Issues:</b>\n"
+        "• <b>API Limits:</b> Forwarding too many messages simultaneously drastically increases your risk of FloodWaits or temporary bans.\n"
+        "• <b>Server CPU:</b> Slower overall speed as tasks compete.\n\n"
+        "Are you sure you want to force start this job immediately?"
+    )
+    kb = [
+        [InlineKeyboardButton("✅ Yes, Force Start Anyway", callback_data=f"mj#force_do#{job_id}")],
+        [InlineKeyboardButton("❌ Cancel (Keep in Queue)", callback_data="mj#list")]
+    ]
+    return await query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+
+@Client.on_callback_query(filters.regex(r'^mj#force_do#'))
+async def mj_force_do_cb(bot, query):
+    job_id  = query.data.split("#", 2)[2]
+    user_id = query.from_user.id
+    job = await _mj_get(job_id)
+    if not job or job.get("user_id") != user_id:
+        return await query.answer("⛔ Unauthorized.", show_alert=True)
+        
+    await _mj_update(job_id, status="running", force_active=True)
+    
+    # Release from AryaJobQueue explicitly to prevent stale lists
+    try:
+        from plugins.job_queue import AryaJobQueue
+        if job_id in AryaJobQueue._waiting_order.get("multijob", []):
+            AryaJobQueue._waiting_order["multijob"].remove(job_id)
+    except Exception: pass
+    
+    task = _mj_tasks.get(job_id)
+    if task and not task.done():
+        task.cancel()
+        await asyncio.sleep(0.5)
+        
+    _mj_start_task(job_id, user_id, bot=bot)
+    await query.answer("🚀 Job forcefully activated!", show_alert=False)
+    await _render_mj_list(bot, user_id, query)
 
 @Client.on_callback_query(filters.regex(r'^mj#del#'))
 async def mj_del_cb(bot, query):

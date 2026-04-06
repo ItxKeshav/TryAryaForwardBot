@@ -201,10 +201,21 @@ async def _process_audio_ffmpeg(input_path, output_path, cover_path, meta: dict)
         return False, str(e)
 
 
-# ─── Job Runner ──────────────────────────────────────────────────────────────
+class _DummySem:
+    async def __aenter__(self): pass
+    async def __aexit__(self, *a): pass
+
 async def _cl_run_job(job_id: str, bot=None):
     """Main cleaner job coroutine. bot = the main Pyrogram bot client for DM notifications."""
-    async with _cl_semaphore:
+    job = await _cl_get_job(job_id)
+    if not job or job.get("status") in ("completed", "failed", "stopped"):
+        return
+        
+    is_force = job.get("force_active", False)
+    if is_force: await _cl_update_job(job_id, {"force_active": False})
+    
+    ctx = _DummySem() if is_force else _cl_semaphore
+    async with ctx:
         while True:
             ev = _cl_paused.get(job_id)
             if ev and not ev.is_set():
@@ -572,6 +583,8 @@ async def _cl_callbacks(bot, update: CallbackQuery):
                 InlineKeyboardButton("⏸ Pᴀᴜsᴇ", callback_data=f"cl#pause#{jid}"),
                 InlineKeyboardButton("⏹ Sᴛᴏᴘ", callback_data=f"cl#stop#{jid}")
             ])
+            if st == "queued":
+                kb.append([InlineKeyboardButton("⚡ Fᴏʀᴄᴇ Aᴄᴛɪᴠᴀᴛᴇ", callback_data=f"cl#force_ask#{jid}")])
         elif st == "paused":
             kb.append([
                 InlineKeyboardButton("▶️ Rᴇsᴜᴍᴇ", callback_data=f"cl#resume#{jid}"),
@@ -599,7 +612,42 @@ async def _cl_callbacks(bot, update: CallbackQuery):
         if jid not in _cl_paused: _cl_paused[jid] = asyncio.Event()
         _cl_paused[jid].set()
         if jid not in _cl_tasks or _cl_tasks[jid].done():
-            _cl_tasks[jid] = asyncio.create_task(_cl_run_job(jid, bot))
+            bot_ref = _cl_bot_ref.get(jid) or bot
+            _cl_tasks[jid] = asyncio.create_task(_cl_run_job(jid, bot_ref))
+        update.data = f"cl#view#{jid}"
+        return await _cl_callbacks(bot, update)
+
+    elif action == "force_ask":
+        jid = data[2]
+        txt = (
+            "⚠️ <b>WARNING: FORCE START</b>\n\n"
+            "You are about to bypass the safety queue and force this cleaner job to start concurrently.\n\n"
+            "<b>Potential Issues:</b>\n"
+            "• <b>Server Overload:</b> Multiple heavy jobs can exhaust server CPU, crashing the bot.\n"
+            "• <b>FloodWaits/Bans:</b> Downloading/uploading too many files simultaneously drastically increases your risk of API limits or temporary bans.\n"
+            "• <b>Slower Speed:</b> Running parallel instances slows down all ongoing jobs.\n\n"
+            "Are you sure you want to force start this job immediately?"
+        )
+        kb = [
+            [InlineKeyboardButton("✅ Yes, Force Start Anyway", callback_data=f"cl#force_do#{jid}")],
+            [InlineKeyboardButton("❌ Cancel (Keep in Queue)", callback_data=f"cl#view#{jid}")]
+        ]
+        return await update.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+
+    elif action == "force_do":
+        jid = data[2]
+        await _cl_update_job(jid, {"status": "running", "force_active": True})
+        if jid not in _cl_paused: _cl_paused[jid] = asyncio.Event()
+        _cl_paused[jid].set()
+        
+        # If the task is already running (blocked in semaphore), we MUST cancel and restart it
+        if jid in _cl_tasks and not _cl_tasks[jid].done():
+            _cl_tasks[jid].cancel()
+            await asyncio.sleep(0.5)
+            
+        bot_ref = _cl_bot_ref.get(jid) or bot
+        _cl_tasks[jid] = asyncio.create_task(_cl_run_job(jid, bot_ref))
+        
         update.data = f"cl#view#{jid}"
         return await _cl_callbacks(bot, update)
 

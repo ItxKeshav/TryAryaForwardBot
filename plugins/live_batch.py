@@ -428,7 +428,7 @@ async def _lb_callbacks(bot, update: CallbackQuery):
         trgt = job.get("threshold", 10)
         
         if buf > 0 and st in ("running", "queued", "paused"):
-            kb.append([InlineKeyboardButton(f"🚀 Fᴏʀᴄᴇ Pᴏsᴛ Nᴏᴡ ({buf} Fɪʟᴇs)", callback_data=f"lb#force#{jid}")])
+            kb.append([InlineKeyboardButton(f"🚀 Fᴏʀᴄᴇ Pᴏsᴛ Nᴏᴡ ({buf} Fɪʟᴇs)", callback_data=f"lb#force_ask#{jid}")])
             
         kb.append([InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ", callback_data=f"lb#view#{jid}")])
         if st in ("completed", "stopped", "failed"):
@@ -454,6 +454,22 @@ async def _lb_callbacks(bot, update: CallbackQuery):
         update.data = f"lb#view#{jid}"
         return await _lb_callbacks(bot, update)
         
+    elif action == "force_ask":
+        jid = data[2]
+        txt = (
+            "⚠️ <b>WARNING: FORCE BATCH POST</b>\n\n"
+            "You are about to force this batch post before the normal buffer threshold is met.\n\n"
+            "<b>Potential Issues:</b>\n"
+            "• <b>Spam Rules:</b> Posting smaller batches too rapidly can annoy subscribers and trigger Telegram floodwaits.\n"
+            "• <b>Incomplete Batches:</b> Generating a post with fewer episodes than normally expected.\n\n"
+            "Are you sure you want to force this post immediately?"
+        )
+        kb = [
+            [InlineKeyboardButton("✅ Yes, Force Post Now", callback_data=f"lb#force#{jid}")],
+            [InlineKeyboardButton("❌ Cancel (Keep Buffer)", callback_data=f"lb#view#{jid}")]
+        ]
+        return await update.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+
     elif action == "force":
         jid = data[2]
         await _lb_update_job(jid, {"force_flush": True})
