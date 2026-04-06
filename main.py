@@ -126,6 +126,18 @@ async def main():
     except Exception as e:
         logging.error(f"Failed to init share bot: {e}")
 
+    if os.environ.get("DELIVERY_ONLY", "0") in ("1", "true", "True"):
+        logging.info("Running in DELIVERY ONLY mode. Main bot features disabled.")
+        await idle()
+        try:
+            from plugins.share_bot import share_clients
+            for c in share_clients.values():
+                try: await c.stop()
+                except: pass
+        except Exception: pass
+        await bot.stop()
+        return
+
     # Register DB channel auto-index listener on main bot
     try:
         from plugins.db_scanner import _try_auto_index

@@ -129,9 +129,10 @@ async def check_all_subscriptions(client, user_id: int, fsub_channels: list, bot
             if is_jr:
                 # For JR channels: check if this user was already recorded
                 # (JR handler added them to the pending set for instant access)
+                import time
                 uid_key = f"{chat_id}_{user_id}"
-                if uid_key in _jr_approved:
-                    # Already sent join request → treat as joined
+                if uid_key in _jr_approved and (time.time() - _jr_approved[uid_key] < 600):
+                    # Already sent join request recently → treat as joined temporarily
                     pass
                 else:
                     ch_copy = dict(ch)
@@ -145,9 +146,9 @@ async def check_all_subscriptions(client, user_id: int, fsub_channels: list, bot
     return not_joined
 
 
-# In-memory set: tracks users who have sent join requests (to JR channels)
-# Format: "{chat_id}_{user_id}"
-_jr_approved: set = set()
+# In-memory dict: tracks users who have sent join requests (to JR channels)
+# Format: "{chat_id}_{user_id}": timestamp
+_jr_approved: dict = {}
 
 
 # 
@@ -167,9 +168,10 @@ async def _fsub_record_jr(client, request):
     for ch in fsub_chs:
         if str(request.chat.id) == ch.get('chat_id') and ch.get('join_request'):
             try:
-                # Mark user as having requested to join so FSub check knows they're cleared
+                # Mark user as having requested to join so FSub check knows they're cleared for 10 minutes
+                import time
                 uid_key = f"{request.chat.id}_{request.from_user.id}"
-                _jr_approved.add(uid_key)
+                _jr_approved[uid_key] = time.time()
                 logger.info(f"Recorded JR for instant access: user {request.from_user.id} in {request.chat.id}")
             except Exception as e:
                 logger.error(f"FSub JR record failed: {e}")
@@ -218,10 +220,7 @@ async def _process_start(client, message):
     if not fsub_channels:
         fsub_channels = await db.get_share_fsub_channels()  # fallback global
 
-    # Check if user already completed FSub for this bot
-    user_already_approved = await db.is_user_fsub_approved(bot_id, user_id) if bot_id else False
-
-    if fsub_channels and not user_already_approved:
+    if fsub_channels:
         not_joined = await check_all_subscriptions(client, user_id, fsub_channels, bot_id)
         if not_joined:
             f_buttons = []  # User needs to join more channels
@@ -256,17 +255,17 @@ async def _process_start(client, message):
                 user_name = message.from_user.first_name or "User"
                 if has_jr:
                     txt = (
-                        f"<b>‣  Jᴏɪɴ Rᴇϙᴜɪʀᴇᴅ!</b>\n\n"
-                        f"Hᴇʏ {user_name} » \n"
-                        "Pʟᴇᴀsᴇ sᴇɴᴅ ᴀ <b>ᴊᴏɪɴ ʀᴇϙᴜᴇsᴛ</b> ᴛᴏ ᴀʟʟ ᴄʜᴀɴɴᴇʟs ʙᴇʟᴏᴡ.\n"
-                        "<i>After tapping each button and sending the request, click <b>Tʀʏ Aɢᴀɪɴ</b> — you'll get instant access!</i>"
+                        f"<b>🔒  Aᴄᴄᴇss Dᴇɴɪᴇᴅ</b>\n\n"
+                        f"Hey <b>{user_name}</b>,\n"
+                        f"You must send a <b>Join Request</b> to the channel(s) below to view this content.\n\n"
+                        f"<i>Once you've sent your request, click <b>Tʀʏ Aɢᴀɪɴ</b> below for instant access!</i>"
                     )
                 else:
                     txt = (
-                        f"<b>‣  Jᴏɪɴ Rᴇϙᴜɪʀᴇᴅ!</b>\n\n"
-                        f"Hᴇʏ {user_name} » \n"
-                        "Pʟᴇᴀsᴇ ᴊᴏɪɴ ᴀʟʟ ᴜᴘᴅᴀᴛᴇ ᴄʜᴀɴɴᴇʟs ᴛᴏ ᴜsᴇ ᴍᴇ!\n\n"
-                        "<i>After joining, click <b>Tʀʏ Aɢᴀɪɴ</b> below.</i>"
+                        f"<b>🔒  Aᴄᴄᴇss Dᴇɴɪᴇᴅ</b>\n\n"
+                        f"Hey <b>{user_name}</b>,\n"
+                        f"You must join our update channel(s) before you can access these files.\n\n"
+                        f"<i>Once you've joined, click <b>Tʀʏ Aɢᴀɪɴ</b> below to unlock your files!</i>"
                     )
             await message.reply_text(txt, reply_markup=InlineKeyboardMarkup(rows))
             return
@@ -278,8 +277,8 @@ async def _process_start(client, message):
         logger.warning(f"get_chat peer resolution failed: {peer_err}")
 
     # Mark user as FSub approved for this bot (they've either passed check or had no FSub requirement)
-    if bot_id:
-        await db.save_user_fsub_approved(bot_id, user_id)
+    # Don't cache here anymore — user must be checked every time.
+    pass
 
     # Send actual files
     sent_ids = []
@@ -341,7 +340,7 @@ async def _process_start(client, message):
 
     for msg_id in msg_ids:
         if dl_id not in active_downloads:
-            return  # cancel handler already edited the status
+            break  # cancel handler already edited the status
         try:
             kwargs = {
                 "chat_id": user_id,
@@ -357,7 +356,7 @@ async def _process_start(client, message):
         except Exception as copy_err:
             logger.warning(f"copy_message failed for msg {msg_id}: {copy_err}")
             fail_count += 1
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.05)
 
     active_downloads.discard(dl_id)
     try:
@@ -715,7 +714,6 @@ async def _process_fsub_check(client, query):
     
     # 1. Animation Step 1
     await query.message.edit_text("Lᴇᴛ ᴍᴇ ᴄʜᴇᴄᴋ ꜰᴏʀ ʏᴏᴜ...")
-    await asyncio.sleep(1.5)
     
     bot_id = str(client.me.id) if client.me else None
     user_id = query.from_user.id
