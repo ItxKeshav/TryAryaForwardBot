@@ -28,19 +28,19 @@ async def _main_buttons(user_id: int):
             InlineKeyboardButton(_tx(lang, 'btn_jobs'),     callback_data='job#list'),
         ],
         [
-            InlineKeyboardButton('»  Mᴜʟᴛɪ Jᴏʙ',    callback_data='mj#list'),
-            InlineKeyboardButton('»  Mᴇʀɢᴇʀ Jᴏʙ',   callback_data='mg#main'),
+            InlineKeyboardButton('Mᴜʟᴛɪ Jᴏʙ',    callback_data='mj#list'),
+            InlineKeyboardButton('Mᴇʀɢᴇʀ Jᴏʙ',   callback_data='mg#main'),
         ],
         [
-            InlineKeyboardButton('»  Cʟᴇᴀɴᴇʀ Jᴏʙ', callback_data='cl#main'),
-            InlineKeyboardButton('»  Cʟᴇᴀɴ MSG',    callback_data='settings#cleanmsg'),
+            InlineKeyboardButton('Cʟᴇᴀɴᴇʀ Jᴏʙ', callback_data='cl#main'),
+            InlineKeyboardButton('Cʟᴇᴀɴ MSG',    callback_data='settings#cleanmsg'),
         ],
         [
-            InlineKeyboardButton('»  Bᴀᴛᴄʜ Lɪɴᴋs',  callback_data='sl#start'),
-            InlineKeyboardButton('Sᴛᴀᴛᴜs',         callback_data='status'),
+            InlineKeyboardButton('Bᴀᴛᴄʜ Lɪɴᴋs',  callback_data='sl#start'),
+            InlineKeyboardButton('Sᴛᴀᴛᴜs',        callback_data='status'),
         ],
         [
-            InlineKeyboardButton('Aʙᴏᴜᴛ',           callback_data='about'),
+            InlineKeyboardButton('Aʙᴏᴜᴛ',          callback_data='about'),
         ],
     ]
 

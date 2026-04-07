@@ -87,8 +87,284 @@ async def settings(client, message):
         await t(user_id, 'settings_title'),
         reply_markup=await main_buttons(user_id)
     )
-    
-@Client.on_callback_query(filters.regex(r'^settings#(?!lang$|cleanmsg$|enhancer$|enh#)'))
+
+
+def is_owner(user_id: int) -> bool:
+    """Returns True if user_id is a primary or co-owner (checked sync from Config)."""
+    return user_id in Config.BOT_OWNER_ID
+
+async def is_any_owner(user_id: int) -> bool:
+    """Returns True if primary owner or co-owner stored in DB."""
+    if is_owner(user_id):
+        return True
+    return await db.is_co_owner(user_id)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Protected Chats — settings#protected / settings#prot_*
+# ══════════════════════════════════════════════════════════════════════════════
+
+@Client.on_callback_query(filters.regex(r'^settings#(protected|prot_)'))
+async def protected_chats_cb(bot, query):
+    uid = query.from_user.id
+    if not await is_any_owner(uid):
+        return await query.answer("⛔ Owner only!", show_alert=True)
+    await query.answer()
+    data = query.data.split("#", 1)[1]
+
+    if data == "protected":
+        chats = await db.get_protected_chats()
+        btns = []
+        for c in chats:
+            cid = c['chat_id']
+            title = c.get('title', str(cid))
+            btns.append([InlineKeyboardButton(f"🔒 {title}", callback_data=f"settings#prot_view_{cid}")])
+        btns.append([InlineKeyboardButton("➕ Pʀᴏᴛᴇᴄᴛ Nᴇᴡ Cʜᴀᴛ", callback_data="settings#prot_add")])
+        btns.append([InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#main")])
+        txt = (
+            "<b><u>🔒 Protected Chats</u></b>\n\n"
+            "<i>Bot will block all forwarding/jobs from these channels/groups/DMs "
+            "and show a protection error instead.</i>\n\n"
+            f"<b>Total Protected: {len(chats)}</b>"
+        )
+        await query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(btns))
+
+    elif data.startswith("prot_view_"):
+        cid = data.split("prot_view_")[1]
+        chats = await db.get_protected_chats()
+        c = next((x for x in chats if str(x['chat_id']) == str(cid)), None)
+        if not c:
+            return await query.answer("Not found!", show_alert=True)
+        txt = (
+            f"<b>🔒 Protected Chat</b>\n\n"
+            f"<b>Title:</b> {c.get('title', 'Unknown')}\n"
+            f"<b>Chat ID:</b> <code>{c['chat_id']}</code>\n"
+            f"<b>Reason:</b> {c.get('reason', 'No reason set')}"
+        )
+        btns = [
+            [InlineKeyboardButton("🗑 Rᴇᴍᴏᴠᴇ Pʀᴏᴛᴇᴄᴛɪᴏɴ", callback_data=f"settings#prot_rm_{cid}")],
+            [InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#protected")]
+        ]
+        await query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(btns))
+
+    elif data.startswith("prot_rm_"):
+        cid = data.split("prot_rm_")[1]
+        removed = await db.remove_protected_chat(int(cid))
+        await query.answer("Removed!" if removed else "Not found.", show_alert=True)
+        query.data = "settings#protected"
+        return await protected_chats_cb(bot, query)
+
+    elif data == "prot_add":
+        await query.message.delete()
+        ask = await bot.send_message(
+            uid,
+            "<b>🔒 Add Protected Chat</b>\n\n"
+            "Forward a message from the channel/group/bot-DM you want to protect, "
+            "OR send its numeric Chat ID (e.g. -100123456789).\n\n"
+            "Optionally add a reason after a space:\n"
+            "<code>-100123456789 my private channel</code>\n\n"
+            "/cancel to abort."
+        )
+        try:
+            resp = await _ask(bot, uid, timeout=120)
+            txt = (resp.text or "").strip()
+            if "/cancel" in txt.lower():
+                await resp.delete()
+                return await ask.edit_text("Cancelled.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#protected")]]))
+
+            # Parse chat_id and optional reason
+            fwd_chat = getattr(resp, 'forward_from_chat', None)
+            chat_id = None
+            title = ""
+            reason = ""
+            if fwd_chat:
+                chat_id = fwd_chat.id
+                title = fwd_chat.title or str(chat_id)
+            elif txt:
+                parts = txt.split(None, 1)
+                raw_id = parts[0]
+                reason = parts[1] if len(parts) > 1 else ""
+                if raw_id.lstrip('-').isdigit():
+                    chat_id = int(raw_id)
+                    try:
+                        ci = await bot.get_chat(chat_id)
+                        title = ci.title or ci.first_name or str(chat_id)
+                    except Exception:
+                        title = str(chat_id)
+
+            await resp.delete()
+            if not chat_id:
+                return await ask.edit_text("Could not resolve Chat ID. Please forward a message or send a valid ID.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#protected")]]))
+
+            added = await db.add_protected_chat(chat_id, title, reason)
+            msg = f"✅ <b>{title}</b> is now protected!" if added else "⚠️ Already protected."
+            await ask.edit_text(msg,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#protected")]]))
+        except asyncio.TimeoutError:
+            await ask.edit_text("Timeout.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#protected")]]))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Owners / Co-Owners + User Limits — settings#owners / settings#owner_*
+# ══════════════════════════════════════════════════════════════════════════════
+
+@Client.on_callback_query(filters.regex(r'^settings#(owners|owner_|limits_)'))
+async def owners_cb(bot, query):
+    uid = query.from_user.id
+    is_primary = uid in Config.BOT_OWNER_ID
+    is_any = await is_any_owner(uid)
+    if not is_any:
+        return await query.answer("⛔ Owner only!", show_alert=True)
+    await query.answer()
+    data = query.data.split("#", 1)[1]
+
+    if data == "owners":
+        primary = Config.BOT_OWNER_ID
+        co = await db.get_co_owners()
+        limits = await db.get_global_user_limits()
+        btns = []
+        # Primary owners (read-only)
+        btns.append([InlineKeyboardButton("⭐ Pʀɪᴍᴀʀʏ Oᴡɴᴇʀs", callback_data="settings#noop")])
+        for pid in primary:
+            btns.append([InlineKeyboardButton(f"🟡 {pid} (primary)", callback_data="settings#noop")])
+        # Co owners
+        btns.append([InlineKeyboardButton("👑 Cᴏ-Oᴡɴᴇʀs", callback_data="settings#noop")])
+        for cid in co:
+            btns.append([InlineKeyboardButton(f"🔵 {cid}", callback_data=f"settings#owner_rm_{cid}")])
+        if is_primary:
+            btns.append([InlineKeyboardButton("➕ Aᴅᴅ Cᴏ-Oᴡɴᴇʀ", callback_data="settings#owner_add")])
+        btns.append([InlineKeyboardButton("⚙️ Gʟᴏʙᴀʟ Lɪᴍɪᴛs", callback_data="settings#limits_global")])
+        btns.append([InlineKeyboardButton("🔧 Sᴇᴛ Usᴇʀ Lɪᴍɪᴛ", callback_data="settings#limits_user")])
+        btns.append([InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#main")])
+        txt = (
+            "<b><u>👑 Owner Management</u></b>\n\n"
+            f"<b>Primary Owners:</b> {len(primary)}\n"
+            f"<b>Co-Owners:</b> {len(co)}\n\n"
+            f"<b>Global User Limits:</b>\n"
+            f"  Live Jobs: <code>{limits.get('max_live_jobs', 3)}</code>\n"
+            f"  Multi Jobs: <code>{limits.get('max_multi_jobs', 2)}</code>\n"
+            f"  Merge Jobs: <code>{limits.get('max_merge_jobs', 1)}</code>\n"
+            f"  Accounts: <code>{limits.get('max_accounts', 2)}</code>\n\n"
+            "<i>Tap a co-owner to remove. Primary owners cannot be removed here.</i>"
+        )
+        await query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(btns))
+
+    elif data == "owner_add":
+        if not is_primary:
+            return await query.answer("Only primary owners can add co-owners!", show_alert=True)
+        await query.message.delete()
+        ask = await bot.send_message(uid,
+            "<b>➕ Add Co-Owner</b>\n\n"
+            "Send the Telegram User ID of the person you want to make a co-owner.\n\n"
+            "/cancel to abort.")
+        try:
+            resp = await _ask(bot, uid, timeout=120)
+            txt = (resp.text or "").strip()
+            await resp.delete()
+            if "/cancel" in txt.lower():
+                return await ask.edit_text("Cancelled.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#owners")]]))
+            if not txt.lstrip('-').isdigit():
+                return await ask.edit_text("Invalid user ID.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#owners")]]))
+            new_uid = int(txt)
+            added = await db.add_co_owner(new_uid)
+            msg = f"✅ <code>{new_uid}</code> added as co-owner!" if added else "⚠️ Already a co-owner."
+            await ask.edit_text(msg,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#owners")]]))
+        except asyncio.TimeoutError:
+            await ask.edit_text("Timeout.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#owners")]]))
+
+    elif data.startswith("owner_rm_"):
+        if not is_primary:
+            return await query.answer("Only primary owners can remove co-owners!", show_alert=True)
+        rm_id = int(data.split("owner_rm_")[1])
+        removed = await db.remove_co_owner(rm_id)
+        await query.answer(f"Removed {rm_id}" if removed else "Not found.", show_alert=True)
+        query.data = "settings#owners"
+        return await owners_cb(bot, query)
+
+    elif data == "limits_global":
+        await query.message.delete()
+        limits = await db.get_global_user_limits()
+        ask = await bot.send_message(uid, 
+            "<b>⚙️ Set Global User Limits</b>\n\n"
+            f"Current: Live={limits.get('max_live_jobs',3)} Multi={limits.get('max_multi_jobs',2)} Merge={limits.get('max_merge_jobs',1)} Accounts={limits.get('max_accounts',2)}\n\n"
+            "Send in format: <code>live=5 multi=3 merge=2 accounts=4</code>\n"
+            "Use -1 for unlimited.\n/cancel to abort.")
+        try:
+            resp = await _ask(bot, uid, timeout=120)
+            txt = (resp.text or "").strip()
+            await resp.delete()
+            if "/cancel" in txt.lower():
+                return await ask.edit_text("Cancelled.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#owners")]]))
+            import re as _re
+            kmap = {'live': 'max_live_jobs', 'multi': 'max_multi_jobs',
+                    'merge': 'max_merge_jobs', 'accounts': 'max_accounts'}
+            updates = {}
+            for k, dbk in kmap.items():
+                m = _re.search(rf'{k}\s*=\s*(-?\d+)', txt, _re.I)
+                if m:
+                    updates[dbk] = int(m.group(1))
+            if updates:
+                await db.set_global_user_limits(**updates)
+                await ask.edit_text(f"✅ Global limits updated: {updates}",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#owners")]]))
+            else:
+                await ask.edit_text("No valid values found. Format: live=5 multi=3",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#owners")]]))
+        except asyncio.TimeoutError:
+            await ask.edit_text("Timeout.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#owners")]]))
+
+    elif data == "limits_user":
+        await query.message.delete()
+        ask = await bot.send_message(uid,
+            "<b>🔧 Set User-Specific Limits</b>\n\n"
+            "Send: <code>USER_ID live=3 multi=2 merge=1 accounts=2</code>\n"
+            "Use -1 for unlimited. Use /reset USER_ID to reset to global limits.\n"
+            "/cancel to abort.")
+        try:
+            resp = await _ask(bot, uid, timeout=120)
+            txt = (resp.text or "").strip()
+            await resp.delete()
+            if "/cancel" in txt.lower():
+                return await ask.edit_text("Cancelled.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#owners")]]))
+            import re as _re2
+            if txt.startswith("/reset "):
+                uid_str = txt.split(None, 1)[1].strip()
+                if uid_str.isdigit():
+                    await db.reset_user_limits(int(uid_str))
+                    return await ask.edit_text(f"✅ Limits reset for {uid_str}",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#owners")]]))
+            parts = txt.split(None, 1)
+            if not parts[0].lstrip('-').isdigit():
+                return await ask.edit_text("Invalid format. Start with user ID.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#owners")]]))
+            target_uid = int(parts[0])
+            rest = parts[1] if len(parts) > 1 else ""
+            kmap2 = {'live': 'max_live_jobs', 'multi': 'max_multi_jobs',
+                     'merge': 'max_merge_jobs', 'accounts': 'max_accounts'}
+            updates2 = {}
+            for k2, dbk2 in kmap2.items():
+                m2 = _re2.search(rf'{k2}\s*=\s*(-?\d+)', rest, _re2.I)
+                if m2:
+                    await db.set_user_limit(target_uid, dbk2, int(m2.group(1)))
+                    updates2[k2] = int(m2.group(1))
+            msg2 = f"✅ Limits set for <code>{target_uid}</code>: {updates2}" if updates2 else "No valid values found."
+            await ask.edit_text(msg2,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#owners")]]))
+        except asyncio.TimeoutError:
+            await ask.edit_text("Timeout.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#owners")]]))
+
+@Client.on_callback_query(filters.regex(r'^settings#(?!lang$|cleanmsg$|enhancer$|enh#|protected|owners|prot_|owner_|limits_)'))
 async def settings_query(bot, query):
   user_id = query.from_user.id
   i, type = query.data.split("#")
@@ -1885,7 +2161,7 @@ async def main_buttons(user_id=None):
   if mode == 'merger':
       #  MERGER MODE: Clean separate menu 
       buttons = [[
-           InlineKeyboardButton('Mᴇʀɢᴇʀ Mᴏᴅᴇ ⟶ Tᴀᴘ Tᴏ Sᴡɪᴛᴄʜ',
+           InlineKeyboardButton('Mᴇʀɢᴇʀ Mᴏᴅᴇ  Tᴀᴘ Tᴏ Sᴡɪᴛᴄʜ',
                         callback_data='settings#toggle_mode')
            ],[
            InlineKeyboardButton('Aᴄᴄᴏᴜɴᴛs',
@@ -1898,15 +2174,15 @@ async def main_buttons(user_id=None):
            InlineKeyboardButton('Vɪᴅᴇᴏ Mᴇʀɢᴇ',
                         callback_data='mg#video_list')
            ],[
-           InlineKeyboardButton('Bᴀᴛᴄʜ Lɪɴᴋs Bᴏᴛ Sᴇᴛᴜᴘ',
+           InlineKeyboardButton('Bᴀᴛᴄʜ Lɪɴᴋs',
                         callback_data='settings#sharebot')
            ],[
-           InlineKeyboardButton('❮ Bᴀᴄᴋ Tᴏ Mᴇɴᴜ', callback_data='back')
+           InlineKeyboardButton('❮ Bᴀᴄᴋ', callback_data='back')
            ]]
   else:
       #  FORWARD MODE: Full original menu 
       buttons = [[
-           InlineKeyboardButton('↔️ Fᴏʀᴡᴀʀᴅ Mᴏᴅᴇ ⟶ Tᴀᴘ Tᴏ Sᴡɪᴛᴄʜ',
+           InlineKeyboardButton('Fᴏʀᴡᴀʀᴅ Mᴏᴅᴇ  Tᴀᴘ Tᴏ Sᴡɪᴛᴄʜ',
                         callback_data='settings#toggle_mode')
            ],[
            InlineKeyboardButton('Aᴄᴄᴏᴜɴᴛs',
@@ -1922,19 +2198,26 @@ async def main_buttons(user_id=None):
            InlineKeyboardButton('EN/हि',
                         callback_data='settings#lang')
            ],[
-           InlineKeyboardButton('💻 SʏsMᴏɴ Sᴛᴀᴛs',
+           InlineKeyboardButton('Sʏs Mᴏɴ',
                         callback_data='sysmon#stats'),
-           InlineKeyboardButton(('🖼✅ Mᴇɴᴜ Iᴍᴀɢᴇ' if menu_image_id else 'Mᴀɪɴ Mᴇɴᴜ Iᴍᴀɢᴇ'),
+           InlineKeyboardButton(('🖼✅ Mᴇɴᴜ Iᴍɢ' if menu_image_id else 'Mᴇɴᴜ Iᴍɢ'),
                         callback_data='settings#main_menu_img')
-           ] + ([InlineKeyboardButton('🗑 Rᴇᴍᴏᴠᴇ Iᴍɢ', callback_data='settings#main_menu_clr')] if menu_image_id else []) + [
-           InlineKeyboardButton('Bᴀᴛᴄʜ Lɪɴᴋs Bᴏᴛ Sᴇᴛᴜᴘ',
+           ] + ([InlineKeyboardButton('🗑 Rᴇᴍ Iᴍɢ', callback_data='settings#main_menu_clr')] if menu_image_id else []),
+           [
+           InlineKeyboardButton('Bᴀᴛᴄʜ Lɪɴᴋs',
                         callback_data='settings#sharebot'),
-           InlineKeyboardButton('A I  E ɴ ʜ ᴀ ɴ ᴄ ᴇ ʀ',
+           InlineKeyboardButton('Lᴇᴛ\'s Eɴʜᴀɴᴄᴇ',
                         callback_data='settings#enhancer')
            ],[
-           InlineKeyboardButton('❮ Bᴀᴄᴋ Tᴏ Mᴇɴᴜ', callback_data='back')
+           InlineKeyboardButton('Pʀᴏᴛᴇᴄᴛᴇᴅ Cʜᴀᴛs',
+                        callback_data='settings#protected'),
+           InlineKeyboardButton('Oᴡɴᴇʀs',
+                        callback_data='settings#owners')
+           ],[
+           InlineKeyboardButton('❮ Bᴀᴄᴋ', callback_data='back')
            ]]
   return InlineKeyboardMarkup(buttons)
+
 
 
 

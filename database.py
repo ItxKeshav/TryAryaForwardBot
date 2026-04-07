@@ -592,6 +592,7 @@ class Database:
         """Count running Live Jobs."""
         return await self.db.jobs.count_documents({'status': 'running'})
 
+
     # ── AI Enhancer Config ────────────────────────────────────────────────────
     async def get_enhancer_config(self) -> dict:
         """Returns the global AI Enhancer config dict."""
@@ -605,5 +606,126 @@ class Database:
             {'$set': kwargs},
             upsert=True
         )
+
+    # ── Protected Chats ───────────────────────────────────────────────────────
+    # A "protected chat" is any source channel/group/bot DM that the owner has
+    # marked as off-limits. If a user's job tries to source from one, it gets
+    # blocked with a custom error message before any forwarding happens.
+
+    async def get_protected_chats(self) -> list:
+        """Returns list of dicts: [{chat_id, title, reason}]"""
+        doc = await self.stats.find_one({'_id': 'protected_chats'})
+        return doc.get('chats', []) if doc else []
+
+    async def add_protected_chat(self, chat_id: int, title: str = '', reason: str = '') -> bool:
+        """Add a chat to the protected list. Returns False if already exists."""
+        existing = await self.get_protected_chats()
+        if any(str(c['chat_id']) == str(chat_id) for c in existing):
+            return False
+        await self.stats.update_one(
+            {'_id': 'protected_chats'},
+            {'$push': {'chats': {'chat_id': str(chat_id), 'title': title, 'reason': reason}}},
+            upsert=True
+        )
+        return True
+
+    async def remove_protected_chat(self, chat_id: int) -> bool:
+        """Remove a chat from the protected list. Returns False if not found."""
+        existing = await self.get_protected_chats()
+        new = [c for c in existing if str(c['chat_id']) != str(chat_id)]
+        if len(new) == len(existing):
+            return False
+        await self.stats.update_one(
+            {'_id': 'protected_chats'},
+            {'$set': {'chats': new}},
+            upsert=True
+        )
+        return True
+
+    async def is_chat_protected(self, chat_id) -> dict | None:
+        """Returns the protected chat doc if chat_id is protected, else None."""
+        chats = await self.get_protected_chats()
+        for c in chats:
+            if str(c['chat_id']) == str(chat_id):
+                return c
+        return None
+
+    # ── Multi-Owner / Co-Owner System ─────────────────────────────────────────
+    # The primary owner(s) come from .env BOT_OWNER_ID.
+    # Co-owners are stored in DB and have the same privileges EXCEPT they
+    # cannot add/remove other co-owners (only primary can do that).
+
+    async def get_co_owners(self) -> list:
+        """Returns list of co-owner user IDs (ints)."""
+        doc = await self.stats.find_one({'_id': 'co_owners'})
+        return [int(x) for x in doc.get('ids', [])] if doc else []
+
+    async def add_co_owner(self, user_id: int) -> bool:
+        """Add a co-owner. Returns False if already exists."""
+        existing = await self.get_co_owners()
+        if user_id in existing:
+            return False
+        await self.stats.update_one(
+            {'_id': 'co_owners'},
+            {'$addToSet': {'ids': str(user_id)}},
+            upsert=True
+        )
+        return True
+
+    async def remove_co_owner(self, user_id: int) -> bool:
+        """Remove a co-owner. Returns False if not found."""
+        existing = await self.get_co_owners()
+        if user_id not in existing:
+            return False
+        await self.stats.update_one(
+            {'_id': 'co_owners'},
+            {'$pull': {'ids': str(user_id)}},
+        )
+        return True
+
+    async def is_co_owner(self, user_id: int) -> bool:
+        co = await self.get_co_owners()
+        return user_id in co
+
+    # ── Per-User Limits ───────────────────────────────────────────────────────
+    # Owners are unlimited. Regular users are capped by global default or
+    # per-user overrides set by the owner.
+    # Limit keys: max_live_jobs, max_multi_jobs, max_merge_jobs, max_accounts
+
+    async def get_global_user_limits(self) -> dict:
+        """Returns global defaults applied to non-owner users."""
+        doc = await self.stats.find_one({'_id': 'global_user_limits'})
+        return doc or {'max_live_jobs': 3, 'max_multi_jobs': 2,
+                       'max_merge_jobs': 1, 'max_accounts': 2}
+
+    async def set_global_user_limits(self, **kwargs):
+        await self.stats.update_one(
+            {'_id': 'global_user_limits'},
+            {'$set': kwargs},
+            upsert=True
+        )
+
+    async def get_user_limits(self, user_id: int) -> dict:
+        """Per-user override. Falls back to global limits if not set."""
+        doc = await self.col.find_one({'_id': user_id})
+        overrides = doc.get('limits', {}) if doc else {}
+        defaults = await self.get_global_user_limits()
+        return {**defaults, **overrides}
+
+    async def set_user_limit(self, user_id: int, key: str, value: int):
+        """Set a specific limit for a user. value=-1 means unlimited."""
+        await self.col.update_one(
+            {'_id': user_id},
+            {'$set': {f'limits.{key}': value}},
+            upsert=True
+        )
+
+    async def reset_user_limits(self, user_id: int):
+        """Remove per-user limit overrides, reverting to global defaults."""
+        await self.col.update_one(
+            {'_id': user_id},
+            {'$unset': {'limits': ''}}
+        )
+
 
 db = Database(Config.DATABASE_URI, Config.DATABASE_NAME)

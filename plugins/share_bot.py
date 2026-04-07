@@ -227,23 +227,16 @@ async def _process_start(client, message):
         if not_joined:
             f_buttons = []  # User needs to join more channels
             channel_num = 1
-            ordinals = [
-                ("First", "🫠"), ("Second", "😮"), ("Third", "🤧"), 
-                ("Fourth", "🥲"), ("Fifth", "🙃"), ("Sixth", "🤭"),
-                ("Seventh", "🫡"), ("Eighth", "🫣")
-            ]
+            # Ordinal labels in delivery bot small-caps font style
+            _ordinal_sfx = ['ꜱᴛ','ɴᴅ','ʀᴅ','ᴛʜ','ᴛʜ','ᴛʜ','ᴛʜ','ᴛʜ']
             for ch in not_joined:
                 invite  = ch.get('invite_link', '')
                 is_jr   = ch.get('join_request', False)
-                if channel_num - 1 < len(ordinals):
-                    word, em = ordinals[channel_num - 1]
-                    label = f"{word} Channel {em}"
-                else:
-                    label = f"Channel {channel_num} 🫠"
+                sfx = _ordinal_sfx[min(channel_num - 1, 7)]
+                label = f"{channel_num}{sfx} Cʜᴀɴɴᴇʟ"
                 channel_num += 1
                 if invite:
-                    emoji = "» " if is_jr else "» "
-                    f_buttons.append(InlineKeyboardButton(f"{emoji} {label}", url=invite))
+                    f_buttons.append(InlineKeyboardButton(label, url=invite))
 
             rows = []
             for i in range(0, len(f_buttons), 2):
@@ -281,7 +274,7 @@ async def _process_start(client, message):
                     txt = (
                         f"<b>🔒  Aᴄᴄᴇss Dᴇɴɪᴇᴅ</b>\n\n"
                         f"Hey <b>{user_name}</b>,\n"
-                        f"You must send a <b>Join Request</b> to the channel(s) below to view this content.\n\n"
+                        f"You must send a <b>Jᴏɪɴ Rᴇǫᴜᴇsᴛ</b> to the channel(s) below to view this content.\n\n"
                         f"<i>Once you've sent your request, click <b>Tʀʏ Aɢᴀɪɴ</b> below for instant access!</i>"
                     )
                 else:
@@ -380,7 +373,7 @@ async def _process_start(client, message):
         except Exception as copy_err:
             logger.warning(f"copy_message failed for msg {msg_id}: {copy_err}")
             fail_count += 1
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.02)
 
     active_downloads.discard(dl_id)
     try:

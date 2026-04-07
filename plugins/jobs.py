@@ -393,6 +393,29 @@ async def _run_job(job_id: str, user_id: int):
 
         from_chat    = job["from_chat"]
         to_chat      = job["to_chat"]
+
+        # ── Protected Chat Guard ───────────────────────────────────────────────
+        # Check if the source (from_chat) is in the owner's protected list.
+        # If yes, immediately block the job with a clear error.
+        prot = await db.is_chat_protected(from_chat)
+        if prot:
+            reason_txt = prot.get('reason', '') or 'Owner has protected this chat.'
+            title_txt  = prot.get('title', str(from_chat))
+            err = (
+                f"🔒 Protection Active: <b>{title_txt}</b>\n\n"
+                f"This source chat is protected by the owner and cannot be used "
+                f"as a forwarding source.\n\n"
+                f"<i>Reason: {reason_txt}</i>"
+            )
+            await _update_job(job_id, status="error", error=err)
+            # Notify the user
+            try:
+                await client.send_message(job["user_id"], err)
+            except Exception:
+                pass
+            return
+        # ──────────────────────────────────────────────────────────────────────
+
         to_thread    = job.get("to_thread_id", None)
         to_chat_2    = job.get("to_chat_2", None)
         to_thread_2  = job.get("to_thread_id_2", None)
