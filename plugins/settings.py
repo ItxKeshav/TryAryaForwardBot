@@ -211,7 +211,7 @@ async def protected_chats_cb(bot, query):
 # Owners / Co-Owners + User Limits — settings#owners / settings#owner_*
 # ══════════════════════════════════════════════════════════════════════════════
 
-@Client.on_callback_query(filters.regex(r'^settings#(owners|owner_|limits_)'))
+@Client.on_callback_query(filters.regex(r'^settings#(owners|owner_|limits_|features_|features$)'))
 async def owners_cb(bot, query):
     uid = query.from_user.id
     is_primary = uid in Config.BOT_OWNER_ID
@@ -221,10 +221,46 @@ async def owners_cb(bot, query):
     await query.answer()
     data = query.data.split("#", 1)[1]
 
+    # ── Features Toggle Panel ─────────────────────────────────────────────────
+    if data in ("features", ) or data.startswith("features_"):
+        from plugins.owner_utils import FEATURE_LABELS, get_disabled_features, set_feature_disabled
+        disabled = await get_disabled_features()
+
+        if data == "features":
+            btns = []
+            for fkey, flabel in FEATURE_LABELS.items():
+                status = "🔴 OFF" if fkey in disabled else "🟢 ON"
+                btns.append([InlineKeyboardButton(
+                    f"{flabel}  —  {status}",
+                    callback_data=f"settings#features_{fkey}"
+                )])
+            btns.append([InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#owners")])
+            txt = (
+                "<b><u>🔧 Feature Controls</u></b>\n\n"
+                "Toggle features on or off for <b>non-owner users</b>.\n"
+                "<i>Owners are always exempt from restrictions.</i>\n\n"
+                + ("<b>Currently Disabled:</b> " + ", ".join(FEATURE_LABELS.get(f, f) for f in disabled) if disabled else "<i>All features are currently enabled.</i>")
+            )
+            return await query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(btns))
+
+        # Toggle a specific feature
+        fkey = data.split("features_", 1)[1]
+        was_disabled = fkey in disabled
+        await set_feature_disabled(fkey, not was_disabled)
+        label = FEATURE_LABELS.get(fkey, fkey)
+        state = "🔴 Disabled" if not was_disabled else "🟢 Enabled"
+        await query.answer(f"{label} is now {state}", show_alert=False)
+        # Refresh features panel
+        query.data = "settings#features"
+        return await owners_cb(bot, query)
+
+    # ── Owners Management ─────────────────────────────────────────────────────
     if data == "owners":
         primary = Config.BOT_OWNER_ID
         co = await db.get_co_owners()
         limits = await db.get_global_user_limits()
+        from plugins.owner_utils import get_disabled_features, FEATURE_LABELS
+        disabled = await get_disabled_features()
         btns = []
         # Primary owners (read-only)
         btns.append([InlineKeyboardButton("⭐ Pʀɪᴍᴀʀʏ Oᴡɴᴇʀs", callback_data="settings#noop")])
@@ -233,22 +269,26 @@ async def owners_cb(bot, query):
         # Co owners
         btns.append([InlineKeyboardButton("👑 Cᴏ-Oᴡɴᴇʀs", callback_data="settings#noop")])
         for cid in co:
-            btns.append([InlineKeyboardButton(f"🔵 {cid}", callback_data=f"settings#owner_rm_{cid}")])
+            btns.append([InlineKeyboardButton(f"🔵 {cid}  —  tap to remove", callback_data=f"settings#owner_rm_{cid}")])
         if is_primary:
             btns.append([InlineKeyboardButton("➕ Aᴅᴅ Cᴏ-Oᴡɴᴇʀ", callback_data="settings#owner_add")])
-        btns.append([InlineKeyboardButton("⚙️ Gʟᴏʙᴀʟ Lɪᴍɪᴛs", callback_data="settings#limits_global")])
-        btns.append([InlineKeyboardButton("🔧 Sᴇᴛ Usᴇʀ Lɪᴍɪᴛ", callback_data="settings#limits_user")])
+        btns.append([
+            InlineKeyboardButton("⚙️ Gʟᴏʙᴀʟ Lɪᴍɪᴛs", callback_data="settings#limits_global"),
+            InlineKeyboardButton("🔧 Usᴇʀ Lɪᴍɪᴛ", callback_data="settings#limits_user")
+        ])
+        btns.append([InlineKeyboardButton(f"🔌 Fᴇᴀᴛᴜʀᴇs ({len(disabled)} ᴅɪsᴀʙʟᴇᴅ)", callback_data="settings#features")])
         btns.append([InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="settings#main")])
         txt = (
             "<b><u>👑 Owner Management</u></b>\n\n"
-            f"<b>Primary Owners:</b> {len(primary)}\n"
-            f"<b>Co-Owners:</b> {len(co)}\n\n"
+            f"<b>Primary Owners:</b> {len(primary)}  |  <b>Co-Owners:</b> {len(co)}\n\n"
             f"<b>Global User Limits:</b>\n"
-            f"  Live Jobs: <code>{limits.get('max_live_jobs', 3)}</code>\n"
-            f"  Multi Jobs: <code>{limits.get('max_multi_jobs', 2)}</code>\n"
-            f"  Merge Jobs: <code>{limits.get('max_merge_jobs', 1)}</code>\n"
-            f"  Accounts: <code>{limits.get('max_accounts', 2)}</code>\n\n"
-            "<i>Tap a co-owner to remove. Primary owners cannot be removed here.</i>"
+            f"  Live Jobs: <code>{limits.get('max_live_jobs', 3)}</code>  "
+            f"Multi Jobs: <code>{limits.get('max_multi_jobs', 2)}</code>\n"
+            f"  Merge Jobs: <code>{limits.get('max_merge_jobs', 1)}</code>  "
+            f"Accounts: <code>{limits.get('max_accounts', 2)}</code>\n\n"
+            "<b>Feature Controls:</b>\n"
+            + ("  Disabled: " + ", ".join(FEATURE_LABELS.get(f, f) for f in disabled) if disabled else "  All features currently enabled.")
+            + "\n\n<i>Co-owners have FULL bot control. Only primary owners can add/remove other owners.</i>"
         )
         await query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(btns))
 
@@ -572,11 +612,12 @@ async def settings_query(bot, query):
      
      buttons = []
      buttons.append([InlineKeyboardButton(f"Pʀᴏᴛᴇᴄᴛɪᴏɴ:{ptxt}", callback_data="settings#sharebotprotect")])
-     buttons.append([InlineKeyboardButton("Dᴇʟɪᴠᴇʀʏ Bᴏᴛs", callback_data="settings#noop")])
+     buttons.append([InlineKeyboardButton("— Dᴇʟɪᴠᴇʀʏ Bᴏᴛs —", callback_data="settings#noop")])
      for b in bots:
          buttons.append([InlineKeyboardButton(f"{b['name']}", callback_data=f"settings#sb_view_{b['id']}")])
      if len(bots) < 10:
-         buttons.append([InlineKeyboardButton('Aᴅᴅ Sʜᴀʀᴇ Bᴏᴛ', callback_data="settings#sb_add")])
+         buttons.append([InlineKeyboardButton("— Aᴄᴛɪᴏɴs —", callback_data="settings#noop")])
+         buttons.append([InlineKeyboardButton('➕ Aᴅᴅ Sʜᴀʀᴇ Bᴏᴛ', callback_data="settings#sb_add")])
      buttons.append([InlineKeyboardButton('❮ Bᴀᴄᴋ', callback_data="settings#main")])
      
      text = (
@@ -2174,7 +2215,7 @@ async def main_buttons(user_id=None):
            InlineKeyboardButton('Vɪᴅᴇᴏ Mᴇʀɢᴇ',
                         callback_data='mg#video_list')
            ],[
-           InlineKeyboardButton('Bᴀᴛᴄʜ Lɪɴᴋs',
+           InlineKeyboardButton('Dʟᴠʀ Bᴏᴛ Sᴇᴛᴜᴘ',
                         callback_data='settings#sharebot')
            ],[
            InlineKeyboardButton('❮ Bᴀᴄᴋ', callback_data='back')
@@ -2204,7 +2245,7 @@ async def main_buttons(user_id=None):
                         callback_data='settings#main_menu_img')
            ] + ([InlineKeyboardButton('🗑 Rᴇᴍ Iᴍɢ', callback_data='settings#main_menu_clr')] if menu_image_id else []),
            [
-           InlineKeyboardButton('Bᴀᴛᴄʜ Lɪɴᴋs',
+           InlineKeyboardButton('Dʟᴠʀ Bᴏᴛ Sᴇᴛᴜᴘ',
                         callback_data='settings#sharebot'),
            InlineKeyboardButton('Lᴇᴛ\'s Eɴʜᴀɴᴄᴇ',
                         callback_data='settings#enhancer')

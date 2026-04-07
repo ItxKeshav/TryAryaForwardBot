@@ -534,7 +534,10 @@ async def _cl_run_job(job_id: str, bot=None):
 # ─── UI Callback Handlers ────────────────────────────────────────────────────
 @Client.on_callback_query(filters.regex(r"^cl#(main|new|view|pause|resume|stop|del|cfg)"))
 async def _cl_callbacks(bot, update: CallbackQuery):
+    from plugins.owner_utils import is_feature_enabled, is_any_owner, FEATURE_LABELS
     uid = update.from_user.id
+    if not await is_any_owner(uid) and not await is_feature_enabled("cleaner"):
+        return await update.answer(f"🔒 {FEATURE_LABELS['cleaner']} is temporarily disabled by admin.", show_alert=True)
     data = update.data.split("#")
     action = data[1]
 

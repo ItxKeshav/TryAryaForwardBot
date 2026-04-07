@@ -1708,7 +1708,10 @@ async def _render_list(bot, uid, msg_or_q, mtype):
 
 @Client.on_callback_query(filters.regex(r'^mg#'))
 async def mg_cb(bot, query):
+    from plugins.owner_utils import is_feature_enabled, is_any_owner, FEATURE_LABELS
     uid = query.from_user.id
+    if not await is_any_owner(uid) and not await is_feature_enabled("merger"):
+        return await query.answer(f"🔒 {FEATURE_LABELS['merger']} is temporarily disabled by admin.", show_alert=True)
     parts = query.data.split("#", 2)
     action = parts[1] if len(parts) > 1 else ""
     param = parts[2] if len(parts) > 2 else ""

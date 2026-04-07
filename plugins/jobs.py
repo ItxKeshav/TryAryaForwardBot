@@ -1068,6 +1068,10 @@ async def _render_jobs_list(bot, user_id: int, message_or_query):
 
 @Client.on_message(filters.private & filters.command("jobs"))
 async def jobs_cmd(bot, message):
+    from plugins.owner_utils import is_feature_enabled, is_any_owner, FEATURE_LABELS, _DISABLED_MSG
+    uid = message.from_user.id
+    if not await is_any_owner(uid) and not await is_feature_enabled("live_job"):
+        return await message.reply_text(_DISABLED_MSG.format(feature=FEATURE_LABELS["live_job"]))
     await _render_jobs_list(bot, message.from_user.id, message)
 
 
@@ -1077,6 +1081,10 @@ async def jobs_cmd(bot, message):
 
 @Client.on_callback_query(filters.regex(r'^job#list$'))
 async def job_list_cb(bot, query):
+    from plugins.owner_utils import is_feature_enabled, is_any_owner, FEATURE_LABELS
+    uid = query.from_user.id
+    if not await is_any_owner(uid) and not await is_feature_enabled("live_job"):
+        return await query.answer(f"🔒 {FEATURE_LABELS['live_job']} is temporarily disabled by admin.", show_alert=True)
     await query.answer()
     await _render_jobs_list(bot, query.from_user.id, query)
 
@@ -1235,6 +1243,10 @@ async def job_new_cb(bot, query):
 
 @Client.on_message(filters.private & filters.command("newjob"))
 async def newjob_cmd(bot, message):
+    from plugins.owner_utils import is_feature_enabled, is_any_owner, FEATURE_LABELS, _DISABLED_MSG
+    uid = message.from_user.id
+    if not await is_any_owner(uid) and not await is_feature_enabled("live_job"):
+        return await message.reply_text(_DISABLED_MSG.format(feature=FEATURE_LABELS["live_job"]))
     await _create_job_flow(bot, message.from_user.id)
 
 

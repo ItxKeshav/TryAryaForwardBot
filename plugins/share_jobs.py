@@ -444,7 +444,10 @@ async def _create_share_flow(bot, user_id, force_live=False):
     
 @Client.on_callback_query(filters.regex(r'^sl#'))
 async def sl_callback(bot, query):
-    user_id = query.from_user.id
+    from plugins.owner_utils import is_feature_enabled, is_any_owner, FEATURE_LABELS
+    uid = query.from_user.id
+    if not await is_any_owner(uid) and not await is_feature_enabled("batch_links"):
+        return await query.answer(f"🔒 {FEATURE_LABELS['batch_links']} is temporarily disabled by admin.", show_alert=True)
     data = query.data.split('#')
     cmd = data[1]
 
