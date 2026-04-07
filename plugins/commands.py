@@ -433,3 +433,147 @@ async def replace_strings(bot, message):
     configs['replacements'] = replacements
     await db.update_configs(user_id, configs)
     await message.reply_text(f"»  Replacement added:\n\n<code>{old_text}</code> ➔ <code>{new_text}</code>")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# /workers  — Owner only: show all worker node statuses
+# ══════════════════════════════════════════════════════════════════════════════
+
+@Client.on_message(filters.private & filters.command("workers") & filters.user(Config.BOT_OWNER_ID))
+async def workers_status(bot, message):
+    import time as _time
+    WORKER_COLL = "worker_registry"
+    DEAD_THRESHOLD = 60   # seconds without heartbeat = considered dead
+
+    workers = [w async for w in db.db[WORKER_COLL].find({})]
+
+    if not workers:
+        return await message.reply_text(
+            "🖥 <b>Worker Nodes</b>\n\n"
+            "<i>No workers registered yet.\n"
+            "Deploy a worker and it will appear here automatically.</i>"
+        )
+
+    now = _time.time()
+    lines = ["🖥 <b>Worker Nodes — Live Status</b>\n"]
+
+    for w in sorted(workers, key=lambda x: x.get("name", "")):
+        name     = w.get("name", "Unknown")
+        host     = w.get("host", "?")
+        tasks    = ", ".join(w.get("tasks", [])) or "none"
+        hb       = w.get("last_heartbeat", 0)
+        age      = int(now - hb)
+        cur_job  = w.get("current_job")
+        cur_type = w.get("current_job_type", "")
+        started  = w.get("started_at", 0)
+
+        # Determine alive/dead
+        is_alive = age < DEAD_THRESHOLD
+        status_icon = "🟢" if is_alive else "🔴"
+        status_txt  = "Online" if is_alive else f"DEAD ({age}s ago)"
+
+        # Format uptime since started_at
+        if started:
+            up_secs = int(now - started)
+            d, rem  = divmod(up_secs, 86400)
+            h, rem  = divmod(rem, 3600)
+            m, _    = divmod(rem, 60)
+            uptime  = f"{d}d {h}h {m}m" if d else f"{h}h {m}m"
+        else:
+            uptime = "?"
+
+        # Current job line
+        if cur_job and is_alive:
+            job_line = f"  📌 <b>Running:</b> <code>{cur_type}</code> — <code>{cur_job[-8:]}</code>"
+        else:
+            job_line = "  💤 <b>Idle</b>" if is_alive else "  ❌ <b>No response</b>"
+
+        lines.append(
+            f"{status_icon} <b>{name}</b>\n"
+            f"  🖥 Host: <code>{host}</code>\n"
+            f"  ⚙️ Tasks: <code>{tasks}</code>\n"
+            f"  ⏱ Uptime: {uptime} | HB: {age}s ago\n"
+            f"  Status: {status_txt}\n"
+            f"{job_line}\n"
+        )
+
+    lines.append(
+        f"<i>🕐 Last checked: {_time.strftime('%I:%M %p IST')}"
+        f" | Dead threshold: {DEAD_THRESHOLD}s</i>"
+    )
+
+    kb = [[InlineKeyboardButton("🔄 Refresh", callback_data="workers_refresh")]]
+    await message.reply_text(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(kb),
+        parse_mode=enums.ParseMode.HTML,
+    )
+
+
+@Client.on_callback_query(filters.regex(r"^workers_refresh") & filters.user(Config.BOT_OWNER_ID))
+async def workers_refresh_cb(bot, query):
+    import time as _time
+    WORKER_COLL = "worker_registry"
+    DEAD_THRESHOLD = 60
+
+    workers = [w async for w in db.db[WORKER_COLL].find({})]
+    now = _time.time()
+
+    if not workers:
+        return await query.message.edit_text(
+            "🖥 <b>Worker Nodes</b>\n\n<i>No workers registered yet.</i>"
+        )
+
+    lines = ["🖥 <b>Worker Nodes — Live Status</b>\n"]
+    for w in sorted(workers, key=lambda x: x.get("name", "")):
+        name     = w.get("name", "Unknown")
+        host     = w.get("host", "?")
+        tasks    = ", ".join(w.get("tasks", [])) or "none"
+        hb       = w.get("last_heartbeat", 0)
+        age      = int(now - hb)
+        cur_job  = w.get("current_job")
+        cur_type = w.get("current_job_type", "")
+        started  = w.get("started_at", 0)
+
+        is_alive = age < DEAD_THRESHOLD
+        status_icon = "🟢" if is_alive else "🔴"
+        status_txt  = "Online" if is_alive else f"DEAD ({age}s ago)"
+
+        if started:
+            up_secs = int(now - started)
+            d, rem  = divmod(up_secs, 86400)
+            h, rem  = divmod(rem, 3600)
+            m, _    = divmod(rem, 60)
+            uptime  = f"{d}d {h}h {m}m" if d else f"{h}h {m}m"
+        else:
+            uptime = "?"
+
+        if cur_job and is_alive:
+            job_line = f"  📌 <b>Running:</b> <code>{cur_type}</code> — <code>{cur_job[-8:]}</code>"
+        else:
+            job_line = "  💤 <b>Idle</b>" if is_alive else "  ❌ <b>No response</b>"
+
+        lines.append(
+            f"{status_icon} <b>{name}</b>\n"
+            f"  🖥 Host: <code>{host}</code>\n"
+            f"  ⚙️ Tasks: <code>{tasks}</code>\n"
+            f"  ⏱ Uptime: {uptime} | HB: {age}s ago\n"
+            f"  Status: {status_txt}\n"
+            f"{job_line}\n"
+        )
+
+    lines.append(
+        f"<i>🕐 Last checked: {_time.strftime('%I:%M %p IST')}"
+        f" | Dead threshold: {DEAD_THRESHOLD}s</i>"
+    )
+
+    kb = [[InlineKeyboardButton("🔄 Refresh", callback_data="workers_refresh")]]
+    try:
+        await query.message.edit_text(
+            "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode=enums.ParseMode.HTML,
+        )
+    except Exception:
+        pass
+    await query.answer("✅ Refreshed!")
