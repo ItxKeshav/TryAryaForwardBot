@@ -148,6 +148,38 @@ async def _create_share_flow(bot, user_id, force_live=False):
             return await bot.send_message(user_id, "<b>‣  Target Channel not found.</b>", reply_markup=ReplyKeyboardRemove())
         new_share_job[user_id]['target'] = int(ch['chat_id'])
 
+        # STEP 3.5: Target Group Topic
+        markup_tt = ReplyKeyboardMarkup([["Skip"], ["↩️ Uɴᴅᴏ", "⛔ Cᴀɴᴄᴇʟ"]], resize_keyboard=True, one_time_keyboard=True)
+        msg_tt = await _ask(bot, user_id,
+            "<b>❪ STEP 3.5: TARGET GROUP TOPIC ❫</b>\n\nIf the destination is a Group with Topics enabled, please send the <b>Topic ID</b> (a number). Otherwise, just press <b>Skip</b>.\n\n<i>(To find it, copy a message link from the topic. The middle number is the Topic ID. e.g. /c/1234/<b>56</b>/78)</i>",
+            reply_markup=markup_tt
+        )
+        if getattr(msg_tt, 'text', None) and any(x in msg_tt.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']): return await bot.send_message(user_id, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
+        if getattr(msg_tt, "text", None) and any(x in msg_tt.text.lower() for x in ["/undo", "undo", "uɴᴅᴏ", "↩️"]):
+            # Go back to Step 3
+            msg3 = await _ask(bot, user_id, 
+                "<b>❪ STEP 3 (REDO): TARGET PUBLIC CHANNEL ❫</b>\n\nWhere should I post the Share Links?", 
+                reply_markup=ReplyKeyboardMarkup(ch_kb + [["⛔ Cᴀɴᴄᴇʟ"]], resize_keyboard=True, one_time_keyboard=True)
+            )
+            if not msg3.text or (getattr(msg3, "text", None) and any(x in msg3.text.lower() for x in ["cancel", "cᴀɴᴄᴇʟ", "⛔", "/cancel"])): 
+                return await bot.send_message(user_id, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
+            title3 = msg3.text.replace("»  ", "").strip()
+            ch3 = next((c for c in chans if c["title"] == title3), None)
+            if ch3:
+                new_share_job[user_id]['target'] = int(ch3['chat_id'])
+            # re-ask topic
+            msg_tt = await _ask(bot, user_id,
+                "<b>❪ STEP 3.5: TARGET GROUP TOPIC ❫</b>\n\nIf the destination is a Group with Topics enabled, please send the <b>Topic ID</b>. Otherwise, press <b>Skip</b>.",
+                reply_markup=markup_tt
+            )
+            if getattr(msg_tt, 'text', None) and any(x in msg_tt.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']): return await bot.send_message(user_id, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
+
+        tt_text = (msg_tt.text or msg_tt.caption or "").strip()
+        if tt_text.lower() == "skip" or not tt_text.isdigit():
+            new_share_job[user_id]['target_topic_id'] = None
+        else:
+            new_share_job[user_id]['target_topic_id'] = int(tt_text)
+
         markup = ReplyKeyboardMarkup([[KeyboardButton("↩️ Uɴᴅᴏ"), KeyboardButton("⛔ Cᴀɴᴄᴇʟ")]], resize_keyboard=True, one_time_keyboard=True)
             
         def parse_id(msg) -> int:
@@ -414,8 +446,12 @@ async def _create_share_flow(bot, user_id, force_live=False):
         sj = new_share_job[user_id]
         
         is_tp = sj.get('is_topic')
-        sub_str = f"<b>Topic ID:</b> {sj.get('topic_id', 'N/A')}\n" if is_tp else f"<b>Msg ID Range:</b> {sj['start_id']} → {sj['end_id']}\n"
+        sub_str = f"<b>Source Topic ID:</b> {sj.get('topic_id', 'N/A')}\n" if is_tp else f"<b>Msg ID Range:</b> {sj['start_id']} → {sj['end_id']}\n"
         live_str = f"<b>Live Monitor:</b> {sj['live_threshold']} eps per batch\n" if sj['live_threshold'] > 0 else f"<b>Live Monitor:</b> <code>Disabled</code>\n"
+        
+        target_str = f"<code>{sj['target']}</code>"
+        if sj.get('target_topic_id'):
+            target_str += f" (Topic: <code>{sj['target_topic_id']}</code>)"
 
         markup_conf = ReplyKeyboardMarkup([["Gᴇɴᴇʀᴀᴛᴇ & Pᴏsᴛ Lɪɴᴋs"], ["‣  Cancel"]], resize_keyboard=True, one_time_keyboard=True)
         conf_msg = await _ask(bot, user_id,
@@ -423,7 +459,7 @@ async def _create_share_flow(bot, user_id, force_live=False):
             f"<b>Story Name:</b> {sj['story']}\n"
             f"<b>Status:</b> {'Completed' if sj.get('is_completed') else 'Ongoing'}\n"
             f"<b>Source:</b> <code>{sj['source']}</code> ({'Topic' if is_tp else 'Channel'})\n"
-            f"<b>Target ID:</b> <code>{sj['target']}</code>\n"
+            f"<b>Target:</b> {target_str}\n"
             f"{sub_str}"
             f"<b>Episodes/Button:</b> {sj['batch_size']}\n"
             f"<b>Buttons/Post:</b> {sj['buttons_per_post']}\n"
@@ -1103,7 +1139,8 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 try:
                     await poster.send_message(
                         chat_id=sj['target'], text=txt,
-                        reply_markup=InlineKeyboardMarkup(keyboard)
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        reply_to_message_id=sj.get('target_topic_id')
                     )
                     break
                 except Exception as e:
@@ -1305,7 +1342,8 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 await poster.send_document(
                     sj['target'], report_bytes,
                     caption=ch_cap, parse_mode=__import__("pyrogram.enums", fromlist=["ParseMode"]).ParseMode.HTML,
-                    file_name=report_bytes.name
+                    file_name=report_bytes.name,
+                    reply_to_message_id=sj.get('target_topic_id')
                 )
             except Exception as ch_err:
                 logger.error(f"[Report] Channel send failed: {ch_err}", exc_info=True)
@@ -1323,6 +1361,7 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                     "account_id": sj.get('account_id', 'bot'),
                     "source": sj['source'],
                     "target": sj['target'],
+                    "target_topic_id": sj.get('target_topic_id'),
                     "story": sj['story'],
                     "threshold": sj['live_threshold'],
                     "protect": True,

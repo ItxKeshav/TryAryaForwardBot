@@ -177,7 +177,8 @@ async def _post_live_batch(sb_client, job: dict, chunk_msgs: list):
             try:
                 await sb_client.send_message(
                     chat_id=target_ch, text=txt,
-                    reply_markup=InlineKeyboardMarkup(keyboard)
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    reply_to_message_id=job.get('target_topic_id')
                 )
                 return True
             except FloodWait as fw:
