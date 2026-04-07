@@ -23,6 +23,7 @@ logger.setLevel(logging.INFO)
 # Prevents AUTH_KEY_DUPLICATED when multiple jobs use the same userbot account.
 # Maps session_name → running Pyrogram Client.
 _client_cache: dict = {}
+_client_refcount: dict = {}
 _cache_lock: asyncio.Lock | None = None
 
 def _get_cache_lock() -> asyncio.Lock:
@@ -32,14 +33,24 @@ def _get_cache_lock() -> asyncio.Lock:
     return _cache_lock
 
 async def release_client(session_name: str):
-    """Called when a job finishes — removes client from cache so it can be GC'd."""
-    client = _client_cache.pop(session_name, None)
-    if client:
-        try:
-            await client.stop()
-        except Exception:
-            pass
-        logger.info(f"[ClientCache] Released: {session_name}")
+    """Called when a job finishes — decrements refcount, and only stops GC if 0."""
+    lock = _get_cache_lock()
+    async with lock:
+        refs = _client_refcount.get(session_name, 0)
+        if refs > 1:
+            _client_refcount[session_name] -= 1
+            logger.info(f"[ClientCache] Decremented {session_name}: now {_client_refcount[session_name]} refs")
+            return
+
+        # Refcount hits 0, fully release
+        _client_refcount.pop(session_name, None)
+        client = _client_cache.pop(session_name, None)
+        if client:
+            try:
+                await client.stop()
+            except Exception:
+                pass
+            logger.info(f"[ClientCache] Released & Stopped: {session_name}")
 
 BTN_URL_REGEX = re.compile(r"(\[([^\[]+?)]\[buttonurl:/{0,2}(.+?)(:same)?])")
 BOT_TOKEN_TEXT = "<b>1) create a bot using @BotFather\n2) Then you will get a message with bot token\n3) Forward that message to me</b>"
@@ -66,29 +77,25 @@ async def start_clone_bot(FwdBot, data=None):
            try:
                await asyncio.wait_for(existing.get_me(), timeout=5)
                logger.debug(f"[ClientCache] Reusing existing client: {cache_key}")
+               _client_refcount[cache_key] = _client_refcount.get(cache_key, 1) + 1
                return existing   # ← return cached, skip new start entirely
            except Exception:
                # Dead — clean up and fall through to start a fresh one
                logger.warning(f"[ClientCache] Cached client {cache_key} dead, restarting.")
                _client_cache.pop(cache_key, None)
+               _client_refcount.pop(cache_key, None)
                try:
                    await existing.stop()
                except Exception:
                    pass
 
-       # Only register share handlers for non-bot user clients (userbots)
-       # Share bots register their own handlers via start_share_bot()
-       is_userbot = ("userbot" in cache_key.lower())
-       if is_userbot:
-           try:
-               from plugins.share_bot import register_share_handlers
-               register_share_handlers(FwdBot)
-           except Exception as e:
-               logger.warning(f"Could not bind share handlers to clone: {e}")
+       # Removed is_userbot registering share_handlers as it causes duplicate message 
+       # bugs. Delivery requests should be exclusively managed by official Share Bots.
 
        await FwdBot.start()
        _client_cache[cache_key] = FwdBot
-       logger.info(f"[ClientCache] Started & cached: {cache_key}")
+       _client_refcount[cache_key] = 1
+       logger.info(f"[ClientCache] Started & cached: {cache_key} (refs 1)")
 
    # Warm up peer cache in background — do NOT block here on 1GB VPS
    try:

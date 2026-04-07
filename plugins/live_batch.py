@@ -243,10 +243,9 @@ async def _lb_run_job(job_id: str):
                         src_client = BOT_INSTANCE
             
             if not sb_client:
-                logger.error("Live Batch: Share Bot is entirely offline.")
-                await asyncio.sleep(60)
-                continue
-            
+                # Fallback to main bot if no dedicated Share Bots are configured
+                sb_client = BOT_INSTANCE
+                
             # Setup Progress Bar
             prog_id = job.get("prog_id")
             if not prog_id:
