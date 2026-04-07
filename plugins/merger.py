@@ -1451,8 +1451,19 @@ async def _run_job(jid, uid, bot):
                 except FloodWait as fw: await asyncio.sleep(fw.value+2)
                 except Exception as e:
                     if att < 2: await asyncio.sleep(5); continue
-                    logger.warning(f"[MG {jid}] replace_media {dest}:{mid} failed: {e}")
-                    break
+                    # Fallback to uploading to DM instead of just losing the file
+                    try:
+                        await bot.send_message(uid, f"<b>⚠️ Edit channel post failed! Uploading file to DM directly. Error:</b> <code>{e}</code>")
+                        if mtype == "video":
+                            await client.send_video(chat_id=uid, video=out_path, caption=caption, thumb=thumb)
+                        else:
+                            kw = {"chat_id": uid, "audio": out_path, "caption": caption, "thumb": thumb}
+                            if metadata.get("title"): kw["title"] = metadata["title"]
+                            if metadata.get("artist"): kw["performer"] = metadata["artist"]
+                            await client.send_audio(**kw)
+                    except Exception as fallback_e:
+                        raise Exception(f"Replace media failed: {e}. Fallback to DM also failed: {fallback_e}")
+                    raise Exception(f"Replace media failed (file sent to DM instead): {e}")
         else:
             for dest in all_dests:
                 for att in range(3):
