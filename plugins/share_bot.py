@@ -865,7 +865,9 @@ async def start_share_bot():
             await sc.start()
             sc.is_initialized = True
             register_share_handlers(sc)
-            share_clients[b['id']] = sc
+            # ← Always store as STRING so live_batch / other lookups via str() always match
+            share_clients[str(b['id'])] = sc
             logger.info(f"Share Bot started: @{sc.me.username} [{b['name']}]")
         except Exception as e:
             logger.error(f"Failed to start Share Bot '{b['name']}': {e}")
+

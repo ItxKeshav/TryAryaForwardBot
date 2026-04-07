@@ -19,6 +19,28 @@ from typing import Union, Optional, AsyncGenerator
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+# ── Client Cache ──────────────────────────────────────────────────────────────
+# Prevents AUTH_KEY_DUPLICATED when multiple jobs use the same userbot account.
+# Maps session_name → running Pyrogram Client.
+_client_cache: dict = {}
+_cache_lock: asyncio.Lock | None = None
+
+def _get_cache_lock() -> asyncio.Lock:
+    global _cache_lock
+    if _cache_lock is None:
+        _cache_lock = asyncio.Lock()
+    return _cache_lock
+
+async def release_client(session_name: str):
+    """Called when a job finishes — removes client from cache so it can be GC'd."""
+    client = _client_cache.pop(session_name, None)
+    if client:
+        try:
+            await client.stop()
+        except Exception:
+            pass
+        logger.info(f"[ClientCache] Released: {session_name}")
+
 BTN_URL_REGEX = re.compile(r"(\[([^\[]+?)]\[buttonurl:/{0,2}(.+?)(:same)?])")
 BOT_TOKEN_TEXT = "<b>1) create a bot using @BotFather\n2) Then you will get a message with bot token\n3) Forward that message to me</b>"
 SESSION_STRING_SIZE = 351
@@ -31,18 +53,47 @@ async def _schedule_delete(bot, chat_id, message_id, delay=43200): # 12 hours
         pass
 
 async def start_clone_bot(FwdBot, data=None):
-   try:
-       from plugins.share_bot import register_share_handlers
-       register_share_handlers(FwdBot)
-   except Exception as e:
-       logger.warning(f"Could not bind share handlers to clone: {e}")
-       
-   await FwdBot.start()
+   """Start a Pyrogram client with deduplication — if a running client for
+   this session already exists in the cache, return it immediately without
+   starting a duplicate (which would cause AUTH_KEY_DUPLICATED)."""
+   cache_key = FwdBot.name   # e.g. "userbot_7307208383" or "BOT"
+   lock = _get_cache_lock()
+
+   async with lock:
+       existing = _client_cache.get(cache_key)
+       if existing is not None:
+           # Verify the cached client is still alive
+           try:
+               await asyncio.wait_for(existing.get_me(), timeout=5)
+               logger.debug(f"[ClientCache] Reusing existing client: {cache_key}")
+               return existing   # ← return cached, skip new start entirely
+           except Exception:
+               # Dead — clean up and fall through to start a fresh one
+               logger.warning(f"[ClientCache] Cached client {cache_key} dead, restarting.")
+               _client_cache.pop(cache_key, None)
+               try:
+                   await existing.stop()
+               except Exception:
+                   pass
+
+       # Only register share handlers for non-bot user clients (userbots)
+       # Share bots register their own handlers via start_share_bot()
+       is_userbot = ("userbot" in cache_key.lower())
+       if is_userbot:
+           try:
+               from plugins.share_bot import register_share_handlers
+               register_share_handlers(FwdBot)
+           except Exception as e:
+               logger.warning(f"Could not bind share handlers to clone: {e}")
+
+       await FwdBot.start()
+       _client_cache[cache_key] = FwdBot
+       logger.info(f"[ClientCache] Started & cached: {cache_key}")
+
    # Warm up peer cache in background — do NOT block here on 1GB VPS
    try:
        me = await asyncio.wait_for(FwdBot.get_me(), timeout=10)
        if not getattr(me, 'is_bot', False):
-           # Fire-and-forget: warm a small number of dialogs without blocking
            async def _warm():
                try:
                    async for _ in FwdBot.get_dialogs(limit=30): pass

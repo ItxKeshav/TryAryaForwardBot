@@ -18,7 +18,7 @@ import time
 import asyncio
 import logging
 from database import db
-from .test import CLIENT, start_clone_bot
+from .test import CLIENT, start_clone_bot, release_client
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait
 from pyrogram.types import (
@@ -896,15 +896,33 @@ async def _run_job(job_id: str, user_id: int):
     except asyncio.CancelledError:
         logger.info(f"[Job {job_id}] Cancelled")
     except Exception as e:
-        logger.error(f"[Job {job_id}] Fatal: {e}")
-        await _update_job(job_id, status="error", error=str(e))
+        err_str = str(e)
+        if "AUTH_KEY_DUPLICATED" in err_str:
+            # Session was used in 2 places — clear from cache so next restart is fresh
+            logger.warning(f"[Job {job_id}] AUTH_KEY_DUPLICATED — clearing client cache and pausing job")
+            if client:
+                client_name = getattr(client, 'name', None)
+                if client_name:
+                    await release_client(client_name)
+                    client = None   # prevent double-stop in finally
+            # Don't mark job as error — just pause it so user can restart manually
+            await _update_job(job_id, status="paused",
+                              error="Session conflict (AUTH_KEY_DUPLICATED). Restart the job.")
+        else:
+            logger.error(f"[Job {job_id}] Fatal: {e}")
+            await _update_job(job_id, status="error", error=err_str)
     finally:
         _job_tasks.pop(job_id, None)
         if client:
-            try:
-                await client.stop()
-            except Exception:
-                pass
+            client_name = getattr(client, 'name', None)
+            if client_name:
+                # release_client stops AND removes from cache
+                await release_client(client_name)
+            else:
+                try:
+                    await client.stop()
+                except Exception:
+                    pass
 
 
 def _start_job_task(job_id: str, user_id: int) -> asyncio.Task:
