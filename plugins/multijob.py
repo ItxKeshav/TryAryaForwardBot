@@ -186,54 +186,59 @@ async def _mj_forward(
                 is_text_replaced = True
 
     async def _send_one(chat, thread):
-        nonlocal forward_tag
+        # Use local flag — do NOT mutate nonlocal forward_tag as it would
+        # contaminate the second destination call and all future messages.
+        use_forward_tag = forward_tag
         if new_caption is not None or is_text_replaced:
             # Telegram CANNOT modify text/captions of natively forwarded messages.
             # If the user wants to wipe captions, remove links, or replace text, we MUST use copy_message.
-            forward_tag = False
+            use_forward_tag = False
 
         kw = {"message_thread_id": thread} if thread else {}
         if new_caption is not None:
             kw["caption"] = new_caption
 
-        try:
-            if forward_tag:
-                await client.forward_messages(
-                    chat_id=chat, from_chat_id=msg.chat.id,
-                    message_ids=msg.id, **kw
-                )
-            else:
-                if is_text_replaced and not msg.media:
-                    if not new_text or not new_text.strip():
-                        return True # silently skip empty text
-                    await client.send_message(chat_id=chat, text=new_text, **kw)
-                else:
-                    await client.copy_message(
+        for _send_attempt in range(4):
+            try:
+                if use_forward_tag:
+                    await client.forward_messages(
                         chat_id=chat, from_chat_id=msg.chat.id,
-                        message_id=msg.id, **kw
+                        message_ids=msg.id, **kw
                     )
-        except Exception as exc:
-            err = str(exc).upper()
-            if any(x in err for x in ["PEER_ID_INVALID", "CHAT_WRITE_FORBIDDEN", "USER_BANNED", "CHANNEL_PRIVATE", "CHAT_ADMIN_REQUIRED"]):
-                raise ValueError(f"Fatal Chat Error: {exc}")
-
-            if "RESTRICTED" not in err and "PROTECTED" not in err:
-                try:
-                    if forward_tag:
-                        await client.forward_messages(chat_id=chat, from_chat_id=msg.chat.id, message_ids=msg.id, **kw)
+                else:
+                    if is_text_replaced and not msg.media:
+                        if not new_text or not new_text.strip():
+                            return True  # silently skip empty text
+                        await client.send_message(chat_id=chat, text=new_text, **kw)
                     else:
-                        if is_text_replaced and not msg.media:
-                            if not new_text or not new_text.strip():
-                                return True # silently skip empty text
-                            await client.send_message(chat_id=chat, text=new_text, **kw)
-                        else:
-                            await client.copy_message(chat_id=chat, from_chat_id=msg.chat.id, message_id=msg.id, **kw)
-                    return True
-                except Exception as inner_e:
-                    inner_err = str(inner_e).upper()
-                    if any(x in inner_err for x in ["PEER_ID_INVALID", "CHAT_WRITE_FORBIDDEN", "USER_BANNED", "CHANNEL_PRIVATE", "CHAT_ADMIN_REQUIRED"]):
-                        raise ValueError(f"Fatal Chat Error: {inner_e}")
-                    pass
+                        await client.copy_message(
+                            chat_id=chat, from_chat_id=msg.chat.id,
+                            message_id=msg.id, **kw
+                        )
+                return True  # success
+            except FloodWait as fw:
+                # Respect Telegram's rate limit — wait and retry
+                logger.warning(f"[MultiJob _send_one] FloodWait {fw.value}s to {chat}")
+                await asyncio.sleep(fw.value + 2)
+                continue
+            except Exception as exc:
+                err = str(exc).upper()
+                if any(x in err for x in ["PEER_ID_INVALID", "CHAT_WRITE_FORBIDDEN", "USER_BANNED", "CHANNEL_PRIVATE", "CHAT_ADMIN_REQUIRED"]):
+                    raise ValueError(f"Fatal Chat Error: {exc}")
+                if "RESTRICTED" in err or "PROTECTED" in err:
+                    # Try copy → forward fallback once for protected content
+                    try:
+                        await client.forward_messages(chat_id=chat, from_chat_id=msg.chat.id, message_ids=msg.id, **kw)
+                        return True
+                    except Exception:
+                        pass
+                    break  # give up cleanly for restricted content
+                # For transient errors, retry up to 4 attempts
+                if _send_attempt >= 3:
+                    logger.warning(f"[MultiJob _send_one] All retries exhausted for msg {msg.id} to {chat}: {exc}")
+                    return False
+                await asyncio.sleep(3 * (_send_attempt + 1))
+                continue
             
             # --- Fallback to Download/Re-upload for restricted sources ---
             try:

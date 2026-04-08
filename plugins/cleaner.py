@@ -384,7 +384,11 @@ async def _cl_run_job(job_id: str, bot=None):
                     else:
                         clean_title = f"{base_name} {curr_num}"
                         track_num = str(curr_num)
-                        curr_num += 1   # Only advance sequential counter for non-labeled files
+                    # ALWAYS increment curr_num for every audio file processed,
+                    # regardless of whether it had an episode label or not.
+                    # Failing to do this caused file 141 to get the same sequential
+                    # number as file 1, resulting in duplicate sends and wrong names.
+                    curr_num += 1
 
                     clean_file = f"{clean_title}.mp3"
                     
