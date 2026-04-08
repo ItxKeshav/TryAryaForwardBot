@@ -424,7 +424,14 @@ async def _run_job(job_id: str, user_id: int):
         last_seen    = job.get("last_seen_id", 0)
 
         #  First-run init: snapshot latest ID 
-        me = await client.get_me()
+        for _att in range(3):
+            try:
+                me = await client.get_me()
+                break
+            except Exception as e:
+                if _att == 2: raise e
+                await __import__('asyncio').sleep(5)
+                
         if from_chat == me.id or from_chat == me.username:
             from_chat = user_id
             await _update_job(job_id, from_chat=from_chat)
@@ -920,6 +927,7 @@ async def _run_job(job_id: str, user_id: int):
         logger.info(f"[Job {job_id}] Cancelled")
     except Exception as e:
         err_str = str(e)
+        err_upper = err_str.upper()
         if "AUTH_KEY_DUPLICATED" in err_str:
             # Session was used in 2 places — clear from cache so next restart is fresh
             logger.warning(f"[Job {job_id}] AUTH_KEY_DUPLICATED — clearing client cache and pausing job")
@@ -931,9 +939,16 @@ async def _run_job(job_id: str, user_id: int):
             # Don't mark job as error — just pause it so user can restart manually
             await _update_job(job_id, status="paused",
                               error="Session conflict (AUTH_KEY_DUPLICATED). Restart the job.")
+        elif any(kw in err_upper for kw in ("CONNECTION", "TIMEOUT", "NETWORK", "PING", "SOCKET")):
+            logger.warning(f"[Job {job_id}] Transient Network error: {err_str} - Auto-restarting in 30s")
+            # Don't crash out the job permanently! Wait and recreate the task
+            async def _auto_resume():
+                await __import__('asyncio').sleep(30)
+                _start_job_task(job_id, user_id)
+            __import__('asyncio').create_task(_auto_resume())
         else:
             logger.error(f"[Job {job_id}] Fatal: {e}", exc_info=True)
-            await _update_job(job_id, status="error", error=err_str)
+            await _update_job(job_id, status="error", error=err_str[:40])
     finally:
         _job_tasks.pop(job_id, None)
         if client:
