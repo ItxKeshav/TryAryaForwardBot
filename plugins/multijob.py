@@ -729,7 +729,7 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
                 asyncio.create_task(_del_cancelled_prog())
             except Exception: pass
     except Exception as e:
-        logger.error(f"[MultiJob {job_id}] Fatal: {e}")
+        logger.error(f"[MultiJob {job_id}] Fatal: {e}", exc_info=True)
         await _mj_update(job_id, status="error", error=str(e))
         if client and mj_prog_msg_id:
             try:

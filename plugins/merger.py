@@ -490,7 +490,11 @@ async def _ffmpeg_merge(file_list, output_path, metadata=None, mtype="audio", co
                 f.write(f"file '{safe}'\n")
 
         atempo = _build_atempo_chain(speed) if abs(speed - 1.0) > 0.001 else ""
-        
+        eff_cover = video_cover or cover
+        if make_video and not (eff_cover and os.path.exists(eff_cover)):
+            make_video = False
+            logger.warning("[FFmpeg] make_video was True but no valid cover found. Falling back to audio merge.")
+
         # Audio concatenation with different formats (mp3 + m4a) must be re-encoded to prevent truncation.
         # We enforce re-encode if it's an audio merge with multiple files, or if make_video is True.
         # Video merges (mtype == "video") with make_video == False can safely use lossless concat demuxer.

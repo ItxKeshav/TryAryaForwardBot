@@ -932,7 +932,7 @@ async def _run_job(job_id: str, user_id: int):
             await _update_job(job_id, status="paused",
                               error="Session conflict (AUTH_KEY_DUPLICATED). Restart the job.")
         else:
-            logger.error(f"[Job {job_id}] Fatal: {e}")
+            logger.error(f"[Job {job_id}] Fatal: {e}", exc_info=True)
             await _update_job(job_id, status="error", error=err_str)
     finally:
         _job_tasks.pop(job_id, None)

@@ -373,13 +373,27 @@ async def _monitor_loop(bot):
             else:
                 level = "ok"
 
-            # Only act if we have jobs and can notify
             if level != "ok":
                 # When system is OK, reset warning cooldown so next spike is fresh
                 pass
             else:
                 # Level is OK — reset warning cooldown so next flare sends a fresh alert
                 _last_alert_ts.pop("warning", None)
+                
+                # Auto-resume system-paused jobs safely if system recovered
+                if _sys_paused_jobs:
+                    resumed = await _resume_sys_paused_jobs(bot)
+                    if sum(resumed.values()) > 0:
+                        txt = (
+                            f"<b><u>✅ System Stabilized — Auto-Resumed Jobs</u></b>\n\n"
+                            f"<b>RAM:</b> <code>{r:.1f}%</code> | <b>CPU:</b> <code>{c:.1f}%</code>\n\n"
+                            f"<i>Action automatically taken:</i>\n"
+                            f"• Resumed <b>{resumed['mj']}</b> Multi Job(s)\n"
+                            f"• Resumed <b>{resumed['mg']}</b> Merger(s)\n"
+                        )
+                        for uid in Config.BOT_OWNER_ID:
+                            try: await bot.send_message(uid, txt)
+                            except: pass
 
             if level != "ok" and total_active > 0:
                 cooldown = ALERT_COOLDOWN_WARN if level == "warning" else ALERT_COOLDOWN_CRIT
