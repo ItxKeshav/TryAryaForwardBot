@@ -75,13 +75,17 @@ async def start_clone_bot(FwdBot, data=None):
        if existing is not None:
            # Verify the cached client is still alive
            try:
-               await asyncio.wait_for(existing.get_me(), timeout=5)
+               await asyncio.wait_for(existing.get_me(), timeout=15)
                logger.debug(f"[ClientCache] Reusing existing client: {cache_key}")
                _client_refcount[cache_key] = _client_refcount.get(cache_key, 1) + 1
                return existing   # ← return cached, skip new start entirely
-           except Exception:
+           except Exception as e:
+               if isinstance(e, __import__('asyncio').TimeoutError) or "Timeout" in str(e):
+                   logger.warning(f"[ClientCache] Cached client {cache_key} is busy (timeout). Assuming alive.")
+                   _client_refcount[cache_key] = _client_refcount.get(cache_key, 1) + 1
+                   return existing
                # Dead — clean up and fall through to start a fresh one
-               logger.warning(f"[ClientCache] Cached client {cache_key} dead, restarting.")
+               logger.warning(f"[ClientCache] Cached client {cache_key} dead ({e}), restarting.")
                _client_cache.pop(cache_key, None)
                _client_refcount.pop(cache_key, None)
                try:

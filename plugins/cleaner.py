@@ -502,6 +502,12 @@ async def _cl_run_job(job_id: str, bot=None):
             # ── End of loop logic ──
             if job_failed:
                 # Fatal failure already logged above, break outer loop
+                if client:
+                    try:
+                        from plugins.test import release_client
+                        cname = getattr(client, 'name', None)
+                        if cname: await release_client(cname)
+                    except Exception: pass
                 break
             
             job = await _cl_get_job(job_id)
@@ -532,6 +538,13 @@ async def _cl_run_job(job_id: str, bot=None):
                 if local_cover and os.path.exists(local_cover): os.remove(local_cover)
             except: pass
             _cl_bot_ref.pop(job_id, None)
+            
+            if client:
+                try:
+                    from plugins.test import release_client
+                    cname = getattr(client, 'name', None)
+                    if cname: await release_client(cname)
+                except Exception: pass
             break
 
 
