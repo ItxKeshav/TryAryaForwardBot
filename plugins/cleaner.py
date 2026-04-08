@@ -242,6 +242,46 @@ async def _process_audio_ffmpeg(input_path, output_path, cover_path, meta: dict)
         return False, str(e)
 
 
+# ─── Client health-check helper ──────────────────────────────────────────────
+async def _ensure_client_alive(client, acc, uid):
+    """
+    Verify `client` is connected. If it is dead ("Client has not been started"
+    or any other connection error) attempt a cold restart up to 3 times.
+    Returns the (possibly new) live client, or raises on permanent failure.
+    """
+    for attempt in range(3):
+        try:
+            # A lightweight ping — if the client is dead this will raise
+            await asyncio.wait_for(client.get_me(), timeout=15)
+            return client   # alive
+        except Exception as e:
+            err_str = str(e).lower()
+            if "not been started" in err_str or "not connected" in err_str or "disconnected" in err_str or isinstance(e, asyncio.TimeoutError):
+                logger.warning(f"[Cleaner] Client dead on attempt {attempt+1}: {e} — reconnecting…")
+                # Evict from cache and restart
+                try:
+                    cname = getattr(client, 'name', None)
+                    if cname:
+                        from plugins.test import release_client as _rc
+                        await _rc(cname)
+                except Exception:
+                    pass
+                try:
+                    await client.stop()
+                except Exception:
+                    pass
+                try:
+                    client = await start_clone_bot(client)
+                    await asyncio.sleep(1)
+                    continue
+                except Exception as restart_err:
+                    logger.error(f"[Cleaner] Restart attempt {attempt+1} failed: {restart_err}")
+                    await asyncio.sleep(3)
+            else:
+                raise   # not a connection error — propagate
+    raise RuntimeError("Client failed to reconnect after 3 attempts")
+
+
 class _DummySem:
     async def __aenter__(self): pass
     async def __aexit__(self, *a): pass
@@ -295,6 +335,8 @@ async def _cl_run_job(job_id: str, bot=None):
                         client = pyrogram_client
                     else:
                         raise
+                # Verify connection immediately after obtaining client
+                client = await _ensure_client_alive(client, acc, uid)
             except Exception as e:
                 err_msg = f"Client init failed: {e}"
                 await _cl_update_job(job_id, {"status": "failed", "error": err_msg})
@@ -439,6 +481,14 @@ async def _cl_run_job(job_id: str, bot=None):
                         "encoded_by": "Arya Bot"
                     }
 
+                    # ── Health check before each download ──
+                    # Prevents "Client has not been started yet" after long FloodWaits
+                    # or silent TCP connection drops between files.
+                    try:
+                        client = await _ensure_client_alive(client, None, uid)
+                    except Exception as hc_err:
+                        raise Exception(f"Client reconnect failed: {hc_err}")
+
                     # Download
                     in_path  = os.path.abspath(f"temp_cl_in_{job_id}_{msg_id}.tmp")
                     out_path = os.path.abspath(f"temp_cl_out_{job_id}_{msg_id}.mp3")
@@ -472,21 +522,50 @@ async def _cl_run_job(job_id: str, bot=None):
 
                     # ── Upload with fallback ──
                     # Primary: main bot for DM, clone client for channels
-                    # Fallback: always try main bot if clone fails with peer error
-                    upload_client = bot if (dest_ch == uid and bot) else client
+                    # Replace mode: edit_message_media instead of send_audio
+                    replace_mode   = job.get("replace_mode", False)
+                    replace_msg_id = job.get("replace_start_msg_id", 0)
+                    upload_client  = bot if (dest_ch == uid and bot) else client
                     thumb = local_cover if (local_cover and os.path.exists(local_cover)) else None
                     uploaded = False
                     for attempt in range(5):
                         try:
-                            await upload_client.send_audio(
-                                chat_id=dest_ch,
-                                audio=out_path,
-                                caption=f"**{clean_title}**" if job.get("use_caption", True) else "",
-                                title=clean_title,
-                                performer=art,
-                                file_name=clean_file,
-                                thumb=thumb,
-                            )
+                            if replace_mode and replace_msg_id:
+                                # Calculate which message ID to edit for this file
+                                edit_msg_id = replace_msg_id + done
+                                # Download+edit: send to 'me' first for file_id, then edit
+                                _ghost = await upload_client.send_audio(
+                                    chat_id="me",
+                                    audio=out_path,
+                                    title=clean_title,
+                                    performer=art,
+                                    file_name=clean_file,
+                                    thumb=thumb,
+                                )
+                                from pyrogram.types import InputMediaAudio
+                                await upload_client.edit_message_media(
+                                    chat_id=dest_ch,
+                                    message_id=edit_msg_id,
+                                    media=InputMediaAudio(
+                                        media=_ghost.audio.file_id,
+                                        caption=f"**{clean_title}**" if job.get("use_caption", True) else "",
+                                        title=clean_title,
+                                        performer=art,
+                                        thumb=thumb,
+                                    )
+                                )
+                                try: await _ghost.delete()
+                                except: pass
+                            else:
+                                await upload_client.send_audio(
+                                    chat_id=dest_ch,
+                                    audio=out_path,
+                                    caption=f"**{clean_title}**" if job.get("use_caption", True) else "",
+                                    title=clean_title,
+                                    performer=art,
+                                    file_name=clean_file,
+                                    thumb=thumb,
+                                )
                             uploaded = True
                             await db.update_global_stats(total_files_uploaded=1)
                             break
@@ -584,7 +663,7 @@ async def _cl_run_job(job_id: str, bot=None):
 
 
 # ─── UI Callback Handlers ────────────────────────────────────────────────────
-@Client.on_callback_query(filters.regex(r"^cl#(main|new|view|pause|resume|stop|del|cfg)"))
+@Client.on_callback_query(filters.regex(r"^cl#(main|new|view|pause|resume|stop|del|cfg|reset|force_ask|force_do)"))
 async def _cl_callbacks(bot, update: CallbackQuery):
     from plugins.owner_utils import is_feature_enabled, is_any_owner, FEATURE_LABELS
     uid = update.from_user.id
@@ -684,6 +763,11 @@ async def _cl_callbacks(bot, update: CallbackQuery):
                 InlineKeyboardButton("▶️ Rᴇsᴜᴍᴇ", callback_data=f"cl#resume#{jid}"),
                 InlineKeyboardButton("⏹ Sᴛᴏᴘ", callback_data=f"cl#stop#{jid}")
             ])
+        elif st in ("failed", "stopped"):
+            kb.append([
+                InlineKeyboardButton("🔁 Rᴇsᴇᴛ & Rᴇsᴛᴀʀᴛ", callback_data=f"cl#reset#{jid}"),
+                InlineKeyboardButton("⏹ Sᴛᴏᴘ", callback_data=f"cl#stop#{jid}")
+            ])
         
         kb.append([InlineKeyboardButton("🔄 Rᴇғʀᴇsʜ", callback_data=f"cl#view#{jid}")])
         if st in ("completed", "stopped", "failed"):
@@ -760,6 +844,29 @@ async def _cl_callbacks(bot, update: CallbackQuery):
         update.data = "cl#main"
         return await _cl_callbacks(bot, update)
 
+    elif action == "reset":
+        jid = data[2]
+        job = await _cl_get_job(jid)
+        if not job:
+            return await update.answer("Job not found.", show_alert=True)
+        # Reset: clear error, set to queued, and restart from last checkpoint
+        await _cl_update_job(jid, {
+            "status": "queued",
+            "error": "",
+            "phase_start_ts": 0
+        })
+        if jid not in _cl_paused:
+            _cl_paused[jid] = asyncio.Event()
+        _cl_paused[jid].set()
+        if jid in _cl_tasks and not _cl_tasks[jid].done():
+            _cl_tasks[jid].cancel()
+            await asyncio.sleep(0.3)
+        bot_ref = _cl_bot_ref.get(jid) or bot
+        _cl_tasks[jid] = asyncio.create_task(_cl_run_job(jid, bot_ref))
+        await update.answer("♻️ Job reset and restarted!", show_alert=True)
+        update.data = f"cl#view#{jid}"
+        return await _cl_callbacks(bot, update)
+
 
 async def _create_cl_flow(bot, user_id):
     old = _cl_waiter.pop(user_id, None)
@@ -818,16 +925,47 @@ async def _create_cl_flow(bot, user_id):
     channels = await db.get_user_channels(user_id)
     dest_chat = None
     ch = None
+    replace_mode = False
+    replace_start_msg_id = 0
     if channels:
-        ch_kb = [[KeyboardButton(f"📢 {ch['title']}")] for ch in channels]
+        ch_kb = [[KeyboardButton(f"📢 {c['title']}")] for c in channels]
+        ch_kb.append([KeyboardButton("✏️ Replace/Edit Mode")])
         ch_kb.append([KeyboardButton("⏭ Skip (Send to DM)")])
         ch_kb.append([CANCEL_BTN])
         r_dest = await _cl_ask(bot, user_id,
-            "<b>»  Step 4/8</b>\n\nSelect <b>destination channel</b> for cleaned files:",
+            "<b>»  Step 4/9</b>\n\nSelect <b>destination channel</b> for cleaned files:\n"
+            "<i>Or choose <b>✏️ Replace/Edit Mode</b> to edit existing posts in-place.</i>",
             reply_markup=ReplyKeyboardMarkup(ch_kb, resize_keyboard=True, one_time_keyboard=True))
         if _cancel(r_dest.text or ""): return await bot.send_message(user_id, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
-        
-        if "Skip" not in (r_dest.text or ""):
+
+        if "Replace/Edit" in (r_dest.text or ""):
+            replace_mode = True
+            # Ask which channel to edit in
+            edit_ch_kb = [[KeyboardButton(f"📢 {c['title']}")] for c in channels]
+            edit_ch_kb.append([CANCEL_BTN])
+            r_edit_ch = await _cl_ask(bot, user_id,
+                "<b>»  Step 4a/9 — Select Channel to Edit</b>\n\n"
+                "Which channel contains the existing audio posts to replace?",
+                reply_markup=ReplyKeyboardMarkup(edit_ch_kb, resize_keyboard=True, one_time_keyboard=True))
+            if _cancel(r_edit_ch.text or ""): return await bot.send_message(user_id, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
+            edit_title = (r_edit_ch.text or "").replace("📢 ", "").strip()
+            ch = next((c for c in channels if c["title"] == edit_title), None)
+            if ch:
+                dest_chat = int(ch["chat_id"])
+
+            # Ask for the first message ID to replace
+            r_mid = await _cl_ask(bot, user_id,
+                "<b>»  Step 4b/9 — First Message ID to Replace</b>\n\n"
+                "Send the <b>message ID</b> of the first existing audio post that should be replaced.\n"
+                "<i>Each subsequent file will edit the next message ID automatically.</i>",
+                reply_markup=ReplyKeyboardMarkup([[CANCEL_BTN]], resize_keyboard=True, one_time_keyboard=True))
+            if _cancel(r_mid.text or ""): return await bot.send_message(user_id, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
+            try:
+                replace_start_msg_id = int((r_mid.text or "0").strip())
+            except ValueError:
+                replace_start_msg_id = 0
+
+        elif "Skip" not in (r_dest.text or ""):
             title = (r_dest.text or "").replace("📢 ", "").strip()
             ch = next((c for c in channels if c["title"] == title), None)
             if ch: dest_chat = int(ch["chat_id"])
@@ -930,6 +1068,8 @@ async def _create_cl_flow(bot, user_id):
     job = {
         "job_id": job_id, "user_id": user_id, "status": "queued",
         "from_chat": from_chat, "dest_chat": dest_chat,
+        "replace_mode": replace_mode,
+        "replace_start_msg_id": replace_start_msg_id,
         "start_id": sid, "end_id": eid,
         "total_files": total_range, "files_done": 0,
         "base_name": base_name, "starting_number": start_num,
