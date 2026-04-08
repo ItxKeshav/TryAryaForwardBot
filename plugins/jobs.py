@@ -125,7 +125,7 @@ def _passes_filters(msg, disabled_types: list) -> bool:
     
 
     checks = [
-        ('text',      lambda m: m.text and not m.media),
+        ('text',      lambda m: bool(m.text and (not m.media or getattr(m.media, 'value', str(m.media)) == 'web_page'))),
         ('audio',     lambda m: m.audio),
         ('voice',     lambda m: m.voice),
         ('video',     lambda m: m.video),

@@ -124,7 +124,7 @@ def _passes_filters(msg, disabled_types: list) -> bool:
 
 
     checks = [
-        ('text',      lambda m: m.text and not m.media),
+        ('text',      lambda m: bool(m.text and (not m.media or getattr(m.media, 'value', str(m.media)) == 'web_page'))),
         ('audio',     lambda m: m.audio),
         ('voice',     lambda m: m.voice),
         ('video',     lambda m: m.video),
@@ -1091,7 +1091,7 @@ async def mj_force_ask_cb(bot, query):
     )
     kb = [
         [InlineKeyboardButton("✅ Yes, Force Start Anyway", callback_data=f"mj#force_do#{job_id}")],
-        [InlineKeyboardButton("❌ Cancel (Keep in Queue)", callback_data="mj#list")]
+        [InlineKeyboardButton("⛔ Cancel (Keep in Queue)", callback_data="mj#list")]
     ]
     return await query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(kb))
 

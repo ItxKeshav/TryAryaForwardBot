@@ -545,7 +545,7 @@ async def cmd_cleanup(bot, message: Message):
     btns = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ Yᴇs, Cʟᴇᴀɴ!", callback_data="sysmon#do_cleanup"),
-            InlineKeyboardButton("❌ Cᴀɴᴄᴇʟ", callback_data="sysmon#cancel"),
+            InlineKeyboardButton("⛔ Cᴀɴᴄᴇʟ", callback_data="sysmon#cancel"),
         ]
     ])
     await message.reply_text(txt, reply_markup=btns)
@@ -637,7 +637,7 @@ async def sysmon_cb(bot, query: CallbackQuery):
         btns = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("✅ Yᴇs, Cʟᴇᴀɴ!", callback_data="sysmon#do_cleanup"),
-                InlineKeyboardButton("❌ Cᴀɴᴄᴇʟ", callback_data="sysmon#cancel"),
+                InlineKeyboardButton("⛔ Cᴀɴᴄᴇʟ", callback_data="sysmon#cancel"),
             ]
         ])
         await query.message.edit_text(txt, reply_markup=btns)

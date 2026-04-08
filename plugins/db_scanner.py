@@ -273,7 +273,7 @@ async def _scan_flow(bot, user_id: int):
             )
 
         ch_kb = [[f"📢 {ch['title']}"] for ch in chans]
-        ch_kb.append(["❌ Cancel"])
+        ch_kb.append(["⛔ Cancel"])
         markup = ReplyKeyboardMarkup(ch_kb, resize_keyboard=True, one_time_keyboard=True)
 
         msg = await _ask(
@@ -303,7 +303,7 @@ async def _scan_flow(bot, user_id: int):
                 ["🔄 Full Re-Scan (rebuild index)"],
                 ["⟳ Update (scan new messages only)"],
                 ["📋 Download Existing Report"],
-                ["❌ Cancel"],
+                ["⛔ Cancel"],
             ]
             opt_msg = await _ask(
                 bot, user_id,

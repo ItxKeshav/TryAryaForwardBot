@@ -689,7 +689,7 @@ async def _cl_callbacks(bot, update: CallbackQuery):
         )
         kb = [
             [InlineKeyboardButton("✅ Yes, Force Start Anyway", callback_data=f"cl#force_do#{jid}")],
-            [InlineKeyboardButton("❌ Cancel (Keep in Queue)", callback_data=f"cl#view#{jid}")]
+            [InlineKeyboardButton("⛔ Cancel (Keep in Queue)", callback_data=f"cl#view#{jid}")]
         ]
         return await update.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(kb))
 

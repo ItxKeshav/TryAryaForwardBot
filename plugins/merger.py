@@ -1435,18 +1435,41 @@ async def _run_job(jid, uid, bot):
             dest = replace_target["chat_id"]
             mid = replace_target["msg_id"]
             await _safe_resolve_peer(client, dest)
+            
+            # --- Robust Editing: Upload to 'me' first to bypass edit_message_media limits ---
+            dummy_msg = None
+            uploaded_file_id = None
+            try:
+                if status_msg: await status_msg.edit_text("<b>⬆️ Uploading to Telegram Cloud for Editing...</b>")
+            except: pass
+            
+            try:
+                if mtype == "video":
+                    dummy_msg = await client.send_video(chat_id="me", video=out_path, caption="Temp", file_name=f"{out_name}{out_ext}", thumb=thumb, supports_streaming=True, progress=_up_prog)
+                    uploaded_file_id = dummy_msg.video.file_id
+                else:
+                    dummy_msg = await client.send_audio(chat_id="me", audio=out_path, caption="Temp", file_name=f"{out_name}{out_ext}", thumb=thumb, progress=_up_prog)
+                    uploaded_file_id = dummy_msg.audio.file_id
+                await db.update_global_stats(total_files_uploaded=1)
+            except Exception as e:
+                logger.error(f"[MG {jid}] Dummy upload failed: {e}")
+                
             for att in range(3):
                 try:
                     from pyrogram.types import InputMediaDocument, InputMediaAudio, InputMediaVideo
+                    target_media = uploaded_file_id if uploaded_file_id else out_path
                     if mtype == "video":
-                        media = InputMediaVideo(out_path, caption=caption, supports_streaming=True, thumb=thumb)
+                        media = InputMediaVideo(target_media, caption=caption, supports_streaming=True, thumb=thumb)
                     else:
-                        kw = {"media": out_path, "caption": caption, "thumb": thumb}
+                        kw = {"media": target_media, "caption": caption, "thumb": thumb}
                         if metadata.get("title"): kw["title"] = metadata["title"]
                         if metadata.get("artist"): kw["performer"] = metadata["artist"]
                         media = InputMediaAudio(**kw)
                         
                     await client.edit_message_media(chat_id=dest, message_id=mid, media=media)
+                    if dummy_msg:
+                        try: await dummy_msg.delete()
+                        except: pass
                     # Notify DM
                     if dest != uid:
                         try: await bot.send_message(uid, f"<b>✅ Channel post successfully replaced!</b>")
@@ -1770,7 +1793,7 @@ async def mg_cb(bot, query):
         mtype = job.get("merge_type", "audio") if job else "audio"
         kb = [
             [InlineKeyboardButton("✅ Yes, Force Start Anyway", callback_data=f"mg#force_do#{param}")],
-            [InlineKeyboardButton("❌ Cancel (Keep in Queue)", callback_data=f"mg#{mtype}_list")]
+            [InlineKeyboardButton("⛔ Cancel (Keep in Queue)", callback_data=f"mg#{mtype}_list")]
         ]
         return await query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(kb))
 
@@ -1973,7 +1996,7 @@ async def _create_flow(bot, uid, mtype="audio"):
                 "<b>❌ No accounts. Add in /settings → Accounts.</b>")
 
         kb = [[f"{'🤖' if a.get('is_bot',True) else '👤'} {a['name']}"] for a in accounts]
-        kb.append(["❌ Cancel"])
+        kb.append(["⛔ Cancel"])
         msg = await _mg_ask(bot, uid,
             f"<b>{icon} New {label} Merge</b>\n\n<b>Step 1/7:</b> Select account:",
             reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
@@ -2021,7 +2044,7 @@ async def _create_flow(bot, uid, mtype="audio"):
         if channels:
             ch_kb = [[f"📢 {ch['title']}"] for ch in channels]
             ch_kb.append(["🔄 Replace Existing Post"])
-            ch_kb.append(["⏭ Skip (DM only)"]); ch_kb.append(["❌ Cancel"])
+            ch_kb.append(["⏭ Skip (DM only)"]); ch_kb.append(["⛔ Cancel"])
             msg = await _mg_ask(bot, uid,
                 f"<b>Step 4/7:</b> Destination channel\n<b>Range:</b> {sid}→{eid} ({total} msgs)",
                 reply_markup=ReplyKeyboardMarkup(ch_kb, resize_keyboard=True, one_time_keyboard=True))
@@ -2032,7 +2055,7 @@ async def _create_flow(bot, uid, mtype="audio"):
                 rep_msg = await _mg_ask(bot, uid,
                     "<b>Step 4b/7: Send the exact Telegram Link of the message you want to replace:</b>\n"
                     "<i>(e.g., https://t.me/c/12345/678)</i>",
-                    reply_markup=ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True, one_time_keyboard=True))
+                    reply_markup=ReplyKeyboardMarkup([["⛔ Cancel"]], resize_keyboard=True, one_time_keyboard=True))
                 if not rep_msg.text or any(x in rep_msg.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']):
                     return await bot.send_message(uid, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
                 link = rep_msg.text.strip()
@@ -2088,7 +2111,7 @@ async def _create_flow(bot, uid, mtype="audio"):
                             err_msg = format_tg_error(e, "Scan Error")
                             try:
                                 ask_res = await bot.ask(uid, f"{err_msg}\n\n<i>Fix the issue (e.g. ensure bot/clone is Admin), then click Retry!</i>", 
-                                    reply_markup=ReplyKeyboardMarkup([["🔄 Retry Scan"], ["❌ Cancel Process"]], resize_keyboard=True), timeout=600)
+                                    reply_markup=ReplyKeyboardMarkup([["🔄 Retry Scan"], ["⛔ Cancel Process"]], resize_keyboard=True), timeout=600)
                                 if not ask_res.text or any(x in ask_res.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']):
                                     return await bot.send_message(uid, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
                                 await ask_res.delete()
@@ -2322,7 +2345,7 @@ async def _create_flow(bot, uid, mtype="audio"):
             + (f"\n<b>Metadata:</b>\n{meta_pre}\n" if meta_pre else "") +
             f"\n<i>All media merged in exact order. No file skipped.</i>",
             reply_markup=ReplyKeyboardMarkup(
-                [["✅ Start Merge"],["❌ Cancel"]],
+                [["✅ Start Merge"],["⛔ Cancel"]],
                 resize_keyboard=True, one_time_keyboard=True))
 
         if not msg.text or (getattr(msg, 'text', None) and any(x in msg.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔'])):
@@ -2418,4 +2441,4 @@ async def mg_dl_choice_cb(bot, query):
     try:
         await query.message.edit_reply_markup(reply_markup=None)
     except Exception:
-        pass
+        pass

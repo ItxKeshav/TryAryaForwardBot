@@ -6,12 +6,14 @@ from plugins.lang import t, _tx
 from pyrogram import Client, filters
 from .test import get_configs, update_configs, CLIENT, parse_buttons
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from config import Config
 
 logger = logging.getLogger(__name__)
 CLIENT = CLIENT()
 
 #  Future-based ask() — immune to pyrofork stale-listener bug 
 _settings_waiting: dict[int, asyncio.Future] = {}
+_ch_multi_state: dict[int, list] = {}
 
 @Client.on_message(filters.private, group=-16)
 async def _settings_input_router(bot, message):
@@ -595,12 +597,58 @@ async def settings_query(bot, query):
         buttons.append([InlineKeyboardButton(f"{channel['title']}",
                          callback_data=f"settings#editchannels_{channel['chat_id']}")])
      buttons.append([InlineKeyboardButton('Aᴅᴅ Cʜᴀɴɴᴇʟ', 
-                      callback_data="settings#addchannel")])
+                      callback_data="settings#addchannel"),
+                    InlineKeyboardButton('🗑 Mᴜʟᴛɪ-Dᴇʟᴇᴛᴇ',
+                      callback_data="settings#ch_multi")])
      buttons.append([InlineKeyboardButton('❮ Bᴀᴄᴋ', 
                       callback_data="settings#main")])
      await query.message.edit_text( 
        "<b><u>My Channels</b></u>\n\n<b>you can manage your target chats in here</b>",
        reply_markup=InlineKeyboardMarkup(buttons))
+
+  elif type == "ch_multi":
+      if user_id not in _ch_multi_state:
+          _ch_multi_state[user_id] = []
+      
+      selected = _ch_multi_state[user_id]
+      channels = await db.get_user_channels(user_id)
+      buttons = []
+      for channel in channels:
+          cid = channel['chat_id']
+          mark = "✅ " if cid in selected else "⬜️ "
+          buttons.append([InlineKeyboardButton(f"{mark}{channel['title']}",
+                           callback_data=f"settings#ch_m_toggle_{cid}")])
+      
+      if selected:
+          buttons.append([InlineKeyboardButton(f"🗑 Dᴇʟᴇᴛᴇ Sᴇʟᴇᴄᴛᴇᴅ ({len(selected)})", callback_data="settings#ch_m_del")])
+      
+      buttons.append([InlineKeyboardButton('✅ Dᴏɴᴇ (Bᴀᴄᴋ)', callback_data="settings#channels")])
+      await query.message.edit_text(
+          "<b><u>Multiple Channel Removal</u></b>\n\nTap on channels to select or unselect them for deletion:",
+          reply_markup=InlineKeyboardMarkup(buttons)
+      )
+
+  elif type.startswith("ch_m_toggle_"):
+      cid = int(type.split("_")[3])
+      selected = _ch_multi_state.get(user_id, [])
+      if cid in selected:
+          selected.remove(cid)
+      else:
+          selected.append(cid)
+      _ch_multi_state[user_id] = selected
+      query.data = "settings#ch_multi"
+      return await settings_query(bot, query)
+
+  elif type == "ch_m_del":
+      selected = _ch_multi_state.get(user_id, [])
+      if not selected:
+          return await query.answer("No channels selected!", show_alert=True)
+      for cid in selected:
+          await db.remove_channel(user_id, cid)
+      await query.answer(f"Successfully deleted {len(selected)} channels!", show_alert=True)
+      _ch_multi_state[user_id] = []
+      query.data = "settings#channels"
+      return await settings_query(bot, query)
    
   elif type=="addchannel":  
      await query.message.delete()
@@ -2321,8 +2369,6 @@ async def main_buttons(user_id=None):
            InlineKeyboardButton('Lᴇᴛ\'s Eɴʜᴀɴᴄᴇ',
                         callback_data='settings#enhancer')
            ],[
-           InlineKeyboardButton('🤖 Sᴀʀᴠᴀᴍ Aɪ',
-                        callback_data='sarvam#main'),
            InlineKeyboardButton('👑 Oᴡɴᴇʀ Pᴀɴᴇʟ',
                         callback_data='settings#owners')
            ],[

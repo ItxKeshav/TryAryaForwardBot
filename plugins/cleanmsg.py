@@ -434,7 +434,7 @@ async def _cleanmsg_flow(bot, user_id: int):
 
     confirm_markup = InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ Yᴇs, Dᴇʟᴇᴛᴇ!", callback_data="cleanmsg#confirm"),
-        InlineKeyboardButton("❌ Cᴀɴᴄᴇʟ",       callback_data="cleanmsg#abort")
+        InlineKeyboardButton("⛔ Cᴀɴᴄᴇʟ",       callback_data="cleanmsg#abort")
     ]])
     confirm_msg = await bot.send_message(
         user_id,

@@ -495,7 +495,7 @@ async def _lb_callbacks(bot, update: CallbackQuery):
         )
         kb = [
             [InlineKeyboardButton("✅ Yes, Force Post Now", callback_data=f"lb#force#{jid}")],
-            [InlineKeyboardButton("❌ Cancel (Keep Buffer)", callback_data=f"lb#view#{jid}")]
+            [InlineKeyboardButton("⛔ Cancel (Keep Buffer)", callback_data=f"lb#view#{jid}")]
         ]
         return await update.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(kb))
 

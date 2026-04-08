@@ -552,7 +552,7 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                     try:
                         ask_res = await _ask(bot, user_id,
                             f"{err_msg}\n\n<i>Fix the issue (e.g. ensure bot is Admin), then send 🔄 Retry:</i>",
-                            reply_markup=ReplyKeyboardMarkup([["🔄 Retry Scan"], ["❌ Cancel Process"]], resize_keyboard=True),
+                            reply_markup=ReplyKeyboardMarkup([["🔄 Retry Scan"], ["⛔ Cancel Process"]], resize_keyboard=True),
                             timeout=600)
                         if not ask_res or not ask_res.text or any(x in ask_res.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']):
                             await bot.send_message(user_id, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
@@ -591,7 +591,7 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                         try:
                             ask_res = await _ask(bot, user_id,
                                 f"{err_msg}\n\n<i>Fix the issue (e.g. ensure bot/clone is Admin), then send 🔄 Retry:</i>",
-                                reply_markup=ReplyKeyboardMarkup([["🔄 Retry Scan"], ["❌ Cancel Process"]], resize_keyboard=True),
+                                reply_markup=ReplyKeyboardMarkup([["🔄 Retry Scan"], ["⛔ Cancel Process"]], resize_keyboard=True),
                                 timeout=600)
                             if not ask_res or not ask_res.text or any(x in ask_res.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔']):
                                 await bot.send_message(user_id, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
@@ -988,7 +988,7 @@ async def _build_share_links(bot, user_id, sj, info_msg):
         try:
             prescan_msg = await _ask(bot, user_id, "\n".join(prescan_report_lines), reply_markup=ReplyKeyboardMarkup([
                 ["✅ Proceed & Generate"],
-                ["❌ Cancel Job"]
+                ["⛔ Cancel Job"]
             ], resize_keyboard=True, one_time_keyboard=True), timeout=1800)
             
             if getattr(prescan_msg, 'text', None) and "Cancel" in prescan_msg.text:
