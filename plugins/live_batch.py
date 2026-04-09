@@ -156,18 +156,12 @@ async def _post_live_batch(sb_client, job: dict, chunk_msgs: list):
         all_buttons.extend(raw_buttons)
         
         old_mids = job.get("posted_mids", [])
-        if old_mids:
-            try:
-                await sb_client.delete_messages(target_ch, old_mids)
-            except Exception as e:
-                logger.warning(f"Live Batch delete old messages error: {e}")
-                
         new_mids = []
         blocks = []
         for i in range(0, len(all_buttons), buttons_per_post):
             blocks.append(all_buttons[i : i + buttons_per_post])
             
-        for block in blocks:
+        for idx, block in enumerate(blocks):
             v_starts = [b["ep_start"] for b in block if str(b["ep_start"]).isdigit()]
             v_ends   = [b["ep_end"] for b in block if str(b["ep_end"]).isdigit()]
             first_ep = min(v_starts) if v_starts else "?"
@@ -186,19 +180,36 @@ async def _post_live_batch(sb_client, job: dict, chunk_msgs: list):
             
             for attempt in range(5):
                 try:
-                    m = await sb_client.send_message(
-                        chat_id=target_ch, text=txt,
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                        reply_to_message_id=job.get('target_topic_id')
-                    )
-                    new_mids.append(m.id)
+                    if idx < len(old_mids):
+                        m = await sb_client.edit_message_text(
+                            chat_id=target_ch, message_id=old_mids[idx],
+                            text=txt, reply_markup=InlineKeyboardMarkup(keyboard)
+                        )
+                        new_mids.append(old_mids[idx])
+                    else:
+                        m = await sb_client.send_message(
+                            chat_id=target_ch, text=txt,
+                            reply_markup=InlineKeyboardMarkup(keyboard),
+                            reply_to_message_id=job.get('target_topic_id')
+                        )
+                        new_mids.append(m.id)
                     break
                 except FloodWait as fw:
                     await asyncio.sleep(fw.value + 2)
                 except Exception as tg_err:
+                    err_str = str(tg_err).lower()
+                    if "message is not modified" in err_str:
+                        new_mids.append(old_mids[idx])
+                        break
                     logger.warning(f"Live Batch Post TG Send Error: {tg_err}")
                     await asyncio.sleep(5)
                     
+        if len(old_mids) > len(blocks):
+            try:
+                await sb_client.delete_messages(target_ch, old_mids[len(blocks):])
+            except Exception:
+                pass
+                
         return True, new_mids, all_buttons
     except Exception as grand_err:
         import traceback
