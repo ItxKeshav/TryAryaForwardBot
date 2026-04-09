@@ -1378,6 +1378,8 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                     "target_topic_id": sj.get('target_topic_id'),
                     "story": sj['story'],
                     "threshold": sj['live_threshold'],
+                    "batch_size": sj.get('batch_size', 10),
+                    "buttons_per_post": sj.get('buttons_per_post', 10),
                     "protect": True,
                     "last_seen_id": sj.get('end_id'),
                     "buffer_mids": [],
