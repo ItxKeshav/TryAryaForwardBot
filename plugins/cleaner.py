@@ -433,23 +433,32 @@ async def _cl_run_job(job_id: str, bot=None):
             def _extract_ep_label(fname: str) -> str:
                 """
                 Extract an episode number or range from a filename for output naming.
-                - 'Shadow 388-389.mp3'   -> '388-389'
-                - 'Shadow 567 to 677.mp3'-> '567 to 677'
-                - 'Shadow 86 (1).mp3'    -> '86'
-                - 'Shadow 201.mp3'       -> '201'
-                - 'Shadow.mp3'           -> '' (no episode found)
+                Handles separators: hyphen (-), en-dash (–), em-dash (—), 'to', 'and'
+                - 'Shadow 388-389.mp3'    -> '388-389'
+                - 'Shadow 567 to 677.mp3' -> '567 to 677'
+                - 'Malang 576–580.mp3'    -> '576–580'
+                - '466 and 476.mp3'       -> '466 and 476'
+                - 'Shadow 86 (1).mp3'     -> '86'
+                - 'Shadow 201.mp3'        -> '201'
+                - 'Shadow.mp3'            -> '' (no episode found)
                 """
                 import re as _re
                 base = _re.sub(r'\.\w{2,4}$', '', fname)        # strip extension
                 base = _re.sub(r'\s*\(\d+\)\s*$', '', base).strip()  # strip (1),(2) copy markers
-                # Range: '388-389' or '567 to 677'
-                m = _re.search(r'\b(\d{1,4})\s*(?:-|to)\s*(\d{1,4})\b', base, _re.IGNORECASE)
+                # Normalize en-dash / em-dash to ASCII hyphen for regex matching
+                # (keep original base for the label output so styling is preserved)
+                base_norm = base.replace('\u2013', '-').replace('\u2014', '-')
+                # Range: '388-389', '567 to 677', '466 and 476'
+                m = _re.search(
+                    r'\b(\d{1,4})\s*(?:-|to|and)\s*(\d{1,4})\b',
+                    base_norm, _re.IGNORECASE)
                 if m:
                     a, b = int(m.group(1)), int(m.group(2))
                     if 0 < a < 5000 and a <= b < 5000:
-                        return m.group(0).strip()
-                # Single episode number (not a year)
-                nums = [int(x) for x in _re.findall(r'\b(\d{1,4})\b', base)
+                        # Return the original (un-normalized) slice to preserve en-dash styling
+                        return base[m.start():m.end()].strip()
+                # Single episode number (not a year, not a huge number)
+                nums = [int(x) for x in _re.findall(r'\b(\d{1,4})\b', base_norm)
                         if 0 < int(x) < 5000 and not (1900 <= int(x) <= 2100)]
                 if nums:
                     return str(nums[-1])
@@ -480,33 +489,57 @@ async def _cl_run_job(job_id: str, bot=None):
                         if msg_thread != from_topic_id and msg.id != from_topic_id:
                             continue
 
-                    is_audio = bool(msg.audio or msg.voice)
-                    is_audio_doc = (msg.document and 
-                                    'audio' in (getattr(msg.document, 'mime_type', '') or ''))
-                    if not (is_audio or is_audio_doc):
-                        continue
+                    # ── Detect media type ───────────────────────────────────────
+                    # Accept ALL media types (audio, video, document, photo, voice)
+                    # Previously only audio/voice/audio-doc were processed,
+                    # which caused the "0/1" result for large video/document files.
+                    is_audio     = bool(msg.audio or msg.voice)
+                    is_audio_doc = bool(msg.document and
+                                        'audio' in (getattr(msg.document, 'mime_type', '') or ''))
+                    is_video     = bool(msg.video or (
+                                        msg.document and
+                                        'video' in (getattr(msg.document, 'mime_type', '') or '')))
+                    is_photo     = bool(msg.photo)
+                    # Any downloadable media is acceptable
+                    media_obj = (msg.audio or msg.voice or msg.document
+                                 or msg.video or msg.photo)
+                    if not media_obj:
+                        continue   # truly no media (text-only / service)
 
-                    # ── Determine output title: preserve original episode/range if present ──
-                    media_obj = msg.audio or msg.voice or msg.document
-                    orig_fn = getattr(media_obj, 'file_name', None) or ""
+                    # Should we run FFmpeg? Only for actual audio files.
+                    # Non-audio files (video, generic document, photo) are
+                    # just download → rename → re-upload without re-encoding.
+                    use_ffmpeg = (is_audio or is_audio_doc)
+
+                    # Original filename & extension
+                    orig_fn  = getattr(media_obj, 'file_name', None) or ""
+                    orig_ext = os.path.splitext(orig_fn)[1] if orig_fn else ''
+                    if not orig_ext:
+                        if msg.audio:    orig_ext = '.mp3'
+                        elif msg.voice:  orig_ext = '.ogg'
+                        elif msg.video:  orig_ext = '.mp4'
+                        elif msg.photo:  orig_ext = '.jpg'
+                        else:            orig_ext = ''
+
+                    # ── Determine output title: preserve original episode/range label ──
                     ep_label = _extract_ep_label(orig_fn) if orig_fn else ''
                     if ep_label:
                         clean_title = f"{base_name} {ep_label}"
-                        # Try to extract the first number as track, else use curr_num
                         import re as _re_meta
                         _tm = _re_meta.search(r'\d+', ep_label)
                         track_num = _tm.group() if _tm else str(curr_num)
                     else:
                         clean_title = f"{base_name} {curr_num}"
                         track_num = str(curr_num)
-                    # ALWAYS increment curr_num for every audio file processed,
-                    # regardless of whether it had an episode label or not.
-                    # Failing to do this caused file 141 to get the same sequential
-                    # number as file 1, resulting in duplicate sends and wrong names.
+                    # ALWAYS increment curr_num for every media file processed.
                     curr_num += 1
 
-                    clean_file = f"{clean_title}.mp3"
-                    
+                    # Output filename (preserve .mp3 for FFmpeg output, original ext otherwise)
+                    if use_ffmpeg:
+                        clean_file = f"{clean_title}.mp3"
+                    else:
+                        clean_file = f"{clean_title}{orig_ext}" if orig_ext else clean_title
+
                     meta = {
                         "title":  clean_title,
                         "artist": art,
@@ -522,90 +555,144 @@ async def _cl_run_job(job_id: str, bot=None):
                     }
 
                     # ── Health check before each download ──
-                    # Prevents "Client has not been started yet" after long FloodWaits
-                    # or silent TCP connection drops between files.
                     try:
                         client = await _ensure_client_alive(client, None, uid)
                     except Exception as hc_err:
                         raise Exception(f"Client reconnect failed: {hc_err}")
 
-                    # Download
-                    in_path  = os.path.abspath(f"temp_cl_in_{job_id}_{msg_id}.tmp")
-                    out_path = os.path.abspath(f"temp_cl_out_{job_id}_{msg_id}.mp3")
-                    
+                    # ── Download ────────────────────────────────────────────────
+                    in_path = os.path.abspath(f"temp_cl_in_{job_id}_{msg_id}{orig_ext}")
+                    if use_ffmpeg:
+                        out_path = os.path.abspath(f"temp_cl_out_{job_id}_{msg_id}.mp3")
+                    else:
+                        out_path = os.path.abspath(f"temp_cl_out_{job_id}_{msg_id}{orig_ext}")
+
                     dl_path = await client.download_media(msg, file_name=in_path)
                     if not dl_path or not os.path.exists(str(dl_path)):
                         continue
-                        
-                    # Verify complete download before giving it to FFmpeg
+
+                    # Verify complete download
                     tg_size = getattr(media_obj, 'file_size', 0)
                     dl_size = os.path.getsize(str(dl_path))
                     if tg_size > 0 and dl_size < (tg_size * 0.95):
                         try: os.remove(str(dl_path))
                         except: pass
-                        raise Exception(f"Incomplete download: {dl_size} bytes downloaded out of {tg_size}. Forcing retry.")
-                        
+                        raise Exception(
+                            f"Incomplete download: {dl_size} / {tg_size} bytes. Forcing retry.")
+
                     await db.update_global_stats(total_files_downloaded=1)
 
-                    # Process with FFmpeg
-                    ok, err = await _process_audio_ffmpeg(str(dl_path), out_path, local_cover, meta)
-                    
-                    try: os.remove(str(dl_path))
-                    except: pass
+                    # ── Process ────────────────────────────────────────────────
+                    if use_ffmpeg:
+                        # Audio: full FFmpeg clean + re-encode
+                        ok, err = await _process_audio_ffmpeg(
+                            str(dl_path), out_path, local_cover, meta)
+                        try: os.remove(str(dl_path))
+                        except: pass
+                        if not ok:
+                            if "Invalid data found" in err:
+                                logger.error(f"[Cleaner {job_id}] Fatal decode error on "
+                                             f"{msg_id}: Invalid data. Skipping.")
+                                continue
+                            raise Exception(f"FFmpeg failed: {err[:500]}")
+                    else:
+                        # Non-audio (video / document / photo): rename-only, no re-encoding.
+                        # Just move the downloaded file to the output path with the new name.
+                        try:
+                            import shutil as _shutil
+                            _shutil.move(str(dl_path), out_path)
+                        except Exception as mv_err:
+                            try: os.remove(str(dl_path))
+                            except: pass
+                            raise Exception(f"Rename/move failed: {mv_err}")
+                        logger.info(f"[Cleaner {job_id}] Rename-only for {orig_fn} "
+                                    f"-> {clean_file} (no FFmpeg)")
 
-                    if not ok:
-                        # Prevent the entire job from crashing if one file is fundamentally unreadable
-                        if "Invalid data found" in err:
-                            logger.error(f"[Cleaner {job_id}] Fatal decode error on {msg_id}: Invalid data. Skipping this file.")
-                            continue
-                        raise Exception(f"FFmpeg Edit Failed: {err[:500]}")
-
-                    # ── Upload with fallback ──
-                    # Primary: main bot for DM, clone client for channels
-                    # Replace mode: edit_message_media instead of send_audio
+                    # ── Upload with media-type awareness ────────────────────────
                     replace_mode   = job.get("replace_mode", False)
                     replace_msg_id = job.get("replace_start_msg_id", 0)
                     upload_client  = bot if (dest_ch == uid and bot) else client
                     thumb = local_cover if (local_cover and os.path.exists(local_cover)) else None
                     uploaded = False
+                    upload_caption = f"**{clean_file}**" if job.get("use_caption", True) else ""
+
                     for attempt in range(5):
                         try:
                             if replace_mode and replace_msg_id:
-                                # Calculate which message ID to edit for this file
+                                # ── Replace/Edit existing message ─────────────────
                                 edit_msg_id = replace_msg_id + done
-                                # Download+edit: send to 'me' first for file_id, then edit
-                                _ghost = await upload_client.send_audio(
-                                    chat_id="me",
-                                    audio=out_path,
-                                    title=clean_title,
-                                    performer=art,
-                                    file_name=clean_file,
-                                    thumb=thumb,
-                                )
-                                from pyrogram.types import InputMediaAudio
-                                await upload_client.edit_message_media(
-                                    chat_id=dest_ch,
-                                    message_id=edit_msg_id,
-                                    media=InputMediaAudio(
+                                # Upload to 'me' first to get a file_id, then edit
+                                if use_ffmpeg or is_audio or is_audio_doc:
+                                    from pyrogram.types import InputMediaAudio
+                                    _ghost = await upload_client.send_audio(
+                                        chat_id="me", audio=out_path,
+                                        title=clean_title, performer=art,
+                                        file_name=clean_file, thumb=thumb)
+                                    _media = InputMediaAudio(
                                         media=_ghost.audio.file_id,
-                                        caption=f"**{clean_title}**" if job.get("use_caption", True) else "",
-                                        title=clean_title,
-                                        performer=art,
-                                        thumb=thumb,
-                                    )
-                                )
-                                try: await _ghost.delete()
-                                except: pass
+                                        caption=upload_caption,
+                                        title=clean_title, performer=art, thumb=thumb)
+                                    await upload_client.edit_message_media(
+                                        chat_id=dest_ch, message_id=edit_msg_id, media=_media)
+                                    try: await _ghost.delete()
+                                    except: pass
+                                elif is_video:
+                                    from pyrogram.types import InputMediaVideo
+                                    _ghost = await upload_client.send_video(
+                                        chat_id="me", video=out_path,
+                                        file_name=clean_file, thumb=thumb)
+                                    _vobj  = _ghost.video or (_ghost.document if _ghost.document else None)
+                                    _media = InputMediaVideo(
+                                        media=_vobj.file_id,
+                                        caption=upload_caption, thumb=thumb)
+                                    await upload_client.edit_message_media(
+                                        chat_id=dest_ch, message_id=edit_msg_id, media=_media)
+                                    try: await _ghost.delete()
+                                    except: pass
+                                elif is_photo:
+                                    from pyrogram.types import InputMediaPhoto
+                                    _ghost = await upload_client.send_photo(
+                                        chat_id="me", photo=out_path)
+                                    _media = InputMediaPhoto(
+                                        media=_ghost.photo.file_id,
+                                        caption=upload_caption)
+                                    await upload_client.edit_message_media(
+                                        chat_id=dest_ch, message_id=edit_msg_id, media=_media)
+                                    try: await _ghost.delete()
+                                    except: pass
+                                else:
+                                    from pyrogram.types import InputMediaDocument
+                                    _ghost = await upload_client.send_document(
+                                        chat_id="me", document=out_path, file_name=clean_file)
+                                    _media = InputMediaDocument(
+                                        media=_ghost.document.file_id,
+                                        caption=upload_caption)
+                                    await upload_client.edit_message_media(
+                                        chat_id=dest_ch, message_id=edit_msg_id, media=_media)
+                                    try: await _ghost.delete()
+                                    except: pass
                             else:
-                                await upload_client.send_audio(
-                                    chat_id=dest_ch,
-                                    audio=out_path,
-                                    caption=f"**{clean_title}**" if job.get("use_caption", True) else "",
-                                    title=clean_title,
-                                    performer=art,
-                                    file_name=clean_file,
-                                    thumb=thumb,
-                                )
+                                # ── Normal upload ───────────────────────────────
+                                if use_ffmpeg or is_audio or is_audio_doc:
+                                    await upload_client.send_audio(
+                                        chat_id=dest_ch, audio=out_path,
+                                        caption=upload_caption,
+                                        title=clean_title, performer=art,
+                                        file_name=clean_file, thumb=thumb)
+                                elif is_video:
+                                    await upload_client.send_video(
+                                        chat_id=dest_ch, video=out_path,
+                                        caption=upload_caption,
+                                        file_name=clean_file, thumb=thumb)
+                                elif is_photo:
+                                    await upload_client.send_photo(
+                                        chat_id=dest_ch, photo=out_path,
+                                        caption=upload_caption)
+                                else:
+                                    await upload_client.send_document(
+                                        chat_id=dest_ch, document=out_path,
+                                        caption=upload_caption,
+                                        file_name=clean_file, thumb=thumb)
                             uploaded = True
                             await db.update_global_stats(total_files_uploaded=1)
                             break
@@ -613,7 +700,7 @@ async def _cl_run_job(job_id: str, bot=None):
                             await asyncio.sleep(fw.value + 2)
                         except Exception as ue:
                             ue_str = str(ue)
-                            # If peer unknown and we haven't tried bot yet, switch to bot
+                            # Peer unknown — retry with main bot
                             if ("PEER_ID_INVALID" in ue_str or "CHANNEL_INVALID" in ue_str) \
                                and upload_client is not bot and bot:
                                 logger.warning(f"[Cleaner {job_id}] Upload PEER_ID_INVALID, switching to main bot")

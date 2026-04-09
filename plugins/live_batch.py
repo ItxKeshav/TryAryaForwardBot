@@ -231,6 +231,8 @@ async def _lb_run_job(job_id: str):
             thresh = job["threshold"]
             last_seen = job.get("last_seen_id", 0)
             buffer_mids = job.get("buffer_mids", [])
+            # Deduplicate buffer in case duplicates crept in during a previous crash
+            buffer_mids = list(dict.fromkeys(buffer_mids))
             fwd_count = job.get("forwarded", 0)
             sb_client = share_clients.get(str(job["share_bot_id"]))
             
@@ -277,19 +279,23 @@ async def _lb_run_job(job_id: str):
 
             fetched = []
             batch_req = []
-            
+            msgs = []          # ⚠️ Must be initialized BEFORE the try block.
+                               # If get_messages raises, we must NOT fall through to
+                               # the "for m in msgs" loop with stale data from the
+                               # previous iteration — that caused the duplication bug.
             try:
                 # Pyrogram's get_chat_history is blocked for Bot accounts!
                 # We systematically just chunk forward using get_messages.
                 batch_req = []
                 for mid in range(last_seen + 1, last_seen + 201):
                     batch_req.append(mid)
-                    
+
                 msgs = await src_client.get_messages(source, batch_req)
                 if not isinstance(msgs, list): msgs = [msgs]
-                
+
             except Exception as e:
                 logger.error(f"Live Batch get_messages error: {e}")
+                # msgs stays as [] — the loop below safely produces no results
             valid = []
             for m in msgs:
                 if m and not getattr(m, 'empty', True) and not getattr(m, 'service', False):
@@ -318,9 +324,17 @@ async def _lb_run_job(job_id: str):
                 except: pass
             else:
                 # Valid media found inside chunk! Process it.
+                # Use a set of existing buffer IDs to skip already-buffered messages.
+                existing_buf = set(buffer_mids)
+                new_added = 0
                 for m in valid:
-                    buffer_mids.append(m.id)
-                    
+                    if m.id not in existing_buf:
+                        buffer_mids.append(m.id)
+                        existing_buf.add(m.id)
+                        new_added += 1
+                if new_added:
+                    logger.info(f"[LiveBatch] Added {new_added} new IDs to buffer. Total: {len(buffer_mids)}")
+
                 # Safely advance last_seen to the highest physically detected message in this chunk!
                 last_seen = max(m.id for m in raw_exists)
                 await _lb_update_job(job_id, {"last_seen_id": last_seen, "buffer_mids": buffer_mids})
