@@ -2356,18 +2356,13 @@ async def main_buttons(user_id=None):
            InlineKeyboardButton('Exᴛʀᴀ Sᴇᴛᴛɪɴɢs',
                         callback_data='settings#nextfilters')
            ],[
-           InlineKeyboardButton('EN/हि',
-                        callback_data='settings#lang')
-           ],[
-           InlineKeyboardButton(('🖼✅ Mᴇɴᴜ Iᴍɢ' if menu_image_id else 'Mᴇɴᴜ Iᴍɢ'),
-                        callback_data='settings#main_menu_img')
-           ] + ([InlineKeyboardButton('🗑 Rᴇᴍ Iᴍɢ', callback_data='settings#main_menu_clr')] if menu_image_id else []),
-           [
            InlineKeyboardButton('Dʟᴠʀ Bᴏᴛ Sᴇᴛᴜᴘ',
                         callback_data='settings#sharebot'),
            InlineKeyboardButton('Lᴇᴛ\'s Eɴʜᴀɴᴄᴇ',
                         callback_data='settings#enhancer')
            ],[
+           InlineKeyboardButton('EN/हि',
+                        callback_data='settings#lang'),
            InlineKeyboardButton('👑 Oᴡɴᴇʀ Pᴀɴᴇʟ',
                         callback_data='settings#owners')
            ],[
@@ -2512,6 +2507,7 @@ async def filters_buttons(user_id):
 
 async def next_filters_buttons(user_id):
   filter = await get_configs(user_id)
+  menu_image_id = filter.get('menu_image_id')
   filters = filter['filters']
   links_on = filters.get('links', False)
   buttons = [[
@@ -2552,6 +2548,10 @@ async def next_filters_buttons(user_id):
        InlineKeyboardButton('️ Mᴏɴɢᴏᴅʙ',
                     callback_data='settings#database')
        ],[
+       InlineKeyboardButton(('🖼✅ Mᴇɴᴜ Iᴍɢ' if menu_image_id else 'Mᴇɴᴜ Iᴍɢ'),
+                    callback_data='settings#main_menu_img')
+       ] + ([InlineKeyboardButton('🗑 Rᴇᴍ Iᴍɢ', callback_data='settings#main_menu_clr')] if menu_image_id else []),
+       [
        InlineKeyboardButton('❮ Bᴀᴄᴋ Tᴏ Mᴇɴᴜ', 
                     callback_data="settings#main")
        ]]
