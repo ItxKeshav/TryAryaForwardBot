@@ -842,8 +842,10 @@ async def _build_share_links(bot, user_id, sj, info_msg):
 
 
         all_ep_nums    = sorted(ep_to_msgs.keys())
-        first_ep_num   = all_ep_nums[0] if all_ep_nums else 0
+        chrono_eps     = [ep for _, ep, _, _ in parsed_msgs if ep > 0]
+        first_ep_num   = chrono_eps[0] if chrono_eps else (all_ep_nums[0] if all_ep_nums else 0)
         last_ep_num    = all_ep_nums[-1] if all_ep_nums else 0
+        valid_ep_nums  = [e for e in all_ep_nums if e >= first_ep_num]
 
         # ── Missing episode detection (ACCURATE 3-tier method) ─────────────────
         # Tier 1: raw_missing = gaps in the labelled ep range
@@ -854,9 +856,9 @@ async def _build_share_links(bot, user_id, sj, info_msg):
         truly_missing_count: int = 0
         unassigned_count: int = 0
 
-        if not GROUPED_MODE and all_ep_nums:
+        if not GROUPED_MODE and valid_ep_nums:
             expected_range = set(range(first_ep_num, last_ep_num + 1))
-            present_set    = set(all_ep_nums)
+            present_set    = set(valid_ep_nums)
             raw_missing    = sorted(expected_range - present_set)
 
             # Count files that physically exist but couldn't get an episode label

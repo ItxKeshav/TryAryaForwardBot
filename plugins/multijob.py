@@ -234,7 +234,7 @@ async def _mj_forward(
         if new_caption is not None:
             kw["caption"] = new_caption
 
-        for _send_attempt in range(4):
+        for _send_attempt in range(15):
             try:
                 if use_forward_tag:
                     await client.forward_messages(
@@ -276,7 +276,7 @@ async def _mj_forward(
                         if msg.media:
                             safe_name = f"downloads/{msg.id}_{original_name}" if original_name else f"downloads/{msg.id}"
                             fp = None
-                            for _dl_try in range(3):
+                            for _dl_try in range(15):
                                 try:
                                     fp = await client.download_media(msg, file_name=safe_name)
                                     if fp: 
@@ -287,7 +287,7 @@ async def _mj_forward(
                                     await asyncio.sleep(fw.value + 2)
                                 except Exception as dl_e:
                                     err_dl = str(dl_e).upper()
-                                    if "TIMEOUT" in err_dl or "CONNECTION" in err_dl:
+                                    if "TIMEOUT" in err_dl or "CONNECTION" in err_dl or "DISCONNECT" in err_dl:
                                         await asyncio.sleep(5)
                                         continue
                                     break
@@ -296,13 +296,29 @@ async def _mj_forward(
                             up_kw = {"chat_id": chat, "caption": kw.get("caption", msg.caption or "")}
                             if thread: up_kw["message_thread_id"] = thread
                             
-                            if msg.photo:      await client.send_photo(photo=fp, **up_kw)
-                            elif msg.video:    await client.send_video(video=fp, file_name=original_name, **up_kw)
-                            elif msg.document: await client.send_document(document=fp, file_name=original_name, **up_kw)
-                            elif msg.audio:    await client.send_audio(audio=fp, file_name=original_name, **up_kw)
-                            elif msg.voice:    await client.send_voice(voice=fp, **up_kw)
-                            elif msg.animation: await client.send_animation(animation=fp, **up_kw)
-                            elif msg.sticker:  await client.send_sticker(sticker=fp, **up_kw)
+                            uploaded = False
+                            for _ul_try in range(15):
+                                try:
+                                    if msg.photo:      await client.send_photo(photo=fp, **up_kw)
+                                    elif msg.video:    await client.send_video(video=fp, file_name=original_name, **up_kw)
+                                    elif msg.document: await client.send_document(document=fp, file_name=original_name, **up_kw)
+                                    elif msg.audio:    await client.send_audio(audio=fp, file_name=original_name, **up_kw)
+                                    elif msg.voice:    await client.send_voice(voice=fp, **up_kw)
+                                    elif msg.animation: await client.send_animation(animation=fp, **up_kw)
+                                    elif msg.sticker:  await client.send_sticker(sticker=fp, **up_kw)
+                                    uploaded = True
+                                    break
+                                except FloodWait as fw:
+                                    await asyncio.sleep(fw.value + 2)
+                                except Exception as ul_e:
+                                    err_ul = str(ul_e).upper()
+                                    if any(x in err_ul for x in ["TIMEOUT", "CONNECTION", "READ", "RESET", "NOT BEEN STARTED", "DISCONNECT", "NOT CONNECTED", "PING", "FLOOD"]):
+                                        await asyncio.sleep(5)
+                                        continue
+                                    break
+                                    
+                            if not uploaded:
+                                raise Exception("UploadFailed")
                             
                             import os
                             await db.update_global_stats(total_files_uploaded=1, total_data_usage_bytes=os.path.getsize(str(fp)) if fp and os.path.exists(str(fp)) else 0)
