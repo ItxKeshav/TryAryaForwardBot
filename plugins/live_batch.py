@@ -153,15 +153,25 @@ async def _post_live_batch(sb_client, job: dict, chunk_msgs: list):
             
         buttons_per_post = int(job.get("buttons_per_post", 10))
         all_buttons = job.get("all_buttons", [])
+        
+        prev_total = len(all_buttons)
         all_buttons.extend(raw_buttons)
         
         old_mids = job.get("posted_mids", [])
-        new_mids = []
+        new_mids = list(old_mids)
         blocks = []
         for i in range(0, len(all_buttons), buttons_per_post):
             blocks.append(all_buttons[i : i + buttons_per_post])
             
-        for idx, block in enumerate(blocks):
+        # Determine from which block index we need to start updating.
+        # If the previous last block was perfectly full, start from the new block.
+        # Otherwise, start from the previously incomplete block.
+        changed_idx = prev_total // buttons_per_post
+        if prev_total > 0 and prev_total % buttons_per_post == 0:
+            changed_idx = prev_total // buttons_per_post
+            
+        for idx in range(changed_idx, len(blocks)):
+            block = blocks[idx]
             v_starts = [b["ep_start"] for b in block if str(b["ep_start"]).isdigit()]
             v_ends   = [b["ep_end"] for b in block if str(b["ep_end"]).isdigit()]
             first_ep = min(v_starts) if v_starts else "?"
@@ -178,38 +188,33 @@ async def _post_live_batch(sb_client, job: dict, chunk_msgs: list):
                 InlineKeyboardButton(_sc("support"), url="https://t.me/AryaHelpTG")
             ])
             
+            # User requirement: DELETE the last incomplete post, and CREATE a NEW post.
+            # If idx is within old_mids, it means we are replacing a previously sent incomplete block.
+            if idx < len(old_mids):
+                try:
+                    await sb_client.delete_messages(target_ch, old_mids[idx])
+                except Exception:
+                    pass
+            
             for attempt in range(5):
                 try:
-                    if idx < len(old_mids):
-                        m = await sb_client.edit_message_text(
-                            chat_id=target_ch, message_id=old_mids[idx],
-                            text=txt, reply_markup=InlineKeyboardMarkup(keyboard)
-                        )
-                        new_mids.append(old_mids[idx])
+                    m = await sb_client.send_message(
+                        chat_id=target_ch, text=txt,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        reply_to_message_id=job.get('target_topic_id')
+                    )
+                    
+                    if idx < len(new_mids):
+                        new_mids[idx] = m.id
                     else:
-                        m = await sb_client.send_message(
-                            chat_id=target_ch, text=txt,
-                            reply_markup=InlineKeyboardMarkup(keyboard),
-                            reply_to_message_id=job.get('target_topic_id')
-                        )
                         new_mids.append(m.id)
                     break
                 except FloodWait as fw:
                     await asyncio.sleep(fw.value + 2)
                 except Exception as tg_err:
-                    err_str = str(tg_err).lower()
-                    if "message is not modified" in err_str:
-                        new_mids.append(old_mids[idx])
-                        break
                     logger.warning(f"Live Batch Post TG Send Error: {tg_err}")
                     await asyncio.sleep(5)
                     
-        if len(old_mids) > len(blocks):
-            try:
-                await sb_client.delete_messages(target_ch, old_mids[len(blocks):])
-            except Exception:
-                pass
-                
         return True, new_mids, all_buttons
     except Exception as grand_err:
         import traceback
