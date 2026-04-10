@@ -253,7 +253,7 @@ async def _fsub_record_jr(client, request):
             # Always store as int so the lookup in check_all_subscriptions matches
             await db.db["pending_jrs"].update_one(
                 {"user_id": int(req_user_id), "chat_id": int(req_ch_id)},
-                {"$setOnInsert": {"timestamp": time.time()}},
+                {"$set": {"timestamp": time.time()}},
                 upsert=True
             )
             # Also evict the FSub cache so next check hits DB fresh
