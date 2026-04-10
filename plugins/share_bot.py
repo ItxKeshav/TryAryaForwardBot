@@ -173,16 +173,16 @@ async def check_all_subscriptions(client, user_id: int, fsub_channels: list, bot
         try:
             member = await client.get_chat_member(ch_id_int, user_id)
             if member.status in (enums.ChatMemberStatus.LEFT, enums.ChatMemberStatus.BANNED):
-                # User left or was banned — do NOT cache; mark as not joined
-                ch_copy = dict(ch)
-                ch_copy['has_left'] = True
-                not_joined.append(ch_copy)
-                # Explicitly evict any stale cache entry for this user+channel
-                _fsub_user_cache.pop(cache_key, None)
+                # Public channels return LEFT instead of raising an exception for non-members.
+                # Must raise locally to trigger the proper JR DB checks below.
+                raise UserNotParticipant()
             else:
                 # Confirmed member — safe to cache for 2 minutes
                 _fsub_user_cache[cache_key] = now + 120
         except UserNotParticipant:
+            # Explicitly evict any stale cache entry for this user+channel to prevent bypasses
+            _fsub_user_cache.pop(cache_key, None)
+            
             if is_jr:
                 # Check persistent DB for a recorded join request.
                 # IMPORTANT: store and query ch_id_int as int to avoid type mismatch.
@@ -340,23 +340,9 @@ async def _process_start(client, message):
             else:
                 user_name = message.from_user.first_name or "User"
                 has_jr       = any(ch.get('needs_request') for ch in not_joined)
-                has_left     = any(ch.get('has_left') for ch in not_joined)
                 never_joined = any(ch.get('never_joined') for ch in not_joined)
 
-                if has_left:
-                    # User was previously a member but left — playful/firm reminder
-                    import random
-                    savage_replies = [
-                        "<b>😏 Arey wah! Bade smart ban rahe the?</b>\nChannel chhod ke wapas aa gaye content ke liye? Pehle dobara join karo, phir access milega!",
-                        "<b>🏃\u200d♂️ Bhag kahan rahe ho?</b>\nSocha channel leave karke files download kar loge? System update ho gaya hai bhai, chup chap join button dabao!",
-                        "<b>🤡 You thought you could outsmart me?</b>\nYou literally joined, grabbed what you wanted, and LEFT. Well, the door is locked now. Join again if you want the files!",
-                        "<b>😹 Ek baar join karke nikal lene se kaam nahi chalta!</b>\nPermanent access chahiye toh permanent ban ke raho. Go click that join button again!",
-                        "<b>💀 Caught in 4k!</b>\nYou left the channel but still want the files? It doesn't work like that here. Join us back to proceed.",
-                        "<b>👀 Kya baat hai dost!</b>\nIdhar udhar kahan ghoom rahe ho? Channel tumne chhod diya aur file maangne aa gaye? Dobara join karo tab milegi!",
-                        "<b>😂 Nice try escaping!</b>\nBut my sensors caught you! You left the community, but you still need the content. First step: Join back!"
-                    ]
-                    txt = random.choice(savage_replies)
-                elif has_jr:
+                if has_jr:
                     # JR channel — join request already pending or needs to be sent
                     txt = (
                         f"<b>🔒  Aᴄᴄᴇss Dᴇɴɪᴇᴅ</b>\n\n"
