@@ -454,7 +454,144 @@ async def _lb_run_job(job_id: str):
             logger.error(f"Live Batch generic loop error: {e}")
             await asyncio.sleep(20)
 
-@Client.on_callback_query(filters.regex(r"^lb#(main|setup|view|pause|resume|stop|del)"))
+# ─────────────────────────────────────────────────────────────────────────────
+# Change-Source flow (runs as a background task so the callback returns fast)
+# ─────────────────────────────────────────────────────────────────────────────
+async def _lb_do_change_source(bot, uid: int, jid: str):
+    """
+    Interactive flow to change the source chat of a Live Batch job without
+    recreating it.  Pauses the job during selection, then resumes it.
+    """
+    from pyrogram.types import ReplyKeyboardRemove
+    from plugins.utils import ask_channel_picker, check_chat_protection
+
+    job = await _lb_get_job(jid)
+    if not job:
+        await bot.send_message(uid, "<b>❌ Job not found.</b>")
+        return
+
+    # ── Pause the running task while we change things ──────────────────────
+    was_running = job.get("status") == "running"
+    if was_running:
+        if jid in _lb_paused:
+            _lb_paused[jid].clear()
+        await _lb_update_job(jid, {"status": "paused"})
+
+    await bot.send_message(
+        uid,
+        "<b>✏️ Change Live Job Source</b>\n\n"
+        "Select a new source from your saved channels, or tap "
+        "<b>✍️ Manual Input</b> to paste a chat ID / topic link directly.\n\n"
+        "<i>The job will pause during selection and auto-resume once updated.</i>",
+        reply_markup=__import__('pyrogram.types', fromlist=['ReplyKeyboardMarkup'])
+            .__class__  # dummy — we call ask_channel_picker below which sends its own KB
+    )
+
+    # Use the shared channel picker first
+    picked = await ask_channel_picker(
+        bot, uid,
+        prompt="Select the new source channel / group:",
+        extra_options=["✍️ Manual Input"],
+        timeout=300
+    )
+
+    new_source = None
+    new_source_title = None
+
+    if picked is None:
+        # User cancelled
+        pass
+    elif picked == "✍️ Manual Input":
+        # User wants to type a raw chat ID, @username, or topic URL
+        try:
+            from pyrogram.types import ReplyKeyboardRemove
+            ask_msg = await bot.ask(
+                uid,
+                "✍️ <b>Enter the source:</b>\n\n"
+                "Accepted formats:\n"
+                "• Numeric chat ID: <code>-1001234567890</code>\n"
+                "• @username: <code>@mychannel</code>\n"
+                "• Topic URL: <code>https://t.me/c/1234567890/5</code> or "
+                "<code>https://t.me/mychannel/5</code>\n"
+                "• Group invite link: <code>https://t.me/+XXXXXX</code>\n\n"
+                "<i>Send ⛔ to cancel.</i>",
+                timeout=300,
+                reply_markup=ReplyKeyboardRemove()
+            )
+            text = (ask_msg.text or "").strip()
+            if not text or "⛔" in text or text.lower() == "cancel":
+                await bot.send_message(uid, "<i>Cancelled.</i>")
+            else:
+                # Parse topic URL like https://t.me/c/1234567/5
+                import re as _re
+                m = _re.match(r'https?://t\.me/c/(\d+)/(\d+)', text)
+                if m:
+                    new_source = f"-100{m.group(1)}"
+                    new_source_title = f"Topic /c/{m.group(1)}/{m.group(2)}"
+                elif _re.match(r'https?://t\.me/([^/]+)/(\d+)', text):
+                    mm = _re.match(r'https?://t\.me/([^/]+)/(\d+)', text)
+                    new_source = f"@{mm.group(1)}"
+                    new_source_title = f"@{mm.group(1)}"
+                elif text.lstrip('-').isdigit():
+                    new_source = text
+                    new_source_title = text
+                elif text.startswith('@'):
+                    new_source = text
+                    new_source_title = text
+                else:
+                    await bot.send_message(uid, "<b>❌ Unrecognised format. Source not changed.</b>")
+        except asyncio.TimeoutError:
+            await bot.send_message(uid, "<i>⏱ Timed out. Source not changed.</i>")
+    elif isinstance(picked, dict):
+        # Came from the channel picker
+        new_source = str(picked.get("chat_id", ""))
+        new_source_title = picked.get("title", new_source)
+
+    if new_source:
+        # ── Protection check ──
+        prot = await check_chat_protection(uid, new_source)
+        if prot:
+            await bot.send_message(uid, prot)
+            # Re-resume if it was running before
+            if was_running:
+                await _lb_update_job(jid, {"status": "running"})
+                if jid not in _lb_paused:
+                    _lb_paused[jid] = asyncio.Event()
+                _lb_paused[jid].set()
+                if jid not in _lb_tasks or _lb_tasks[jid].done():
+                    _lb_tasks[jid] = asyncio.create_task(_lb_run_job(jid))
+            return
+
+        # ── Apply the new source & reset scan position ──
+        await _lb_update_job(jid, {
+            "source": new_source,
+            "last_seen_id": 0,    # restart from the beginning of the new source
+            "buffer_mids": [],    # clear stale buffer
+        })
+        await bot.send_message(
+            uid,
+            f"<b>✅ Source updated!</b>\n\n"
+            f"<b>New Source:</b> <code>{new_source_title}</code>\n"
+            f"<b>Scan Position:</b> Reset to 0\n"
+            f"<b>Buffer:</b> Cleared\n\n"
+            "<i>The job will continue monitoring the new source from the start.</i>"
+        )
+    else:
+        if picked is not None:  # not a clean cancel
+            await bot.send_message(uid, "<i>Source unchanged.</i>")
+
+    # ── Resume if job was running before ──────────────────────────────────────
+    if was_running:
+        await _lb_update_job(jid, {"status": "running"})
+        if jid not in _lb_paused:
+            _lb_paused[jid] = asyncio.Event()
+        _lb_paused[jid].set()
+        if jid not in _lb_tasks or _lb_tasks[jid].done():
+            _lb_tasks[jid] = asyncio.create_task(_lb_run_job(jid))
+        await bot.send_message(uid, "▶️ <b>Job resumed and now monitoring the new source.</b>")
+
+
+@Client.on_callback_query(filters.regex(r"^lb#(main|setup|view|pause|resume|stop|del|change_src)"))
 async def _lb_callbacks(bot, update: CallbackQuery):
     uid = update.from_user.id
     data = update.data.split("#")
@@ -507,6 +644,12 @@ async def _lb_callbacks(bot, update: CallbackQuery):
                 InlineKeyboardButton("▶️ Rᴇsᴜᴍᴇ", callback_data=f"lb#resume#{jid}"),
                 InlineKeyboardButton("⏹ Sᴛᴏᴘ", callback_data=f"lb#stop#{jid}")
             ])
+
+        # ── Change Source button — available when job is running or paused ──
+        if st in ("running", "queued", "paused"):
+            kb.append([
+                InlineKeyboardButton("✏️ Cʜᴀɴɢᴇ Sᴏᴜʀᴄᴇ", callback_data=f"lb#change_src#{jid}")
+            ])
         
         buf = len(job.get("buffer_mids", []))
         trgt = job.get("threshold", 10)
@@ -519,9 +662,11 @@ async def _lb_callbacks(bot, update: CallbackQuery):
             kb.append([InlineKeyboardButton("🗑 Dᴇʟᴇᴛᴇ Rᴇᴄᴏʀᴅ", callback_data=f"lb#del#{jid}")])
         kb.append([InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="lb#main")])
         
+        src_display = str(job.get("source", "?"))
         txt = (
             f"<b>📡 Lɪᴠᴇ Bᴀᴛᴄʜ Sᴛᴀᴛᴜs</b>\n\n"
             f"<b>📖 Sᴛᴏʀʏ:</b> <code>{job.get('story')}</code>\n"
+            f"<b>📥 Sᴏᴜʀᴄᴇ:</b> <code>{src_display}</code>\n"
             f"<b>ℹ️ Sᴛᴀᴛᴜs:</b> <code>{st.upper()}</code>\n"
             f"<b>🎯 Tʜʀᴇsʜᴏʟᴅ:</b> Wait for {trgt} files\n"
             f"<b>📦 Cᴜʀʀᴇɴᴛ Bᴜғғᴇʀ:</b> <code>{buf} / {trgt}</code>\n"
@@ -585,6 +730,11 @@ async def _lb_callbacks(bot, update: CallbackQuery):
         await _lb_delete_job(jid)
         update.data = "lb#main"
         return await _lb_callbacks(bot, update)
+
+    elif action == "change_src":
+        jid = data[2]
+        await update.answer("Opening source change wizard…")
+        asyncio.create_task(_lb_do_change_source(bot, uid, jid))
 
 async def resume_live_batches():
     jobs = []
