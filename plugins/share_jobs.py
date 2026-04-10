@@ -1282,7 +1282,7 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             "  'Truly missing' = NOT in DB at all, cannot be delivered.",
             "  Duplicates = multiple files for same ep — all included.",
             "-" * 60,
-            "Powered by Arya Bot",
+            "Arya Bot",
             "=" * 60,
         ]
         report_text = "\n".join(plain_report)

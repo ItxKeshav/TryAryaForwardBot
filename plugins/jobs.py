@@ -806,7 +806,7 @@ async def _run_job(job_id: str, user_id: int):
                     f"📡 <b>Live Job Active — monitoring for new messages…</b>\n\n"
                     f"✅ Processed Files: <code>{_cur_fwd}</code>\n"
                     f"»  Last updated: <code>{time.strftime('%H:%M:%S')}</code>\n\n"
-                    f"<i>This message updates every 60s. Powered by Arya Bot</i>"
+                    f"<i>This message updates every 60s. Arya Bot</i>"
                 )
                 live_prog_id = live_sent.id
                 await _update_job(job_id, live_prog_msg_id=live_prog_id)
@@ -1020,7 +1020,7 @@ async def _run_job(job_id: str, user_id: int):
                         f"📡 <b>Live Job Active — monitoring for new messages…</b>\n\n"
                         f"✅ Processed Files: <code>{_cur_fwd}</code>\n"
                         f"»  Last updated: <code>{time.strftime('%H:%M:%S')}</code>\n\n"
-                        f"<i>This message updates every 60s. Powered by Arya Bot</i>"
+                        f"<i>This message updates every 60s. Arya Bot</i>"
                     )
                 except Exception:
                     pass

@@ -255,7 +255,7 @@ async def _process_audio_ffmpeg(input_path, output_path, cover_path, meta: dict)
     else:
         cmd += ["-map", "0:a:0"]
 
-    cmd += ["-c:a", "libmp3lame", "-b:a", "128k", "-q:a", "2"]
+    cmd += ["-c:a", "libmp3lame", "-b:a", "192k", "-q:a", "0"]
     cmd += ["-threads", "1", "-max_muxing_queue_size", "1024"]
     cmd += ["-map_metadata", "-1"]
 
@@ -453,43 +453,65 @@ async def _cl_run_job(job_id: str, bot=None):
             def _extract_ep_label(fname: str) -> str:
                 """
                 Extract an episode number or range from a filename for output naming.
-                Handles separators: hyphen (-), en-dash (–), em-dash (—), 'to', 'and'
-                - 'Shadow 388-389.mp3'    -> '388-389'
-                - 'Shadow 567 to 677.mp3' -> '567 to 677'
-                - 'Malang 576–580.mp3'    -> '576–580'
-                - '466 and 476.mp3'       -> '466 and 476'
-                - 'Shadow 86 (1).mp3'     -> '86'
-                - 'Shadow 201.mp3'        -> '201'
-                - 'Shadow.mp3'            -> '' (no episode found)
+
+                PRIORITY ORDER:
+                  1. Explicit range: '388-389', '567 to 677', '576–580'
+                  2. Ep/Episode keyword: 'Episode 66- some suffix16' → '66'
+                     (IMPORTANT: keyword match wins over any trailing numbers to avoid
+                      picking up track counters like the '16' in 'Episode 66-...16.mp3')
+                  3. Leading zero-padded number: '01 Title.mp3' → '1'
+                  4. Fall back: empty string (cleaner uses sequential counter)
                 """
                 import re as _re
-                base = _re.sub(r'\.\w{2,4}$', '', fname)        # strip extension
+                base = _re.sub(r'\.\w{2,5}$', '', fname)             # strip extension
                 base = _re.sub(r'\s*\(\d+\)\s*$', '', base).strip()  # strip (1),(2) copy markers
-                # Normalize en-dash / em-dash to ASCII hyphen for regex matching
-                # (keep original base for the label output so styling is preserved)
                 base_norm = base.replace('\u2013', '-').replace('\u2014', '-')
-                # Range: '388-389', '567 to 677', '466 and 476'
-                m = _re.search(
-                    r'\b(\d{1,4})\s*(?:-|to|and|&|_|~|,|/)\s*(\d{1,4})\b',
-                    base_norm, _re.IGNORECASE)
-                if m:
-                    a, b = int(m.group(1)), int(m.group(2))
-                    # a <= b+1 so equal numbers like "30-30" are preserved too
-                    if 0 < a < 5000 and a <= b + 1 < 5001:
-                        # Use base_norm offsets — safe because en/em-dash→hyphen is 1:1 char substitution
-                        start_pos, end_pos = m.start(), m.end()
-                        # Re-map to original base preserving en-dash styling
-                        orig_slice = base[start_pos:end_pos].strip()
-                        # If the extracted slice doesn't look like a range, just join a-b
-                        if orig_slice:
-                            return orig_slice
-                        return f"{a}-{b}" if a != b else str(a)
-                # Single episode number (not a year, not a huge number)
-                nums = [int(x) for x in _re.findall(r'\b(\d{1,4})\b', base_norm)
+
+                # Always locate keyword first (needed by both range guard and P2 below)
+                kw_m = _re.search(
+                    r'(?i)(?:episode|epi|ep)\b[\s\-\:\.\#\_\*]*',
+                    base_norm)
+
+                # ── Priority 1 (no-keyword only): pure numeric range file ───────────
+                # e.g. 'Shadow 388-389.mp3' or 'Story 576-580.mp3'
+                # When a keyword IS present the keyword's number wins, so we skip
+                # this block entirely (prevents 'Episode 34 - 48 ghante' -> '34-48').
+                if not kw_m:
+                    r_m = _re.search(
+                        r'\b(\d{1,4})\s*(?:-|to|and|&|~|,|/)\s*(\d{1,4})\b',
+                        base_norm, _re.IGNORECASE)
+                    if r_m:
+                        a, b = int(r_m.group(1)), int(r_m.group(2))
+                        if 0 < a < 5000 and a <= b + 1 < 5001:
+                            orig_slice = base[r_m.start():r_m.end()].strip()
+                            return orig_slice if orig_slice else (f"{a}-{b}" if a != b else str(a))
+
+                # ── Priority 2: Ep/Episode keyword (most important fix) ─────────
+                # This prevents trailing track-counter digits from being used
+                # e.g. 'Episode 66- maa sab jaanti hai16' → '66' (not '16')
+                if kw_m:
+                    kw_ep = _re.search(
+                        r'(?i)(?:episode|epi|ep)\b[\s\-\:\.\#\_\*]*(\d{1,4})(?!\d)',
+                        base_norm)
+                    if kw_ep:
+                        n = int(kw_ep.group(1))
+                        if 0 < n < 5000:
+                            return str(n)
+
+                # ── Priority 3: Leading zero-padded number ──────────────────────
+                lead = _re.match(r'^0*(\d{1,4})(?:[^0-9]|$)', base_norm)
+                if lead:
+                    n = int(lead.group(1))
+                    if 0 < n < 5000:
+                        return str(n)
+
+                # ── Priority 4: Single lone number (no keyword, no leading) ─────
+                nums = [int(x) for x in _re.findall(r'(?<!\d)(\d{1,4})(?!\d)', base_norm)
                         if 0 < int(x) < 5000 and not (1900 <= int(x) <= 2100)]
-                if nums:
-                    return str(nums[-1])
-                return ''  # no episode found — fall back to sequential
+                if len(nums) == 1:
+                    return str(nums[0])
+
+                return ''  # no unambiguous episode found — fall back to sequential
 
             # Loop through all message IDs
             msg_id = curr_msg_id
@@ -537,10 +559,9 @@ async def _cl_run_job(job_id: str, bot=None):
                         msg_id += 1
                         continue   # truly no media (text-only / service)
 
-                    # Should we run FFmpeg? Only for actual audio files.
-                    # Non-audio files (video, generic document, photo) are
-                    # just download → rename → re-upload without re-encoding.
-                    use_ffmpeg = (is_audio or is_audio_doc)
+                    # ALWAYS use FFmpeg to convert EVERYTHING to MP3.
+                    # Photos are the only exception (they have no audio stream).
+                    use_ffmpeg = not is_photo
 
                     # Original filename & extension
                     orig_fn  = getattr(media_obj, 'file_name', None) or ""
@@ -550,7 +571,7 @@ async def _cl_run_job(job_id: str, bot=None):
                         elif msg.voice:  orig_ext = '.ogg'
                         elif msg.video:  orig_ext = '.mp4'
                         elif msg.photo:  orig_ext = '.jpg'
-                        else:            orig_ext = ''
+                        else:            orig_ext = '.mp3'
 
                     # ── Determine output title ──
                     change_meta = job.get("change_metadata", True)
@@ -576,7 +597,7 @@ async def _cl_run_job(job_id: str, bot=None):
                     # ALWAYS increment curr_num for every media file processed.
                     curr_num += 1
 
-                    # Output filename (preserve .mp3 for FFmpeg output, original ext otherwise)
+                    # Output filename — always .mp3 (except photos)
                     if use_ffmpeg:
                         clean_file = f"{clean_title}.mp3"
                     else:
@@ -731,7 +752,9 @@ async def _cl_run_job(job_id: str, bot=None):
                                     except: pass
                             else:
                                 # ── Normal upload ───────────────────────────────
-                                if use_ffmpeg or is_audio or is_audio_doc:
+                                # use_ffmpeg is now True for everything except photos,
+                                # so is_video / is_audio_doc files are also .mp3 now.
+                                if use_ffmpeg:
                                     await upload_client.send_audio(
                                         chat_id=dest_ch, audio=out_path,
                                         caption=upload_caption,

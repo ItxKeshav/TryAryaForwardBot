@@ -166,7 +166,7 @@ def _build_report(entries: list, chat_title: str, chat_id: int,
 
     lines.append("")
     lines.append("=" * 60)
-    lines.append("  End of Report  •  Powered by Arya Bot")
+    lines.append("  End of Report  •  Arya Bot")
     lines.append("=" * 60)
     return "\n".join(lines)
 

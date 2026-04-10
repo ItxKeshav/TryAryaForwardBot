@@ -303,7 +303,7 @@ async def _lb_run_job(job_id: str):
                         f"📡 <b>Bᴀᴛᴄʜ Lɪɴᴋs Lɪᴠᴇ Aᴜᴛᴏ-Gᴇɴᴇʀᴀᴛᴏʀ</b>\n\n"
                         f"✅ Auto-Generated Blocks: <code>{fwd_count}</code>\n"
                         f"»  Last updated: <code>{time.strftime('%H:%M:%S')}</code>\n\n"
-                        f"<i>This message updates every 60s. Powered by Arya Bot</i>"
+                        f"<i>This message updates every 60s. Arya Bot</i>"
                     )
                     prog_id = p.id
                     await _lb_update_job(job_id, {"prog_id": prog_id})
@@ -443,7 +443,7 @@ async def _lb_run_job(job_id: str):
                         f"📡 <b>Bᴀᴛᴄʜ Lɪɴᴋs Lɪᴠᴇ Aᴜᴛᴏ-Gᴇɴᴇʀᴀᴛᴏʀ</b>\n\n"
                         f"✅ Auto-Generated Blocks: <code>{fwd_count}</code>\n"
                         f"»  Last updated: <code>{time.strftime('%H:%M:%S')}</code>\n\n"
-                        f"<i>This message updates every 60s. Powered by Arya Bot</i>"
+                        f"<i>This message updates every 60s. Arya Bot</i>"
                     )
                     await _lb_update_job(job_id, {"last_prog_update": now_t})
                 except: pass
