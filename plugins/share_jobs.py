@@ -98,55 +98,23 @@ async def _create_share_flow(bot, user_id, force_live=False):
             
         new_share_job[user_id]['bot_id'] = selected_bot['id']
 
-        chans = await db.get_user_channels(user_id)
-        if not chans:
-            return await bot.send_message(user_id, "<b>‣  No channels added in /settings.</b>", reply_markup=ReplyKeyboardRemove())
-            
-        ch_kb = [[ch['title']] for ch in chans]
-        ch_kb.append(["⛔ Cᴀɴᴄᴇʟ"])
-        msg = await _ask(bot, user_id, 
-            "<b>❪ STEP 2: SOURCE DATABASE ❫</b>\n\nWhere are the files stored securely?", 
-            reply_markup=ReplyKeyboardMarkup(ch_kb, resize_keyboard=True, one_time_keyboard=True)
-        )
-        if not msg.text or (getattr(msg, 'text', None) and any(x in msg.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔'])) or "⛔" in msg.text or "Cᴀɴᴄᴇʟ" in msg.text:
-            return await bot.send_message(user_id, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
-            
-        title = msg.text.strip()
-        ch = next((c for c in chans if c["title"] == title), None)
-        if not ch:
-            return await bot.send_message(user_id, "<b>‣  Source Channel not found.</b>", reply_markup=ReplyKeyboardRemove())
-        new_share_job[user_id]['source'] = int(ch['chat_id'])
+        from plugins.utils import ask_channel_picker
         
-        msg = await _ask(bot, user_id, 
-            "<b>❪ STEP 3: TARGET PUBLIC CHANNEL ❫</b>\n\nWhere should I post the Share Links?", 
-            reply_markup=ReplyKeyboardMarkup(ch_kb + [["↩️ Uɴᴅᴏ", "⛔ Cᴀɴᴄᴇʟ"]], resize_keyboard=True, one_time_keyboard=True)
-        )
-        if not msg.text or (getattr(msg, 'text', None) and any(x in msg.text.lower() for x in ['cancel', 'cᴀɴᴄᴇʟ', '⛔'])) or "Cancel" in msg.text:
-            return await bot.send_message(user_id, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
-        if getattr(msg, "text", None) and any(x in msg.text.lower() for x in ["/undo", "undo", "uɴᴅᴏ", "↩️"]): 
-            # Go back to Step 2 — re-ask source channel then re-enter Step 3
-            msg2 = await _ask(bot, user_id, 
-                "<b>❪ STEP 2 (REDO): SOURCE DATABASE ❫</b>\n\nWhere are the files stored?", 
-                reply_markup=ReplyKeyboardMarkup(ch_kb + [["⛔ Cᴀɴᴄᴇʟ"]], resize_keyboard=True, one_time_keyboard=True)
-            )
-            if not msg2.text or (getattr(msg2, "text", None) and any(x in msg2.text.lower() for x in ["cancel", "cᴀɴᴄᴇʟ", "⛔", "/cancel"])): 
-                return await bot.send_message(user_id, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
-            title2 = msg2.text.replace("»  ", "").strip()
-            ch2 = next((c for c in chans if c["title"] == title2), None)
-            if ch2:
-                new_share_job[user_id]['source'] = int(ch2['chat_id'])
-            msg = await _ask(bot, user_id,
-                "<b>❪ STEP 3: TARGET PUBLIC CHANNEL ❫</b>\n\nWhere should I post the Share Links?",
-                reply_markup=ReplyKeyboardMarkup(ch_kb + [["⛔ Cᴀɴᴄᴇʟ"]], resize_keyboard=True, one_time_keyboard=True)
-            )
-            if not msg.text or (getattr(msg, "text", None) and any(x in msg.text.lower() for x in ["cancel", "cᴀɴᴄᴇʟ", "⛔", "/cancel"])): 
-                return await bot.send_message(user_id, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
-
-        title = msg.text.replace("»  ", "").strip()
-        ch = next((c for c in chans if c["title"] == title), None)
-        if not ch:
-            return await bot.send_message(user_id, "<b>‣  Target Channel not found.</b>", reply_markup=ReplyKeyboardRemove())
-        new_share_job[user_id]['target'] = int(ch['chat_id'])
+        picked = await ask_channel_picker(bot, user_id, "<b>❪ STEP 2: SOURCE DATABASE ❫</b>\n\nWhere are the files stored securely?")
+        if not picked: return
+        new_share_job[user_id]['source'] = int(picked['chat_id'])
+        
+        picked = await ask_channel_picker(bot, user_id, "<b>❪ STEP 3: TARGET PUBLIC CHANNEL ❫</b>\n\nWhere should I post the Share Links?", extra_options=["↩️ Uɴᴅᴏ"])
+        if not picked: return
+        if picked == "↩️ Uɴᴅᴏ":
+            picked = await ask_channel_picker(bot, user_id, "<b>❪ STEP 2 (REDO): SOURCE DATABASE ❫</b>\n\nWhere are the files stored?")
+            if not picked: return
+            new_share_job[user_id]['source'] = int(picked['chat_id'])
+            
+            picked = await ask_channel_picker(bot, user_id, "<b>❪ STEP 3: TARGET PUBLIC CHANNEL ❫</b>\n\nWhere should I post the Share Links?")
+            if not picked: return
+            
+        new_share_job[user_id]['target'] = int(picked['chat_id'])
 
         # STEP 3.5: Target Group Topic
         markup_tt = ReplyKeyboardMarkup([["Skip"], ["↩️ Uɴᴅᴏ", "⛔ Cᴀɴᴄᴇʟ"]], resize_keyboard=True, one_time_keyboard=True)

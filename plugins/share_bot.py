@@ -27,9 +27,9 @@ _PEER_CACHE_TTL = 3600    # 1 hour — re-warm after this long
 
 # Join-request tracking: records that a user has a pending join request.
 # Format: "{chat_id}_{user_id}": timestamp_of_first_request
-# TTL extended to 24h because admin approval can take days.
+# TTL extended to 10 days because admin approval can take days.
 _jr_approved: dict = {}
-_JR_TTL = 86400           # 24 hours
+_JR_TTL = 864000          # 10 days
 
 # 
 # Arya Bot Font constants
@@ -138,22 +138,19 @@ _fsub_user_cache = {}  # { "uid_chatid": expiration_timestamp }
 async def check_all_subscriptions(client, user_id: int, fsub_channels: list, bot_id: str = None) -> list:
     """
     Returns list of channel dicts the user has NOT joined.
-
-    For Join-Request channels: if the user has a PENDING join request in DB,
-    they are treated as joined for 24h.
-
-    IMPORTANT cache rules:
-    - Users who LEFT a channel are NEVER cached (always re-checked live).
-    - The 2-min cache is only set after a CONFIRMED successful membership.
-    - JR-channel cache is set after a confirmed pending JR record in DB.
+    
+    Verifies all channels in parallel for maximum speed.
+    Normal channels are ALWAYS verified live with no caching (per user request).
+    JR Channels are cached for 2 mins upon successful join request DB match.
     """
     import time
-    not_joined = []
+    import asyncio
     now = time.time()
-    for ch in fsub_channels:
+    
+    async def _check_single(ch):
         chat_id = ch.get('chat_id')
         if not chat_id:
-            continue
+            return None
 
         is_jr = ch.get('join_request', False)
 
@@ -164,55 +161,56 @@ async def check_all_subscriptions(client, user_id: int, fsub_channels: list, bot
         except Exception:
             ch_id_int = int(chat_id) if str(chat_id).lstrip('-').isdigit() else chat_id
 
-        # Fast local cache check — ONLY skip if cache is set
-        # (cache is never set for LEFT users, so they always reach the API call)
+        # ONLY cache JR channels to respect user demand for instant non-JR re-verification
         cache_key = f"{user_id}_{ch_id_int}"
-        if cache_key in _fsub_user_cache and _fsub_user_cache[cache_key] > now:
-            continue
+        if is_jr and cache_key in _fsub_user_cache and _fsub_user_cache[cache_key] > now:
+            return None
 
         try:
             member = await client.get_chat_member(ch_id_int, user_id)
             if member.status in (enums.ChatMemberStatus.LEFT, enums.ChatMemberStatus.BANNED):
-                # Public channels return LEFT instead of raising an exception for non-members.
-                # Must raise locally to trigger the proper JR DB checks below.
                 raise UserNotParticipant()
             else:
-                # Confirmed member — safe to cache for 2 minutes
-                _fsub_user_cache[cache_key] = now + 120
+                if is_jr:
+                    _fsub_user_cache[cache_key] = now + 120
+                return None
         except UserNotParticipant:
-            # Explicitly evict any stale cache entry for this user+channel to prevent bypasses
             _fsub_user_cache.pop(cache_key, None)
             
             if is_jr:
-                # Check persistent DB for a recorded join request.
-                # IMPORTANT: store and query ch_id_int as int to avoid type mismatch.
                 try:
                     ch_id_for_query = int(ch_id_int)
                 except (ValueError, TypeError):
                     ch_id_for_query = ch_id_int
-                jr_doc = await db.db["pending_jrs"].find_one(
-                    {"user_id": int(user_id), "chat_id": ch_id_for_query}
-                )
-                # Also try string form in case old records used string
-                if not jr_doc:
-                    jr_doc = await db.db["pending_jrs"].find_one(
-                        {"user_id": int(user_id), "chat_id": str(ch_id_for_query)}
-                    )
+                    
+                jr_query = {"user_id": int(user_id)}
+                if isinstance(ch_id_for_query, int):
+                    jr_query["$or"] = [{"chat_id": ch_id_for_query}, {"chat_id": str(ch_id_for_query)}]
+                else:
+                    cln = str(ch_id_for_query).lstrip("@").lower()
+                    jr_query["$or"] = [{"chat_id": ch_id_for_query}, {"chat_id": str(ch_id_for_query)}, {"username": cln}]
+
+                jr_doc = await db.db["pending_jrs"].find_one(jr_query)
+                
                 if jr_doc and (now - jr_doc.get("timestamp", 0) < _JR_TTL):
-                    # Valid pending JR — treat as joined, cache for 2 min
                     _fsub_user_cache[cache_key] = now + 120
                     logger.info(f"FSub: JR grant for user {user_id} in {ch_id_int}")
+                    return None
                 else:
                     ch_copy = dict(ch)
                     ch_copy['needs_request'] = True
-                    not_joined.append(ch_copy)
+                    return ch_copy
             else:
                 ch_copy = dict(ch)
                 ch_copy['never_joined'] = True
-                not_joined.append(ch_copy)
+                return ch_copy
         except Exception as e:
             logger.warning(f"FSub check skipped for {chat_id}: {e}")
-    return not_joined
+            return None
+
+    tasks = [_check_single(ch) for ch in fsub_channels]
+    results = await asyncio.gather(*tasks)
+    return [r for r in results if r is not None]
 
 
 
@@ -253,13 +251,13 @@ async def _fsub_record_jr(client, request):
             # Always store as int so the lookup in check_all_subscriptions matches
             await db.db["pending_jrs"].update_one(
                 {"user_id": int(req_user_id), "chat_id": int(req_ch_id)},
-                {"$set": {"timestamp": time.time()}},
+                {"$set": {"timestamp": time.time(), "username": req_username}},
                 upsert=True
             )
             # Also evict the FSub cache so next check hits DB fresh
             cache_key = f"{req_user_id}_{req_ch_id}"
             _fsub_user_cache.pop(cache_key, None)
-            logger.info(f"JR recorded for user {req_user_id} in {req_ch_id} (TTL: 24h)")
+            logger.info(f"JR recorded for user {req_user_id} in {req_ch_id} (TTL: 10d)")
             return
 
 

@@ -1,51 +1,50 @@
-with open('plugins/settings.py', 'r', encoding='utf-8') as f:
-    content = f.read()
+"""
+Fix the channels display block in settings.py to add:
+- Channel count (X/40)
+- Sync button
+- Search hint message
+"""
 
-old_chunk = (
-    "           InlineKeyboardButton('Dʟᴠʀ Bᴏᴛ Sᴇᴛᴜᴘ',\n"
-    "                        callback_data='settings#sharebot'),\n"
-    "           InlineKeyboardButton('Lᴇᴛ\\'s Eɴʜᴀɴᴄᴇ',\n"
-    "                        callback_data='settings#enhancer')\n"
-    "           ],[\n"
-    "           InlineKeyboardButton('👑 Oᴡɴᴇʀ Pᴀɴᴇʟ',\n"
-    "                        callback_data='settings#owners')\n"
-    "           ],[\n"
-    "           InlineKeyboardButton('❮ Bᴀᴄᴋ', callback_data='back')\n"
-    "           ]]"
-)
+content = open('plugins/settings.py', 'r', encoding='utf-8').read()
 
-new_chunk = (
-    "           InlineKeyboardButton('Dʟᴠʀ Bᴏᴛ Sᴇᴛᴜᴘ',\n"
-    "                        callback_data='settings#sharebot'),\n"
-    "           InlineKeyboardButton('Lᴇᴛ\\'s Eɴʜᴀɴᴄᴇ',\n"
-    "                        callback_data='settings#enhancer')\n"
-    "           ],[\n"
-    "           InlineKeyboardButton('🤖 Sᴀʀᴠᴀᴍ Aɪ',\n"
-    "                        callback_data='sarvam#main'),\n"
-    "           InlineKeyboardButton('👑 Oᴡɴᴇʀ Pᴀɴᴇʟ',\n"
-    "                        callback_data='settings#owners')\n"
-    "           ],[\n"
-    "           InlineKeyboardButton('❮ Bᴀᴄᴋ', callback_data='back')\n"
-    "           ]]"
-)
+old_channels_block = '''   elif type=="channels":
+     buttons = []
+     channels = await db.get_user_channels(user_id)
+     for channel in channels:
+        buttons.append([InlineKeyboardButton(f"{channel['title']}",
+                         callback_data=f"settings#editchannels_{channel['chat_id']}")])
+     buttons.append([InlineKeyboardButton('Aᴅᴅ Cʜᴀɴɴᴇʟ',
+                      callback_data="settings#addchannel"),
+                    InlineKeyboardButton('🗑 Mᴜʟᴛɪ-Dᴇʟᴇᴛᴇ',
+                      callback_data="settings#ch_multi")])
+     buttons.append([InlineKeyboardButton('❮ Bᴀᴄᴋ',
+                      callback_data="settings#main")])
+     await query.message.edit_text(
+       "<b><u>My Channels</u></b>\\n\\n<b>you can manage your target chats in here</b>",
+       reply_markup=InlineKeyboardMarkup(buttons))'''
 
-if old_chunk in content:
-    content = content.replace(old_chunk, new_chunk, 1)
-    with open('plugins/settings.py', 'w', encoding='utf-8') as f:
-        f.write(content)
-    print('SUCCESS - Sarvam AI button added to main settings')
+new_channels_block = '''   elif type=="channels":
+     buttons = []
+     channels = await db.get_user_channels(user_id)
+     for channel in channels:
+        buttons.append([InlineKeyboardButton(f"{channel['title']}",
+                         callback_data=f"settings#editchannels_{channel['chat_id']}")])
+     ch_count = len(channels)
+     buttons.append([InlineKeyboardButton('Add Channel', callback_data="settings#addchannel"),
+                     InlineKeyboardButton('Multi-Delete', callback_data="settings#ch_multi"),
+                     InlineKeyboardButton('Sync Names', callback_data="settings#ch_sync")])
+     buttons.append([InlineKeyboardButton('Back', callback_data="settings#main")])
+     await query.message.edit_text(
+       f"<b><u>My Channels</u></b>  (<code>{ch_count}/40</code>)\\n\\n"
+       "<b>Manage your source / destination chats here.</b>\\n"
+       "<i>Tip: Use <b>Sync Names</b> to refresh all channel names from Telegram.</i>",
+       reply_markup=InlineKeyboardMarkup(buttons))'''
+
+if old_channels_block in content:
+    content = content.replace(old_channels_block, new_channels_block, 1)
+    open('plugins/settings.py', 'w', encoding='utf-8').write(content)
+    print("SUCCESS: channels block updated")
 else:
-    print('NOT FOUND - dumping actual chars around the location')
-    idx = content.find("settings#sharebot")
-    occurrences = []
-    start = 0
-    while True:
-        idx2 = content.find("settings#sharebot", start)
-        if idx2 == -1:
-            break
-        occurrences.append(idx2)
-        start = idx2 + 1
-    print(f"Found {len(occurrences)} occurrences of 'settings#sharebot' at: {occurrences}")
-    for oc in occurrences:
-        print(f"\n--- occurrence at {oc} ---")
-        print(repr(content[oc-100:oc+300]))
+    print("NOT FOUND - checking partial match...")
+    idx = content.find('elif type=="channels":')
+    print(repr(content[idx:idx+500]))

@@ -1037,28 +1037,21 @@ async def _create_taskjob_flow(bot, user_id: int):
             except Exception: pass
 
     # ── Step 4: Destination ───────────────────────────────────────
-    channels = await db.get_user_channels(user_id)
-    if not channels:
-        return await bot.send_message(user_id,
-            "<b>❌ No target channels saved. Add via /settings → Channels.</b>",
-            reply_markup=ReplyKeyboardRemove())
-
-    ch_btns = [[KeyboardButton(ch['title'])] for ch in channels]
-    ch_btns.append([UNDO_BTN, CANCEL_BTN])
-
+    from plugins.utils import ask_channel_picker
     while True:
-        ch_r = await _ask(bot, user_id,
+        picked = await ask_channel_picker(bot, user_id,
             "<b>Step 4/4 — Target Channel</b>\n\nChoose where to forward messages:\n\n"
             "<blockquote expandable>"
             "Choose from your saved channels/groups.\n"
             "To add a channel, go to /settings → Channels.\n"
             "The selected account must be an admin with send permissions."
             "</blockquote>",
-            reply_markup=ReplyKeyboardMarkup(ch_btns, resize_keyboard=True, one_time_keyboard=True))
+            extra_options=["↩️ Uɴᴅᴏ"])
 
-        if _cancel(ch_r.text):
-            return await bot.send_message(user_id, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
-        if _undo(ch_r.text):
+        if not picked:
+            return
+
+        if isinstance(picked, str) and picked == "↩️ Uɴᴅᴏ":
             # redo message range
             range_r2 = await _ask(bot, user_id,
                 "<b>↩️ Redo — Step 3/4: Message Range</b>\n\nSend range again (ALL / ID / start:end):",
@@ -1078,18 +1071,10 @@ async def _create_taskjob_flow(bot, user_id: int):
                     try: start_id = int(rtext2)
                     except Exception: pass
             continue
+            
+        to_chat = picked['chat_id']
+        to_title = picked['title']
         break
-
-    to_chat, to_title = None, ch_r.text.strip()
-    for ch in channels:
-        if ch['title'] == to_title:
-            to_chat  = ch['chat_id']
-            to_title = ch['title']
-            break
-
-    if not to_chat:
-        return await bot.send_message(user_id, "<b>Invalid selection. Cancelled.</b>",
-                                      reply_markup=ReplyKeyboardRemove())
 
     # ── Save & Start ──────────────────────────────────────────────
     job_id = f"tj-{user_id}-{int(time.time())}"

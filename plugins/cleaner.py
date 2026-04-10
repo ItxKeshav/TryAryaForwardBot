@@ -637,10 +637,18 @@ async def _cl_run_job(job_id: str, bot=None):
                             clean_title = f"{base_name} {curr_num}"
                     else:
                         # User wants to keep original filename/title
-                        if orig_fn:
+                        orig_title = getattr(media_obj, 'title', None)
+                        if orig_title:
+                            clean_title = str(orig_title)
+                        elif orig_fn:
                             clean_title = os.path.splitext(orig_fn)[0]
                         else:
                             clean_title = f"{base_name} {curr_num}"  # fallback if no orig filename
+
+                        if orig_fn:
+                            clean_file_override = orig_fn
+                        else:
+                            clean_file_override = None
 
                     # Track number (used for sorting in music apps)
                     if ep_label:
@@ -654,7 +662,9 @@ async def _cl_run_job(job_id: str, bot=None):
                     curr_num += 1
 
                     # Output filename — always .mp3 (except photos)
-                    if use_ffmpeg:
+                    if not rename_files and clean_file_override:
+                        clean_file = clean_file_override
+                    elif use_ffmpeg:
                         clean_file = f"{clean_title}.mp3"
                     else:
                         clean_file = f"{clean_title}{orig_ext}" if orig_ext else clean_title
@@ -1239,51 +1249,42 @@ async def _create_cl_flow(bot, user_id):
     if sid and eid and sid > eid: sid, eid = eid, sid
 
     # ── Step 4: Destination ──────────────────────────────────────
-    channels = await db.get_user_channels(user_id)
+    from plugins.utils import ask_channel_picker
     dest_chat = None
     ch = None
     replace_mode = False
     replace_start_msg_id = 0
-    if channels:
-        ch_kb = [[KeyboardButton(f"📢 {c['title']}")] for c in channels]
-        ch_kb.append([KeyboardButton("✏️ Replace/Edit Mode")])
-        ch_kb.append([KeyboardButton("⏭ Skip (Send to DM)")])
-        ch_kb.append([CANCEL_BTN])
-        r_dest = await _cl_ask(bot, user_id,
-            "<b>»  Step 4/9</b>\n\nSelect <b>destination channel</b> for cleaned files:\n"
-            "<i>Or choose <b>✏️ Replace/Edit Mode</b> to edit existing posts in-place.</i>",
-            reply_markup=ReplyKeyboardMarkup(ch_kb, resize_keyboard=True, one_time_keyboard=True))
-        if _cancelled(r_dest): return await _abort()
+    
+    picked = await ask_channel_picker(bot, user_id, 
+        "<b>»  Step 4/9</b>\n\nSelect <b>destination channel</b> for cleaned files:\n"
+        "<i>Or choose <b>✏️ Replace/Edit Mode</b> to edit existing posts in-place.</i>",
+        extra_options=["✏️ Replace/Edit Mode", "⏭️ Skip (Send to DM)"])
+        
+    if not picked: return await _abort()
+    
+    if picked == "✏️ Replace/Edit Mode":
+        replace_mode = True
+        picked_edit = await ask_channel_picker(bot, user_id,
+            "<b>»  Step 4a/9 — Select Channel to Edit</b>\n\n"
+            "Which channel contains the existing audio posts to replace?")
+        if not picked_edit: return await _abort()
+        
+        dest_chat = int(picked_edit["chat_id"])
 
-        if "Replace/Edit" in (r_dest.text or ""):
-            replace_mode = True
-            edit_ch_kb = [[KeyboardButton(f"📢 {c['title']}")] for c in channels]
-            edit_ch_kb.append([CANCEL_BTN])
-            r_edit_ch = await _cl_ask(bot, user_id,
-                "<b>»  Step 4a/9 — Select Channel to Edit</b>\n\n"
-                "Which channel contains the existing audio posts to replace?",
-                reply_markup=ReplyKeyboardMarkup(edit_ch_kb, resize_keyboard=True, one_time_keyboard=True))
-            if _cancelled(r_edit_ch): return await _abort()
-            edit_title = (r_edit_ch.text or "").replace("📢 ", "").strip()
-            ch = next((c for c in channels if c["title"] == edit_title), None)
-            if ch:
-                dest_chat = int(ch["chat_id"])
+        r_mid = await _cl_ask(bot, user_id,
+            "<b>»  Step 4b/9 — First Message ID to Replace</b>\n\n"
+            "Send the <b>message ID</b> of the first existing audio post that should be replaced.\n"
+            "<i>Each subsequent file will edit the next message ID automatically.</i>",
+            reply_markup=markup_c)
+        if _cancelled(r_mid): return await _abort()
+        try:
+            replace_start_msg_id = int((r_mid.text or "0").strip())
+        except ValueError:
+            replace_start_msg_id = 0
 
-            r_mid = await _cl_ask(bot, user_id,
-                "<b>»  Step 4b/9 — First Message ID to Replace</b>\n\n"
-                "Send the <b>message ID</b> of the first existing audio post that should be replaced.\n"
-                "<i>Each subsequent file will edit the next message ID automatically.</i>",
-                reply_markup=markup_c)
-            if _cancelled(r_mid): return await _abort()
-            try:
-                replace_start_msg_id = int((r_mid.text or "0").strip())
-            except ValueError:
-                replace_start_msg_id = 0
-
-        elif "Skip" not in (r_dest.text or ""):
-            title = (r_dest.text or "").replace("📢 ", "").strip()
-            ch = next((c for c in channels if c["title"] == title), None)
-            if ch: dest_chat = int(ch["chat_id"])
+    elif picked != "⏭️ Skip (Send to DM)":
+        dest_chat = int(picked["chat_id"])
+        
     if not dest_chat:
         dest_chat = user_id
 

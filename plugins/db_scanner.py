@@ -263,34 +263,17 @@ async def run_channel_scan(bot, user_id: int, chat_id: int,
 async def _scan_flow(bot, user_id: int):
     """Interactive flow to select channel and scan it."""
     try:
-        chans = await db.get_user_channels(user_id)
-        if not chans:
-            return await bot.send_message(
-                user_id,
-                "<b>❌ No channels added in /settings.</b>\n"
-                "Add a database channel first.",
-                reply_markup=ReplyKeyboardRemove()
-            )
-
-        ch_kb = [[f"📢 {ch['title']}"] for ch in chans]
-        ch_kb.append(["⛔ Cancel"])
-        markup = ReplyKeyboardMarkup(ch_kb, resize_keyboard=True, one_time_keyboard=True)
-
-        msg = await _ask(
+        from plugins.utils import ask_channel_picker
+        picked = await ask_channel_picker(
             bot, user_id,
-            "<b>❪ DATABASE SCANNER ❫</b>\n\n"
-            "Select the <b>database channel</b> to scan and index:",
-            reply_markup=markup
+            "<b>❪ DATABASE SCANNER ❫</b>\n\nSelect the <b>database channel</b> to scan and index:"
         )
-        if not msg or "Cancel" in (msg.text or ""):
-            return await bot.send_message(user_id, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
 
-        title = (msg.text or "").replace("📢 ", "").strip()
-        ch = next((c for c in chans if c["title"] == title), None)
-        if not ch:
-            return await bot.send_message(user_id, "<b>❌ Channel not found.</b>", reply_markup=ReplyKeyboardRemove())
+        if not picked:
+            return
 
-        chat_id = int(ch['chat_id'])
+        title = picked["title"]
+        chat_id = picked["chat_id"]
         markup2 = ReplyKeyboardMarkup([["⛔ Cᴀɴᴄᴇʟ"]], resize_keyboard=True, one_time_keyboard=True)
 
         # Check if existing index

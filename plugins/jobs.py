@@ -1483,34 +1483,26 @@ async def newjob_cmd(bot, message):
 async def _ask_dest(bot, user_id: int, channels: list, step_label: str, optional: bool = False, undo_btn: bool = False) -> tuple:
     """Helper: ask user to pick a channel from their saved list. Returns (chat_id, title, cancelled).
     cancelled='undo' means undo pressed."""
-    btns = [[KeyboardButton(ch['title'])] for ch in channels]
-    if optional:
-        btns.append([KeyboardButton("⏭ Sᴋɪᴘ (no second destination)")])
+    from plugins.utils import ask_channel_picker
+    
     extra = []
+    if optional:
+        extra.append("⏭ Sᴋɪᴘ (no second destination)")
     if undo_btn:
-        extra.append(KeyboardButton("↩️ Uɴᴅᴏ"))
-    extra.append(KeyboardButton("⛔ Cᴀɴᴄᴇʟ"))
-    btns.append(extra)
-
-    resp = await _ask(bot, user_id, step_label,
-                      reply_markup=ReplyKeyboardMarkup(btns, resize_keyboard=True, one_time_keyboard=True))
-
-    txt = resp.text.strip()
-    if "⛔" in txt or "Cᴀɴᴄᴇʟ" in txt or txt.startswith("/cancel"):
-        await bot.send_message(user_id, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
+        extra.append("↩️ Uɴᴅᴏ")
+        
+    picked = await ask_channel_picker(bot, user_id, step_label, extra_options=extra)
+    
+    if not picked:
         return None, None, True
-
-    if undo_btn and ("↩️" in txt or "Uɴᴅᴏ" in txt or txt.startswith("/undo")):
-        return None, None, "undo"
-
-    if optional and "skip" in txt.lower():
-        return None, None, False
-
-    for ch in channels:
-        if ch['title'] == txt:
-            return ch['chat_id'], ch['title'], False
-
-    return None, None, False
+        
+    if isinstance(picked, str):
+        if picked == "↩️ Uɴᴅᴏ":
+            return None, None, "undo"
+        if picked == "⏭ Sᴋɪᴘ (no second destination)":
+            return None, None, False
+            
+    return picked['chat_id'], picked['title'], False
 
 
 async def _create_job_flow(bot, user_id: int):

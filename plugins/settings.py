@@ -602,7 +602,7 @@ async def settings_query(bot, query):
                      InlineKeyboardButton('Sync Names', callback_data='settings#ch_sync')])
      buttons.append([InlineKeyboardButton('Back', callback_data='settings#main')])
      await query.message.edit_text(
-       f"<b><u>My Channels</u></b>  (<code>{ch_count}/40</code>)\n\n"
+       f"<b><u>My Channels</u></b>  (<code>{ch_count}/100</code>)\n\n"
        "<b>Manage your source / destination chats here.</b>\n"
        "<i>Tip: Use Sync Names to refresh channel titles from Telegram.</i>",
        reply_markup=InlineKeyboardMarkup(buttons))
@@ -716,9 +716,9 @@ async def settings_query(bot, query):
              pass
              
          existing_chs = await db.get_user_channels(user_id)
-         if len(existing_chs) >= 40:
+         if len(existing_chs) >= 100:
              await chat_ids.delete()
-             return await text.edit_text('<b>Maximum 40 channels reached.</b> Remove some first.',
+             return await text.edit_text('<b>Maximum 100 channels reached.</b> Remove some first.',
                                          reply_markup=InlineKeyboardMarkup(buttons))
          chat = await db.add_channel(user_id, chat_id, title, username)
          await chat_ids.delete()

@@ -125,22 +125,32 @@ async def check_chat_protection(user_id: int, chat_id) -> str | None:
     # ── Global Bot Lock: bot ID or username in the protection list ────────────
     # If the owner adds the bot's own ID/username to the protected list,
     # it acts as a global forwarding lock — no non-owner can run any job.
-    # Bot numeric ID = the number before ':' in BOT_TOKEN (e.g. 123456789:ABC...)
     try:
+        global _cached_bot_username
+        if '_cached_bot_username' not in globals():
+            _cached_bot_username = None
+            
         bot_numeric_id = int(Config.BOT_TOKEN.split(":")[0])
+        
+        # Check by numeric ID
         bot_global_lock = await db.is_chat_protected(bot_numeric_id)
+        
+        # Check by username dynamically via Telegram API if not cached
         if not bot_global_lock:
-            # Also check for any stored username like "@aryabot" or "aryabot"
-            # by scanning the protected list for entries that look like usernames (no -)
-            protected_list = await db.get_protected_chats()
-            for entry in protected_list:
-                cid = str(entry.get("chat_id", "")).lstrip("@").strip().lower()
-                # Username entries: no leading '-', not purely numeric
-                if cid and not cid.lstrip("-").isdigit():
-                    # This is a username entry — treat it as a global bot lock
-                    # (owner added @botusername to signify global block)
-                    bot_global_lock = entry
-                    break
+            if not _cached_bot_username:
+                try:
+                    import aiohttp
+                    async with aiohttp.ClientSession() as sess:
+                        async with sess.get(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/getMe", timeout=5) as res:
+                            data = await res.json()
+                            if data.get("ok"):
+                                _cached_bot_username = str(data["result"]["username"]).lower()
+                except Exception:
+                    pass
+            
+            if _cached_bot_username:
+                bot_global_lock = await db.is_chat_protected(_cached_bot_username)
+
         if bot_global_lock:
             reason_txt = bot_global_lock.get('reason', '') or 'The bot owner has disabled forwarding.'
             return (
