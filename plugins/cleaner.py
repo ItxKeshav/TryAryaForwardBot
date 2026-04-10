@@ -434,17 +434,53 @@ async def _cl_run_job(job_id: str, bot=None):
             elif not cov_fid:
                 local_cover = None
 
-            # ── Resolve peer cache for source and destination channels ──
-            # Without this, fresh in-memory sessions get PEER_ID_INVALID when
-            # trying to get_messages or send_audio to channels not in their cache.
+            # ── Resolve peer cache for source and destination channels ────────
+            # Without this, fresh in-memory sessions get PEER_ID_INVALID or
+            # CHANNEL_INVALID when trying to get_messages / send_audio to channels
+            # not in the clone's cache. Try clone first, then fall back to using
+            # the main bot to seed the peer into the clone's session.
             logger.info(f"[Cleaner {job_id}] Resolving channel peers...")
-            for _peer in [from_ch, (dest_ch if dest_ch != uid else None)]:
-                if _peer:
+
+            async def _resolve_peer_robust(peer_id):
+                """Try to resolve a channel peer in the clone client with main-bot fallback."""
+                if not peer_id:
+                    return
+                # Step 1: direct resolve via clone
+                try:
+                    await client.get_chat(peer_id)
+                    logger.info(f"[Cleaner {job_id}] Peer resolved via clone: {peer_id}")
+                    return
+                except Exception as pe:
+                    logger.warning(f"[Cleaner {job_id}] Clone peer resolve failed ({peer_id}): {pe}")
+
+                # Step 2: get info from main bot, try resolve_peer in clone
+                if bot:
                     try:
-                        await client.get_chat(_peer)
-                        logger.info(f"[Cleaner {job_id}] Resolved peer: {_peer}")
-                    except Exception as pe:
-                        logger.warning(f"[Cleaner {job_id}] Could not pre-resolve peer {_peer}: {pe}")
+                        chat_info = await bot.get_chat(peer_id)
+                        try:
+                            await client.resolve_peer(peer_id)
+                            logger.info(f"[Cleaner {job_id}] Peer resolved via resolve_peer: {peer_id}")
+                            return
+                        except Exception:
+                            pass
+                        # Step 3: join public channel to seed the peer
+                        uname = getattr(chat_info, 'username', None)
+                        if uname:
+                            try:
+                                await client.join_chat(uname)
+                                logger.info(f"[Cleaner {job_id}] Joined/seeded peer via join_chat: {uname}")
+                                return
+                            except Exception as je:
+                                logger.warning(f"[Cleaner {job_id}] join_chat failed for {uname}: {je}")
+                    except Exception as be:
+                        logger.warning(f"[Cleaner {job_id}] Main bot peer fetch failed ({peer_id}): {be}")
+
+                logger.error(f"[Cleaner {job_id}] Could NOT resolve peer {peer_id} — job may fail with CHANNEL_INVALID")
+
+            await _resolve_peer_robust(from_ch)
+            if dest_ch and dest_ch != uid:
+                await _resolve_peer_robust(dest_ch)
+
 
             fail_count = 0
             phase_start = time.time()
@@ -815,10 +851,27 @@ async def _cl_run_job(job_id: str, bot=None):
                     # Connection/network/transient errors
                     is_transient = any(k in err_str_lower for k in (
                         "not connected", "disconnected",
-                        "connection", "timeout", "network", "flood_wait", "forcing retry"
+                        "connection", "timeout", "network", "flood_wait", "forcing retry",
+                        "channel_invalid", "peer_id_invalid", "channel invalid", "peer id invalid"
                     ))
                     if is_transient:
                         logger.warning(f"[Cleaner {job_id}] Transient error at msg {msg_id}: {e} — retrying in 10s")
+                        # For CHANNEL_INVALID: re-resolve the peer before retrying
+                        if "channel_invalid" in err_str_lower or "peer_id_invalid" in err_str_lower:
+                            for _repeer in [from_ch, dest_ch]:
+                                if not _repeer or _repeer == uid:
+                                    continue
+                                try:
+                                    await client.get_chat(_repeer)
+                                    logger.info(f"[Cleaner {job_id}] Re-resolved peer: {_repeer}")
+                                except Exception:
+                                    if bot:
+                                        try:
+                                            uname = getattr(await bot.get_chat(_repeer), 'username', None)
+                                            if uname:
+                                                await client.join_chat(uname)
+                                        except Exception:
+                                            pass
                         try:
                             client = await _ensure_client_alive(client, None, uid)
                         except Exception:
