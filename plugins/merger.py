@@ -63,41 +63,15 @@ _FFMPEG_EXECUTOR = _cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="ffm
 # ─── Client health-check / reconnect ────────────────────────────────────
 async def _mg_ensure_client_alive(client):
     """
-    Verify the Pyrogram client is connected. If dead ('Client has not been
-    started yet', 'not connected', 'disconnected') attempt a cold restart
-    up to 3 times. Returns the (possibly new) live client or raises.
-    A merge job can run for hours — the TCP connection will silently die.
+    Verify the Pyrogram client is connected (passive check with no timeout drops).
+    Pyrogram inherently auto-reconnects, but if it was manually disconnected we connect it.
     """
-    for attempt in range(3):
-        try:
-            await asyncio.wait_for(client.get_me(), timeout=15)
-            return client   # alive ✔️
-        except Exception as e:
-            err_str = str(e).lower()
-            is_conn = ("not been started" in err_str or "not connected" in err_str
-                       or "disconnected" in err_str or isinstance(e, asyncio.TimeoutError))
-            if is_conn:
-                logger.warning(f"[Merger] Client dead (attempt {attempt+1}): {e} — reconnecting…")
-                try:
-                    cname = getattr(client, 'name', None)
-                    if cname:
-                        from plugins.test import release_client as _rc_mg
-                        await _rc_mg(cname)
-                except Exception:
-                    pass
-                try:
-                    await client.stop()
-                except Exception:
-                    pass
-                try:
-                    client = await start_clone_bot(client)
-                    await asyncio.sleep(1)
-                    continue
-                except Exception as re_err:
-                    logger.error(f"[Merger] Restart attempt {attempt+1} failed: {re_err}")
-                    await asyncio.sleep(3)
-            else:
-                raise   # not a connection error — let caller handle it
+    try:
+        if not getattr(client, "is_connected", True):
+            await client.connect()
+    except Exception as e:
+        logger.warning(f"[Merger] Reconnect attempt failed discretely: {e}")
+    return client
     raise RuntimeError("Merger client failed to reconnect after 3 attempts")
 
 @Client.on_message(filters.private, group=-14)
@@ -1781,9 +1755,7 @@ async def _run_job(jid, uid, bot):
                 if not fresh or fresh.get("status") not in ("paused", "stopped", "queued"):
                     shutil.rmtree(wdir, ignore_errors=True)
         except: pass
-        if client:
-            try: await client.stop()
-            except: pass
+        pass
 
 
 def _start_task(jid, uid, bot):
@@ -2274,8 +2246,7 @@ async def _create_flow(bot, uid, mtype="audio"):
                             valid_count += 1
                 if scan_msg: await scan_msg.delete()
             finally:
-                try: await ui_client.stop()
-                except: pass
+                pass
         except Exception as e:
             if scan_msg:
                 try: await scan_msg.edit_text(f"<i>Scan partial/failed: {e}</i>")

@@ -277,49 +277,15 @@ async def _process_audio_ffmpeg(input_path, output_path, cover_path, meta: dict)
 # ─── Client health-check helper ──────────────────────────────────────────────
 async def _ensure_client_alive(client, acc, uid):
     """
-    Verify `client` is connected. If it is dead ("Client has not been started"
-    or any other connection error) attempt a cold restart up to 3 times.
-    Returns the (possibly new) live client, or raises on permanent failure.
+    Verify `client` is connected (passive check with no timeout drops).
+    Pyrogram inherently auto-reconnects, but if it was manually disconnected we connect it.
     """
-    for attempt in range(3):
-        try:
-            # A lightweight ping — if the client is dead this will raise
-            await asyncio.wait_for(client.get_me(), timeout=15)
-            return client   # alive
-        except FloodWait as fw:
-            # API rate limit — wait and retry WITHOUT restarting the client
-            logger.warning(f"[Cleaner] FloodWait {fw.value}s during health check")
-            await asyncio.sleep(fw.value + 2)
-            continue
-        except Exception as e:
-            err_str = str(e).lower()
-            if "flood_wait" in err_str or "flood wait" in err_str:
-                await asyncio.sleep(60)
-                continue
-            if "not been started" in err_str or "not connected" in err_str or "disconnected" in err_str or isinstance(e, asyncio.TimeoutError):
-                logger.warning(f"[Cleaner] Client dead on attempt {attempt+1}: {e} — reconnecting…")
-                # Evict from cache and restart
-                try:
-                    cname = getattr(client, 'name', None)
-                    if cname:
-                        from plugins.test import release_client as _rc
-                        await _rc(cname)
-                except Exception:
-                    pass
-                try:
-                    await client.stop()
-                except Exception:
-                    pass
-                try:
-                    client = await start_clone_bot(client)
-                    await asyncio.sleep(1)
-                    continue
-                except Exception as restart_err:
-                    logger.error(f"[Cleaner] Restart attempt {attempt+1} failed: {restart_err}")
-                    await asyncio.sleep(3)
-            else:
-                raise   # not a connection error — propagate
-    raise RuntimeError("Client failed to reconnect after 3 attempts")
+    try:
+        if not getattr(client, "is_connected", True):
+            await client.connect()
+    except Exception as e:
+        logger.warning(f"[Cleaner] Reconnect attempt failed discretely: {e}")
+    return client
 
 
 class _DummySem:

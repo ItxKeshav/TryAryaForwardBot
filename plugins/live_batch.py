@@ -241,9 +241,7 @@ async def _lb_run_job(job_id: str):
             
         job = await _lb_get_job(job_id)
         if not job or job.get("status") in ("stopped", "failed"):
-            if src_client:
-                try: await src_client.disconnect()
-                except: pass
+            pass
             break
             
         try:
@@ -333,8 +331,7 @@ async def _lb_run_job(job_id: str):
                 if "connection" in err_str or "timeout" in err_str:
                     logger.warning("[LiveBatch] Connection instability detected. Forcing reconnection in next cycle.")
                     if getattr(src_client, "session_name", None) != "bot":
-                        try: await src_client.disconnect()
-                        except: pass
+                        pass
                     src_client = None
                 # msgs stays as [] — the loop below safely produces no results
             valid = []

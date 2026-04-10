@@ -44,38 +44,12 @@ _mj_waiting: dict[int, asyncio.Future] = {}
 
 # ─── Client health-check / reconnect ────────────────────────────────────
 async def _mj_ensure_client_alive(client):
-    """
-    Verify the Pyrogram client is connected. If dead, attempts cold restart up to 3 times.
-    """
-    for attempt in range(3):
-        try:
-            await asyncio.wait_for(client.get_me(), timeout=15)
-            return client   # alive ✔️
-        except Exception as e:
-            err_str = str(e).lower()
-            is_conn = ("not been started" in err_str or "not connected" in err_str
-                       or "disconnected" in err_str or isinstance(e, asyncio.TimeoutError))
-            if is_conn:
-                logger.warning(f"[MultiJob] Client dead (attempt {attempt+1}): {e} — reconnecting…")
-                try:
-                    cname = getattr(client, 'name', None)
-                    if cname:
-                        from plugins.test import release_client as _rc_mj
-                        await _rc_mj(cname)
-                except Exception: pass
-                try: await client.stop()
-                except Exception: pass
-                
-                try:
-                    client = await start_clone_bot(client)
-                    await asyncio.sleep(1)
-                    continue
-                except Exception as re_err:
-                    logger.error(f"[MultiJob] Restart attempt {attempt+1} failed: {re_err}")
-                    await asyncio.sleep(3)
-            else:
-                raise   # not a connection error — let caller handle it
-    raise RuntimeError("MULTIJOB_RECONNECT_FAILED: client failed to reconnect after 3 attempts")
+    try:
+        if not getattr(client, "is_connected", True):
+            await client.connect()
+    except Exception as e:
+        pass
+    return client
 
 
 from pyrogram import ContinuePropagation
@@ -914,8 +888,7 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
             if client_name:
                 await release_client(client_name)
             else:
-                try: await client.stop()
-                except Exception: pass
+                pass
 
 
 def _mj_start_task(job_id: str, user_id: int, bot=None) -> asyncio.Task:

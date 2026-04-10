@@ -619,9 +619,6 @@ async def _run_task_job(job_id: str, user_id: int):
     finally:
         _task_jobs.pop(job_id, None)
         _pause_events.pop(job_id, None)
-        if client:
-            try: await client.stop()
-            except Exception: pass
 
 
 def _start_task(job_id: str, user_id: int):
