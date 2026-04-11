@@ -263,7 +263,10 @@ async def _process_audio_ffmpeg(input_path, output_path, cover_path, meta: dict)
 
     loop = asyncio.get_event_loop()
     try:
-        rc, stderr = await loop.run_in_executor(_CL_FFMPEG_EXECUTOR, _make_cl_run(cmd))
+        rc, stderr = await asyncio.wait_for(
+            loop.run_in_executor(_CL_FFMPEG_EXECUTOR, _make_cl_run(cmd)),
+            timeout=10800  # 3 hours max for a massive 4GB extraction
+        )
         if rc != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) < 100:
             return False, stderr[-1500:]
         return True, ""
@@ -573,9 +576,17 @@ async def _cl_run_job(job_id: str, bot=None):
                         msg_id += 1
                         continue   # truly no media (text-only / service)
 
-                    # ALWAYS use FFmpeg to convert EVERYTHING to MP3.
-                    # Photos are the only exception (they have no audio stream).
-                    use_ffmpeg = not is_photo
+                    # ── Evaluate FFmpeg usage ───────────────────────────────────
+                    # Photos are never run through FFmpeg.
+                    # Audio/Voice are ALWAYS run through FFmpeg to clean metadata/re-encode.
+                    # Videos are only run through FFmpeg if `convert_videos` is True.
+                    convert_videos = job.get("convert_videos", False)
+                    if is_photo:
+                        use_ffmpeg = False
+                    elif is_video:
+                        use_ffmpeg = convert_videos
+                    else:
+                        use_ffmpeg = True
 
                     # Original filename & extension
                     orig_fn  = getattr(media_obj, 'file_name', None) or ""
@@ -656,7 +667,14 @@ async def _cl_run_job(job_id: str, bot=None):
                     else:
                         out_path = os.path.abspath(f"temp_cl_out_{job_id}_{msg_id}{orig_ext}")
 
-                    dl_path = await client.download_media(msg, file_name=in_path)
+                    try:
+                        dl_path = await asyncio.wait_for(
+                            client.download_media(msg, file_name=in_path),
+                            timeout=7200  # 2 hours max for 4GB files
+                        )
+                    except asyncio.TimeoutError:
+                        raise Exception("Download timed out after 2 hours.")
+
                     if not dl_path or not os.path.exists(str(dl_path)):
                         msg_id += 1
                         continue
@@ -1308,6 +1326,19 @@ async def _create_cl_flow(bot, user_id):
         if _cancelled(r_num): return await _abort()
         start_num = int((r_num.text or "1").strip()) if (r_num.text or "").strip().isdigit() else 1
 
+    # ── Step 6: Convert Videos to Audio? ──────────────────────────
+    r_conv = await _cl_ask(bot, user_id,
+        "<b>»  Step 6/10 — Convert Video to Audio?</b>\n\n"
+        "Should large video files (up to 4GB) be converted to MP3?\n\n"
+        "• <b>Yes</b> → Videos are extracted to Audio, metadata applied, and old files cleaned.\n"
+        "• <b>No</b>  → Videos are cleanly processed AS videos without extraction.",
+        reply_markup=ReplyKeyboardMarkup(
+            [["✅ Yes, Convert to Audio", "❌ No, Keep as Video"],
+             [CANCEL_BTN]],
+            resize_keyboard=True, one_time_keyboard=True))
+    if _cancelled(r_conv): return await _abort()
+    convert_videos = "yes" in (r_conv.text or "").lower()
+
     # ── Step 7: Metadata (individual prompts) ────────────────────
     df = await _cl_get_defaults(user_id)
     adv_artist = df.get("artist", "")
@@ -1408,6 +1439,7 @@ async def _create_cl_flow(bot, user_id):
         "total_files": total_range, "files_done": 0,
         "base_name": base_name, "starting_number": start_num,
         "rename_files": rename_files,
+        "convert_videos": convert_videos,
         "artist": adv_artist,
         "year": adv_year,
         "album": adv_album,
@@ -1432,6 +1464,7 @@ async def _create_cl_flow(bot, user_id):
         f"Name: <code>{base_name}</code>\n"
         f"Files: <code>{sid}</code> → <code>{eid}</code> (~{total_range} msgs)\n"
         f"Numbering: {base_name} <b>{start_num}</b> → {base_name} <b>{start_num + total_range - 1}</b>\n"
+        f"Convert Video: {'✅ Yes' if convert_videos else '❌ No'}\n"
         f"Artist: {adv_artist or '—'}  |  Cover: {'✅ Set' if adv_cover else '—'}{run_msg}",
         reply_markup=ReplyKeyboardRemove()
     )

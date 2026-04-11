@@ -492,10 +492,12 @@ async def _run_job(job_id: str, user_id: int):
         # Warm up peer cache and identify exact DM source type
         is_dm_source = False
         from pyrogram.enums import ChatType
+        from plugins.utils import safe_resolve_peer
         
         if str(from_chat).lower() in ("me", "saved"):
             is_dm_source = True
         else:
+            await safe_resolve_peer(client, from_chat, bot=bot)
             try:
                 peer_chat = await client.get_chat(from_chat)
                 if peer_chat.type in (ChatType.PRIVATE, ChatType.BOT):
@@ -508,13 +510,7 @@ async def _run_job(job_id: str, user_id: int):
                     
         try:
             for _chat in [to_chat] + ([to_chat_2] if to_chat_2 else []):
-                try:
-                    await client.get_chat(_chat)
-                except FloodWait as fw:
-                    logger.warning(f"[Job {job_id}] FloodWait {fw.value}s on get_chat({_chat})")
-                    await asyncio.sleep(fw.value + 2)
-                except Exception:
-                    pass
+                await safe_resolve_peer(client, _chat, bot=bot)
         except Exception:
             pass
 

@@ -313,3 +313,39 @@ async def ask_channel_picker(bot, user_id: int, prompt: str,
         await bot.send_message(user_id, f"<i>Could not find <b>{text}</b>. Try again or use 🔍 Search.</i>")
         current_list = channels
 
+
+async def safe_resolve_peer(client, chat_id, bot=None):
+    try:
+        if str(chat_id).lower() in ('me', 'saved'):
+            chat_id = 'me'
+        else:
+            chat_id = int(chat_id) if str(chat_id).lstrip('-').isdigit() else chat_id
+        try: await client.get_chat(chat_id)
+        except: await client.get_users(chat_id)
+        return True
+    except Exception as e:
+        err_str = str(e).upper()
+        if 'PEER_ID_INVALID' in err_str or 'CHANNEL_INVALID' in err_str or 'PEER_ID_NOT_HANDLED' in err_str or 'USERNAME_NOT_OCCUPIED' in err_str:
+            if bot and getattr(client, 'session_name', '') != getattr(bot, 'session_name', ''):
+                try:
+                    from pyrogram.raw.types import InputPeerChannel as _IPC
+                    _tpeer = await bot.resolve_peer(chat_id)
+                    if isinstance(_tpeer, _IPC):
+                        await client.storage.update_peers([(_tpeer.channel_id, _tpeer.access_hash, 'channel', None, None)])
+                        try: await client.get_chat(chat_id)
+                        except: pass
+                        return True
+                except Exception:
+                    pass
+            try:
+                me = await client.get_me()
+                if not getattr(me, 'is_bot', False):
+                    async for _ in client.get_dialogs(): pass
+                try: await client.get_chat(chat_id)
+                except: await client.get_users(chat_id)
+                return True
+            except Exception as e2:
+                import logging
+                logging.getLogger(__name__).warning(f'Failed to resolve {chat_id}: {e2}')
+                return False
+        return False
