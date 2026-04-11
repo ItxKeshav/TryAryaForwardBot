@@ -1425,13 +1425,15 @@ async def _create_cl_flow(bot, user_id):
             
     # ── Step 8.5: Metadata Note ────────────────────────────────────────────────
     me = await bot.get_me() if getattr(bot, "get_me", None) else None
-    default_note = f"@{me.username}" if me and getattr(me, "username", None) else "@tryaryabot"
+    bot_uname = f"@{me.username}" if me and getattr(me, "username", None) else "@tryaryabot"
+    default_note = f"Processed and organized by {bot_uname}"
     
     r_note = await _cl_ask(bot, user_id,
         f"<b>>  Step 8.5/10 — Metadata Note</b>\n\n"
         f"Enter a <b>Note / Comment</b> to embed inside the file's metadata.\n"
-        f"<i>By default, the bot's username ( {default_note} ) will be used.</i>\n"
-        f"<i>Send /skip to use the default username.</i>",
+        f"<i>By default, this message will be used:</i>\n"
+        f"<code>{default_note}</code>\n\n"
+        f"<i>Send /skip to use the default message.</i>",
         reply_markup=markup_s)
     if _cancelled(r_note): return await _abort()
     
