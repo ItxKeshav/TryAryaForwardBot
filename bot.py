@@ -1,3 +1,9 @@
+import os
+import time
+os.environ['TZ'] = 'Asia/Kolkata'
+if hasattr(time, 'tzset'):
+    time.tzset()
+
 import asyncio
 import logging 
 import logging.config
