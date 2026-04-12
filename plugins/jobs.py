@@ -37,38 +37,117 @@ _job_tasks: dict[str, asyncio.Task] = {}
 _lj_waiting: dict[int, asyncio.Future] = {}
 
 
+# ─── Per-account reconnect cooldown (prevents flood of GetFullUser on mass reconnect) ───
+_lj_last_reconnect: dict = {}  # session_name -> last reconnect timestamp
+_lj_me_cache: dict = {}        # session_name -> (me_obj, cached_at_timestamp)
+_LJ_ME_CACHE_TTL = 300         # Reuse cached me for 5 min — avoids repeated GetFullUser calls
+
+async def _lj_ping_client(client) -> bool:
+    """
+    Lightweight MTProto Ping to verify the transport is alive.
+    Does NOT call users.GetFullUser (which causes FLOOD_WAIT_X).
+    Falls back to is_connected() if ping isn't available.
+    """
+    try:
+        # Use raw Ping — pure MTProto, zero API quota cost
+        from pyrogram.raw.functions import Ping
+        await asyncio.wait_for(
+            client.invoke(Ping(ping_id=0)),
+            timeout=10
+        )
+        return True
+    except FloodWait as fw:
+        logger.warning(f"[LiveJob] Ping FloodWait {fw.value}s — respecting and marking alive")
+        await asyncio.sleep(fw.value + 1)
+        return True   # We're alive, just rate-limited
+    except asyncio.TimeoutError:
+        return False
+    except Exception as e:
+        err = str(e).lower()
+        if any(k in err for k in ("not been started", "not connected", "disconnected")):
+            return False
+        # Any other error (e.g. AUTH_KEY) — propagate
+        raise
+
+
+async def _lj_get_me_cached(client):
+    """
+    Get or reuse cached 'me' object. Avoids repeated GetFullUser RPC calls
+    which directly cause the FLOOD_WAIT_X (users.GetFullUser) crash.
+    """
+    sname = getattr(client, 'name', None) or id(client)
+    cached = _lj_me_cache.get(sname)
+    if cached:
+        me_obj, cached_at = cached
+        if (asyncio.get_event_loop().time() - cached_at) < _LJ_ME_CACHE_TTL:
+            return me_obj
+    # Cache miss or expired — fetch fresh
+    me_obj = await asyncio.wait_for(client.get_me(), timeout=20)
+    _lj_me_cache[sname] = (me_obj, asyncio.get_event_loop().time())
+    return me_obj
+
+
 # ─── Client health-check / reconnect ────────────────────────────────────
 async def _lj_ensure_client_alive(client):
     """
-    Verify the Pyrogram client is connected. If dead, attempt cold restart up to 3 times.
-    Live jobs run 24/7 — the TCP connection silently dies after idle periods.
+    Verify the Pyrogram client transport is alive using a cheap MTProto Ping.
+    If dead, attempt a cold restart with exponential backoff (up to 3 attempts).
+
+    KEY FIXES vs old version:
+    - Uses Ping (not get_me/GetFullUser) → no FLOOD_WAIT_X from health checks
+    - Per-session cooldown prevents hammering reconnect on multiple jobs
+    - Exponential backoff: 5s, 15s, 30s between attempts
+    - Clears me cache on restart so next get_me is fresh
     """
+    sname = getattr(client, 'name', None) or str(id(client))
+
+    # Per-session reconnect cooldown: don't try reconnecting more than once per 30s
+    last_rc = _lj_last_reconnect.get(sname, 0)
+    now = asyncio.get_event_loop().time()
+    if (now - last_rc) < 30:
+        # Recently tried reconnecting — assume alive to avoid hammering
+        return client
+
     for attempt in range(3):
+        is_alive = False
         try:
-            await asyncio.wait_for(client.get_me(), timeout=15)
+            is_alive = await _lj_ping_client(client)
+        except Exception as ping_err:
+            logger.warning(f"[LiveJob] Ping raised {ping_err} on attempt {attempt+1}")
+
+        if is_alive:
             return client   # alive ✔️
-        except Exception as e:
-            err_str = str(e).lower()
-            is_conn = ("not been started" in err_str or "not connected" in err_str
-                       or "disconnected" in err_str or isinstance(e, asyncio.TimeoutError))
-            if is_conn:
-                logger.warning(f"[LiveJob] Client dead (attempt {attempt+1}): {e} — reconnecting…")
-                try:
-                    cname = getattr(client, 'name', None)
-                    if cname:
-                        await release_client(cname)
-                except Exception: pass
-                try: await client.stop()
-                except Exception: pass
-                try:
-                    client = await start_clone_bot(client)
-                    await asyncio.sleep(1)
-                    continue
-                except Exception as re_err:
-                    logger.error(f"[LiveJob] Restart attempt {attempt+1} failed: {re_err}")
-                    await asyncio.sleep(3)
-            else:
-                raise   # not a connection error
+
+        backoff = [5, 15, 30][attempt]
+        logger.warning(f"[LiveJob] Client dead (attempt {attempt+1}/{3}) — reconnecting in {backoff}s…")
+        _lj_last_reconnect[sname] = asyncio.get_event_loop().time()
+
+        # Clean up the dead client
+        try:
+            if sname:
+                await release_client(sname)
+        except Exception: pass
+        try:
+            await client.stop()
+        except Exception: pass
+
+        # Evict stale me cache
+        _lj_me_cache.pop(sname, None)
+
+        await asyncio.sleep(backoff)
+
+        try:
+            client = await start_clone_bot(client)
+            # Verify with ping (not get_me) after cold start
+            if await _lj_ping_client(client):
+                logger.info(f"[LiveJob] Client reconnected successfully on attempt {attempt+1}")
+                return client
+        except FloodWait as fw:
+            logger.warning(f"[LiveJob] FloodWait {fw.value}s during reconnect attempt {attempt+1}")
+            await asyncio.sleep(fw.value + 2)
+        except Exception as re_err:
+            logger.error(f"[LiveJob] Restart attempt {attempt+1} failed: {re_err}")
+
     raise RuntimeError("LIVEJOB_RECONNECT_FAILED: client failed to reconnect after 3 attempts")
 
 
@@ -471,14 +550,18 @@ async def _run_job(job_id: str, user_id: int):
         notify_large_mb = int(job.get("notify_large_file_mb", 0) or 0)
         last_seen    = job.get("last_seen_id", 0)
 
-        #  First-run init: snapshot latest ID 
+        #  First-run init: snapshot latest ID — use cached get_me to avoid GetFullUser flood
         for _att in range(3):
             try:
-                me = await client.get_me()
+                me = await _lj_get_me_cached(client)
                 break
+            except FloodWait as fw:
+                logger.warning(f"[Job {job_id}] get_me FloodWait {fw.value}s — waiting")
+                await asyncio.sleep(fw.value + 2)
+                if _att == 2: raise
             except Exception as e:
                 if _att == 2: raise e
-                await __import__('asyncio').sleep(5)
+                await asyncio.sleep(5)
                 
         if str(from_chat).lower() in [x.lower() for x in (str(me.id), me.username, "me", "saved") if x]:
             from_chat = user_id
@@ -820,6 +903,18 @@ async def _run_job(job_id: str, user_id: int):
             except Exception:
                 live_prog_id = None
 
+        # ── Cache configs once before loop; refresh every 60s to pick up changes ──
+        disabled_types: list = await db.get_filters(user_id)
+        configs        = await db.get_configs(user_id)
+        filters_dict   = configs.get('filters', {})
+        remove_caption = filters_dict.get('rm_caption', False)
+        remove_links   = 'links' in disabled_types
+        cap_tpl        = configs.get('caption')
+        forward_tag    = configs.get('forward_tag', False)
+        replacements   = configs.get('replacements', {})
+        _cfg_last_refresh = time.time()
+        _last_ping_check  = time.time()
+
         live_last_update = 0.0
 
         while True:
@@ -827,15 +922,32 @@ async def _run_job(job_id: str, user_id: int):
             if not fresh or fresh.get("status") != "running":
                 break
 
+            # Refresh configs every 60s so settings changes take effect
+            _now = time.time()
+            if (_now - _cfg_last_refresh) >= 60:
+                try:
+                    disabled_types = await db.get_filters(user_id)
+                    configs        = await db.get_configs(user_id)
+                    filters_dict   = configs.get('filters', {})
+                    remove_caption = filters_dict.get('rm_caption', False)
+                    remove_links   = 'links' in disabled_types
+                    cap_tpl        = configs.get('caption')
+                    forward_tag    = configs.get('forward_tag', False)
+                    replacements   = configs.get('replacements', {})
+                    _cfg_last_refresh = _now
+                except Exception:
+                    pass
 
-            disabled_types: list = await db.get_filters(user_id)
-            configs        = await db.get_configs(user_id)
-            filters_dict   = configs.get('filters', {})
-            remove_caption = filters_dict.get('rm_caption', False)
-            remove_links   = 'links' in disabled_types
-            cap_tpl        = configs.get('caption')
-            forward_tag    = configs.get('forward_tag', False)
-            replacements   = configs.get('replacements', {})
+            # Proactive cheap Ping health check every 120s (NOT get_me — avoids GetFullUser flood)
+            if (_now - _last_ping_check) >= 120:
+                _last_ping_check = _now
+                try:
+                    is_ok = await _lj_ping_client(client)
+                    if not is_ok:
+                        logger.warning(f"[Job {job_id}] Proactive ping failed — healing client")
+                        client = await _lj_ensure_client_alive(client)
+                except Exception as _ping_e:
+                    logger.debug(f"[Job {job_id}] Proactive ping error: {_ping_e}")
 
             new_msgs: list = []
 
@@ -921,16 +1033,25 @@ async def _run_job(job_id: str, user_id: int):
                             break
 
             except FloodWait as fw:
-                await asyncio.sleep(fw.value + 1)
+                # Respect Telegram flood wait fully — account safety
+                logger.warning(f"[Job {job_id}] FloodWait {fw.value}s in live fetch — waiting")
+                await asyncio.sleep(fw.value + 2)
                 continue
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 err_fetch = str(e)
                 err_up = err_fetch.upper()
+
+                # Account safety: these errors mean the account/session is invalid — stop the job
+                _ACCOUNT_FATAL = ("USER_DEACTIVATED", "SESSION_REVOKED", "AUTH_KEY_INVALID", "AUTH_KEY_UNREGISTERED")
+                if any(k in err_up for k in _ACCOUNT_FATAL):
+                    raise  # Bubble up to outer handler which alerts owner
+
                 is_conn_err = any(k in err_up for k in (
                     "TIMEOUT", "CONNECTION", "NOT BEEN STARTED", "NOT CONNECTED",
-                    "DISCONNECTED", "RESET", "NETWORK", "SOCKET", "PING"
+                    "DISCONNECTED", "RESET", "NETWORK", "SOCKET", "PING",
+                    "FLOOD_WAIT"
                 ))
                 if is_conn_err:
                     logger.warning(f"[Job {job_id}] Connection error in live fetch: {err_fetch}. Healing client...")
@@ -1067,20 +1188,51 @@ async def _run_job(job_id: str, user_id: int):
             # Don't mark job as error — just pause it so user can restart manually
             await _update_job(job_id, status="paused",
                               error="Session conflict (AUTH_KEY_DUPLICATED). Restart the job.")
+        elif "USER_DEACTIVATED" in err_upper or "SESSION_REVOKED" in err_upper or "AUTH_KEY_INVALID" in err_upper:
+            # Account was banned or session revoked — stop job permanently and alert owner
+            logger.error(f"[Job {job_id}] ACCOUNT SAFETY: {err_str}")
+            await _update_job(job_id, status="error", error=f"Account banned/session revoked: {err_str[:60]}")
+            try:
+                from config import Config
+                for _owner in Config.BOT_OWNER_ID:
+                    await BOT_INSTANCE.send_message(_owner,
+                        f"🚨 <b>Account Safety Alert — Live Job {job_id}</b>\n\n"
+                        f"⛔ <b>Account banned or session revoked!</b>\n"
+                        f"<code>{err_str[:120]}</code>\n\n"
+                        f"Please check your userbot account immediately.")
+            except Exception: pass
         elif any(kw in err_upper for kw in _TRANSIENT_KEYS) or isinstance(e, FloodWait):
-            # Transient network/connection issue — DO NOT mark as error.
-            # Auto-resume in 30s so the job stays green.
+            # Transient network/connection/flood issue — DO NOT mark as error.
+            # Auto-resume after waiting the required time.
             slp = 30
             if isinstance(e, FloodWait):
                 slp = e.value + 5
             elif "FLOOD_WAIT" in err_upper:
-                slp = 60
-                
-            logger.warning(f"[Job {job_id}] Transient connection error: {err_str} - Auto-restarting in {slp}s")
+                # Try to parse the actual wait time from the error string
+                import re as _re
+                _fw_match = _re.search(r'(\d+)', err_str)
+                slp = int(_fw_match.group(1)) + 5 if _fw_match else 60
+                # Account safety: warn for very long flood waits (>300s = account at risk)
+                if slp > 300:
+                    try:
+                        from config import Config
+                        for _owner in Config.BOT_OWNER_ID:
+                            await BOT_INSTANCE.send_message(_owner,
+                                f"⚠️ <b>Account Safety Warning — Live Job {job_id}</b>\n\n"
+                                f"Long FLOOD_WAIT detected: <code>{slp}s</code>\n"
+                                f"This may indicate the userbot account is at risk of restrictions.\n\n"
+                                f"<i>Job will auto-resume after {slp}s.</i>")
+                    except Exception: pass
+
+            logger.warning(f"[Job {job_id}] Transient error: {err_str[:80]} — Auto-restarting in {slp}s")
             # Mark job as still running (not error) so UI stays green
             await _update_job(job_id, error=f"[Auto-reconnect] {err_str[:60]}")
             async def _auto_resume():
                 await __import__('asyncio').sleep(slp)
+                # Clear reconnect cooldown so next run can actually ping
+                sname_resume = getattr(client, 'name', None) if client else None
+                if sname_resume:
+                    _lj_last_reconnect.pop(sname_resume, None)
                 _start_job_task(job_id, user_id)
             __import__('asyncio').create_task(_auto_resume())
         else:

@@ -73,14 +73,18 @@ async def start_clone_bot(FwdBot, data=None):
    async with lock:
        existing = _client_cache.get(cache_key)
        if existing is not None:
-           # Verify the cached client is still alive
+           # Verify the cached client is still alive using a cheap MTProto Ping
+           # (NOT get_me/GetFullUser which causes FLOOD_WAIT_X when many jobs restart together)
            try:
-               await asyncio.wait_for(existing.get_me(), timeout=15)
+               from pyrogram.raw.functions import Ping
+               await asyncio.wait_for(existing.invoke(Ping(ping_id=0)), timeout=10)
                logger.debug(f"[ClientCache] Reusing existing client: {cache_key}")
                _client_refcount[cache_key] = _client_refcount.get(cache_key, 1) + 1
                return existing   # ← return cached, skip new start entirely
            except Exception as e:
-               if isinstance(e, __import__('asyncio').TimeoutError) or "Timeout" in str(e):
+               err_str = str(e).lower()
+               # If it's a timeout it may still be alive but busy
+               if isinstance(e, asyncio.TimeoutError) or "timeout" in err_str:
                    logger.warning(f"[ClientCache] Cached client {cache_key} is busy (timeout). Assuming alive.")
                    _client_refcount[cache_key] = _client_refcount.get(cache_key, 1) + 1
                    return existing
