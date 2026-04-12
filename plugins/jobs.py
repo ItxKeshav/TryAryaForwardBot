@@ -581,24 +581,57 @@ async def _run_job(job_id: str, user_id: int):
             await _update_job(job_id, last_seen_id=last_seen)
             logger.info(f"[Job {job_id}] Initialised at msg ID {last_seen}")
 
-        # Warm up peer cache and identify exact DM source type
+        # ── Resolve exact source chat type & detect if source is a DM/bot chat ──
+        # This is CRITICAL: for DM/bot sources we MUST use get_chat_history (userbot only),
+        # NOT get_messages — which fetches from the global inbox / saved messages (wrong!).
         is_dm_source = False
         from pyrogram.enums import ChatType
         from plugins.utils import safe_resolve_peer
-        
-        if str(from_chat).lower() in ("me", "saved"):
-            prot_err = await check_chat_protection(user_id, from_chat)
-            await safe_resolve_peer(client, from_chat, bot=BOT_INSTANCE)
+
+        # Always resolve the source to a numeric ID and determine if it's a DM/bot
+        _resolved_from_chat = from_chat
+        try:
+            # Try resolving via the forwarding client first, fall back to main bot
             try:
                 peer_chat = await client.get_chat(from_chat)
-                if peer_chat.type in (ChatType.PRIVATE, ChatType.BOT):
-                    is_dm_source = True
-                from_chat = peer_chat.id
-            except Exception as warn_e:
-                logger.warning(f"[Job {job_id}] Pre-fetch peer resolve warning: {warn_e}")
-                if isinstance(from_chat, int) and from_chat >= 0:
-                    is_dm_source = True
-                    
+            except Exception:
+                peer_chat = await BOT_INSTANCE.get_chat(from_chat)
+
+            if peer_chat.type in (ChatType.PRIVATE, ChatType.BOT):
+                is_dm_source = True
+            _resolved_from_chat = peer_chat.id
+            from_chat = peer_chat.id
+        except Exception as resolve_e:
+            logger.warning(f"[Job {job_id}] Source resolve warning: {resolve_e}")
+            # Fallback heuristic: positive int = user/bot DM, negative = channel/group
+            if isinstance(from_chat, int) and from_chat > 0:
+                is_dm_source = True
+            elif isinstance(from_chat, str) and from_chat.lower() in ("me", "saved"):
+                is_dm_source = True
+
+        # Safety: if source is a DM/bot and forwarding account is a normal BOT (not userbot):
+        # Normal bots CANNOT read message history from DMs. get_messages() on a user/bot ID
+        # from a bot client fetches from the bot's own global inbox = saved messages (WRONG).
+        # In this case, disable batch mode and go straight to live monitoring.
+        if is_dm_source and is_bot and job.get("batch_mode") and not job.get("batch_done"):
+            logger.warning(
+                f"[Job {job_id}] Source is a bot/user DM but forwarding account is a normal BOT. "
+                f"Batch mode is unsupported for this combination — skipping batch phase. "
+                f"Only new messages arriving to the bot will be forwarded in live mode."
+            )
+            await _update_job(job_id, batch_done=True,
+                              error="[Info] Batch skipped: bot accounts cannot read DM history. "
+                                    "Forwarding in live mode only.")
+            try:
+                await BOT_INSTANCE.send_message(user_id,
+                    f"⚠️ <b>Live Job Notice</b>\n\n"
+                    f"The source <b>{job.get('from_title', str(from_chat))}</b> is a Bot/User DM, "
+                    f"but the selected forwarding account is a <b>Normal Bot</b>.\n\n"
+                    f"Normal bots <b>cannot read message history</b> from DMs — batch mode was skipped.\n"
+                    f"The job will now run in <b>live mode only</b>, forwarding new messages as they arrive.\n\n"
+                    f"<i>To use batch mode, switch to a Userbot account.</i>")
+            except Exception: pass
+
         try:
             dest_chats = [to_chat] + ([to_chat_2] if to_chat_2 else [])
             for _chat in dest_chats:
@@ -790,18 +823,18 @@ async def _run_job(job_id: str, user_id: int):
                 valid = [m for m in msgs if m and not m.empty and not m.service]
                 valid.sort(key=lambda m: m.id)
                 
-                # Cross-chat filter: only apply for supergroups/channels (negative int IDs).
-                # For positive int IDs (DMs/bots), string usernames (bot DMs, @channels), or "me":
-                # Pyrogram's get_messages already fetches from the exact peer — no further
-                # verification is needed, and attempting it would break Bot DM sources because
-                # m.chat.id is a numeric ID that won't match a @username string.
+                # Cross-chat filter: verify every message belongs to the expected source chat.
+                # For negative IDs (channels/groups): check m.chat.id == from_chat
+                # For positive IDs (user/bot DMs): also check m.chat.id matches — this prevents
+                # the bot's global inbox messages from leaking in when get_messages is misused.
                 filtered = []
                 for m in valid:
-                    if isinstance(from_chat, int) and from_chat < 0:
-                        # Private group/private channel: verify the message's chat matches
-                        if m.chat is None: continue
-                        if m.chat.id != from_chat: continue
-                    # For string usernames, positive IDs (bots, DMs), and "me": accept all
+                    if isinstance(from_chat, int):
+                        if m.chat is None:
+                            continue
+                        if m.chat.id != from_chat:
+                            continue
+                    # String usernames: accept (Pyrogram resolves the peer correctly)
                     filtered.append(m)
                 valid = filtered
 
@@ -1016,11 +1049,12 @@ async def _run_job(job_id: str, user_id: int):
                         consecutive_empty_batches = 0
                         valid.sort(key=lambda m: m.id)
                         
-                        # Cross-chat filter: only apply for supergroups/channels (negative int IDs).
-                        # For positive int IDs (DMs/bots), string usernames, or "me": accept all.
+                        # Cross-chat filter: verify messages belong to the expected source chat.
+                        # Apply to ALL integer IDs (both positive and negative) to prevent
+                        # the bot's global inbox messages from leaking in.
                         filtered = []
                         for m in valid:
-                            if isinstance(from_chat, int) and from_chat < 0:
+                            if isinstance(from_chat, int):
                                 if m.chat is None: continue
                                 if m.chat.id != from_chat: continue
                             filtered.append(m)

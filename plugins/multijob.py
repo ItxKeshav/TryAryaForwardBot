@@ -427,25 +427,45 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
         await _mj_update(job_id, status="running", error="")
         logger.info(f"[MultiJob {job_id}] Started. current={current} end={end_id}")
 
-        # Warm up peer cache and strictly correctly identify DM vs Group
+        # ── Resolve exact source chat type & detect if source is a DM/bot chat ──
+        # CRITICAL: DM/bot sources must use get_chat_history, NOT get_messages.
+        # get_messages on a user/bot ID from a bot client fetches from global inbox = saved messages.
         is_dm_source = False
         from pyrogram.enums import ChatType
         from plugins.utils import safe_resolve_peer
-        
-        if str(from_chat).lower() in ("me", "saved"):
-            is_dm_source = True
-        else:
-            await safe_resolve_peer(client, from_chat, bot=bot)
+
+        try:
             try:
                 peer_chat = await client.get_chat(from_chat)
-                if peer_chat.type in (ChatType.PRIVATE, ChatType.BOT):
-                    is_dm_source = True
-                from_chat = peer_chat.id  # Lock in numeric ID to prevent pyrogram confusion
-            except Exception as warn_e:
-                logger.warning(f"[MultiJob {job_id}] Pre-fetch peer resolve warning: {warn_e}")
-                if isinstance(from_chat, int) and from_chat >= 0:
-                    is_dm_source = True
-        
+            except Exception:
+                peer_chat = await bot.get_chat(from_chat)
+
+            if peer_chat.type in (ChatType.PRIVATE, ChatType.BOT):
+                is_dm_source = True
+            from_chat = peer_chat.id  # Lock in numeric ID
+        except Exception as warn_e:
+            logger.warning(f"[MultiJob {job_id}] Source resolve warning: {warn_e}")
+            if isinstance(from_chat, int) and from_chat > 0:
+                is_dm_source = True
+            elif isinstance(from_chat, str) and from_chat.lower() in ("me", "saved"):
+                is_dm_source = True
+
+        # Safety: normal bot accounts cannot read DM message history.
+        # If source is DM/bot and forwarding account is a normal bot, abort early.
+        if is_dm_source and is_bot:
+            await _mj_update(job_id, status="error",
+                              error="Bot accounts cannot read DM history. Use a Userbot for DM sources.")
+            try:
+                from bot import BOT_INSTANCE
+                await BOT_INSTANCE.send_message(user_id,
+                    f"⚠️ <b>Multi Job Error</b>\n\n"
+                    f"Source <b>{job.get('from_title', str(from_chat))}</b> is a Bot/User DM, "
+                    f"but the selected account is a <b>Normal Bot</b>.\n\n"
+                    f"Normal bots <b>cannot read message history</b> from DMs.\n"
+                    f"Please recreate this job using a <b>Userbot</b> account.")
+            except Exception: pass
+            return
+
         try:
             for _wchat in [to_chat] + ([to_chat_2] if to_chat_2 else []):
                 await safe_resolve_peer(client, _wchat, bot=bot)
@@ -719,18 +739,14 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
             valid = [m for m in msgs if m and not m.empty]
             valid.sort(key=lambda m: m.id)
             
-            # Cross-chat filter: only apply for supergroups/channels (negative int IDs).
-            # For positive int IDs (DMs/bots), string usernames (bot DMs, @channels), or "me":
-            # Pyrogram's get_messages already fetches from the exact peer — no further
-            # verification is needed, and attempting it would break Bot DM sources because
-            # m.chat.id is a numeric ID that won't match a @username string.
+            # Cross-chat filter: verify messages belong to the expected source chat.
+            # Apply to ALL integer IDs to prevent the global inbox from leaking in.
             filtered = []
             for m in valid:
-                if isinstance(from_chat, int) and from_chat < 0:
-                    # Private group/private channel: verify the message's chat matches
+                if isinstance(from_chat, int):
                     if m.chat is None: continue
                     if m.chat.id != from_chat: continue
-                # For string usernames, positive IDs (bots, DMs), and "me": accept all
+                # String usernames: Pyrogram resolves peer correctly
                 filtered.append(m)
             valid = filtered
 
