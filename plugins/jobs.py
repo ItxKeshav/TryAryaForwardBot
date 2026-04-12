@@ -550,7 +550,7 @@ async def _run_job(job_id: str, user_id: int):
         notify_large_mb = int(job.get("notify_large_file_mb", 0) or 0)
         last_seen    = job.get("last_seen_id", 0)
 
-        #  First-run init: snapshot latest ID — use cached get_me to avoid GetFullUser flood
+        #  First-run init: get me (cached) for Bot-DM swap detection 
         for _att in range(3):
             try:
                 me = await _lj_get_me_cached(client)
@@ -576,14 +576,10 @@ async def _run_job(job_id: str, user_id: int):
             to_chat_2 = user_id
             await _update_job(job_id, to_chat_2=to_chat_2)
 
-        if last_seen == 0:
-            last_seen = await _get_latest_id(client, from_chat, is_bot)
-            await _update_job(job_id, last_seen_id=last_seen)
-            logger.info(f"[Job {job_id}] Initialised at msg ID {last_seen}")
-
-        # ── Resolve exact source chat type & detect if source is a DM/bot chat ──
+        # ── STEP 1: Resolve source chat type FIRST (before _get_latest_id!) ──────
         # This is CRITICAL: for DM/bot sources we MUST use get_chat_history (userbot only),
         # NOT get_messages — which fetches from the global inbox / saved messages (wrong!).
+        # Resolving first also ensures _get_latest_id uses the correct method.
         is_dm_source = False
         from pyrogram.enums import ChatType
         from plugins.utils import safe_resolve_peer
@@ -608,6 +604,33 @@ async def _run_job(job_id: str, user_id: int):
                 is_dm_source = True
             elif isinstance(from_chat, str) and from_chat.lower() in ("me", "saved"):
                 is_dm_source = True
+
+        # ── STEP 2: Get latest message ID (with correct method for source type) ──
+        # ⚠️ For DM sources, ALWAYS use get_chat_history — even for bot accounts.
+        # The binary search via get_messages on a DM peer returns wrong (globally-scoped) IDs.
+        # For bot + DM source: use the MAIN BOT's get_chat_history if the bot can't access it.
+        if last_seen == 0:
+            try:
+                if is_dm_source:
+                    # For ALL DM sources, get the true latest message via chat history
+                    async for msg in client.get_chat_history(from_chat, limit=1):
+                        last_seen = msg.id
+                        break
+                    if last_seen == 0:
+                        # Fallback to main bot if client can't read history
+                        try:
+                            async for msg in BOT_INSTANCE.get_chat_history(from_chat, limit=1):
+                                last_seen = msg.id
+                                break
+                        except Exception:
+                            pass
+                else:
+                    last_seen = await _get_latest_id(client, from_chat, is_bot)
+            except Exception as li_e:
+                logger.warning(f"[Job {job_id}] _get_latest_id error: {li_e}")
+                last_seen = 0
+            await _update_job(job_id, last_seen_id=last_seen)
+            logger.info(f"[Job {job_id}] Initialised at msg ID {last_seen}")
 
         # Safety: if source is a DM/bot and forwarding account is a normal BOT (not userbot):
         # Normal bots CANNOT read message history from DMs. get_messages() on a user/bot ID
@@ -985,15 +1008,12 @@ async def _run_job(job_id: str, user_id: int):
             new_msgs: list = []
 
             try:
-                if not is_bot:
-                    # Userbot path: drain ALL messages newer than last_seen.
-                    # CRITICAL FIX: must loop with increasing offset until we've
-                    # collected every message newer than last_seen — not just the
-                    # newest 50. Otherwise if 100+ messages arrive, we grab only
-                    # the newest 50 and last_seen jumps past the older ones forever.
+                if not is_bot or is_dm_source:
+                    # ── DM/Bot source path (both userbot AND bot accounts) ───────────────
+                    # get_chat_history correctly fetches from the specific DM conversation.
+                    # get_messages() on a DM peer from a bot client fetches from GLOBAL INBOX instead.
+                    # This path handles: Userbot DM, Bot DM, Userbot private-channel, Bot private-channel
                     collected = []
-                    # get_chat_history returns newest→oldest. We page through
-                    # until we hit a message id <= last_seen.
                     offset_id = 0  # 0 = start from the very latest
                     while True:
                         page = []
@@ -1014,12 +1034,12 @@ async def _run_job(job_id: str, user_id: int):
                         if len(page) < 100:
                             break  # Partial page → no more new messages
                         offset_id = page[-1].id  # oldest in this page
-                    # Reverse collected (oldest→newest) to get chronological order
+                    # Reverse collected (oldest→newest) to deliver chronologically
                     new_msgs = list(reversed(collected))
                 else:
-                    # Bot path: probe IDs sequentially from last_seen+1 in batches
-                    # of 200 (the API maximum). Continue until a full batch returns
-                    # zero valid messages (true end of available messages).
+                    # ── Channel/Group source path (bot accounts only) ─────────────────────
+                    # Bot accounts cannot use get_chat_history on channels/groups they're not
+                    # subscribed to. Probe sequentially with get_messages instead.
                     # CRITICAL FIX: do NOT break early on a short batch — gaps in
                     # message IDs (deleted/service msgs) look like short batches but
                     # there may still be valid messages after the gap.
@@ -1048,17 +1068,15 @@ async def _run_job(job_id: str, user_id: int):
                             continue
                         consecutive_empty_batches = 0
                         valid.sort(key=lambda m: m.id)
-                        
-                        # Cross-chat filter: verify messages belong to the expected source chat.
-                        # Apply to ALL integer IDs (both positive and negative) to prevent
-                        # the bot's global inbox messages from leaking in.
+
+                        # Cross-chat filter: verify messages belong to the expected channel.
                         filtered = []
                         for m in valid:
                             if isinstance(from_chat, int):
                                 if m.chat is None: continue
                                 if m.chat.id != from_chat: continue
                             filtered.append(m)
-                        
+
                         new_msgs.extend(filtered)
                         probe = valid[-1].id + 1
                         if len(valid) < 10:
