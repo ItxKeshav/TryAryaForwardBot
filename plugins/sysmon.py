@@ -319,7 +319,7 @@ def _build_stat_msg(snap: dict, jobs: dict, temps: dict, include_temps: bool = T
         f"(Free: <code>{snap['ram_avail_gb']:.1f} GB</code>)\n",
         f"║  ⚡ <b>CPU</b>",
         f"  {_level_emoji(c)} [{_bar(c)}] <code>{c:.1f}%</code>\n",
-        f"║  💾 <b>Disk</b>",
+        f"║  💾 <b>Server Disk</b>",
         f"  {_level_emoji(d)} [{_bar(d)}] <code>{d:.1f}%</code>",
         f"  <code>{snap['disk_used_gb']:.1f} / {snap['disk_total_gb']:.1f} GB</code>  "
         f"(Free: <code>{snap['disk_free_gb']:.1f} GB</code>)\n",

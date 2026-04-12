@@ -359,7 +359,10 @@ async def status(bot, query):
 
     await _safe_edit(bot, query, 
         text=_tx(lang, 'STATUS_TXT', **kwargs),
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('«  ʙᴀᴄᴋ', callback_data='back')]]),
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton('🗑 Clean All Temp Files', callback_data='sysmon#cleanup')],
+            [InlineKeyboardButton('«  ʙᴀᴄᴋ', callback_data='back')]
+        ]),
         parse_mode=enums.ParseMode.HTML,
         disable_web_page_preview=True,
     )

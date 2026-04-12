@@ -243,7 +243,7 @@ async def _dl_worker(worker_id, dl_queue, up_queue, client, to_chat, thread_id):
                             await up_queue.put((seq_idx, 'skip', None, None))
                             break
                         
-                        await db.update_global_stats(total_files_downloaded=1)
+                        await db.update_global_stats(total_files_downloaded=1, total_data_usage_bytes=os.path.getsize(str(fp)) if fp and os.path.exists(str(fp)) else 0)
                         up_kw = {"chat_id": to_chat, "caption": caption if caption is not None else (msg.caption or "")}
                         if thread_id: up_kw["message_thread_id"] = thread_id
                         
@@ -522,7 +522,7 @@ async def _run_task_job(job_id: str, user_id: int):
                                 elif act == 'send_message': await client.send_message(**prm)
                                 fwd_count += 1
                                 await _tj_inc(job_id)
-                                if act != 'send_message': await db.update_global_stats(total_files_uploaded=1)
+                                if act != 'send_message': await db.update_global_stats(total_files_uploaded=1, total_data_usage_bytes=os.path.getsize(str(fp)) if fp and os.path.exists(str(fp)) else 0)
                                 break
                             except FloodWait as fw:
                                 await asyncio.sleep(fw.value + 2)

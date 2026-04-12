@@ -480,10 +480,18 @@ async def _run_job(job_id: str, user_id: int):
                 if _att == 2: raise e
                 await __import__('asyncio').sleep(5)
                 
-        if from_chat == me.id or from_chat == me.username:
+        if str(from_chat).lower() in [x.lower() for x in (str(me.id), me.username, "me", "saved") if x]:
             from_chat = user_id
             await _update_job(job_id, from_chat=from_chat)
             logger.info(f"[Job {job_id}] Swapped Bot's own ID with User ID ({user_id}) for Bot DM fetching")
+
+        if str(to_chat).lower() in [x.lower() for x in (str(me.id), me.username, "me", "saved") if x]:
+            to_chat = user_id
+            await _update_job(job_id, to_chat=to_chat)
+
+        if to_chat_2 and str(to_chat_2).lower() in [x.lower() for x in (str(me.id), me.username, "me", "saved") if x]:
+            to_chat_2 = user_id
+            await _update_job(job_id, to_chat_2=to_chat_2)
 
         if last_seen == 0:
             last_seen = await _get_latest_id(client, from_chat, is_bot)

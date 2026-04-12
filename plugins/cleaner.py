@@ -212,7 +212,7 @@ def _make_cl_run(cmd):
 
     def _sync_run():
         try:
-            kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
+            kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=7200)
             if _plat.system() != "Windows":
                 def _preexec():
                     os.nice(CL_FFMPEG_NICE)

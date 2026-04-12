@@ -389,6 +389,26 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
         to_chat_2   = job.get("to_chat_2")
         to_thread_2 = job.get("to_thread_id_2")
         
+        for _att in range(3):
+            try:
+                me = await client.get_me()
+                break
+            except Exception as e:
+                if _att == 2: raise e
+                await __import__('asyncio').sleep(5)
+                
+        if str(from_chat).lower() in [x.lower() for x in (str(me.id), me.username, "me", "saved") if x]:
+            from_chat = user_id
+            await _mj_update(job_id, from_chat=from_chat)
+
+        if str(to_chat).lower() in [x.lower() for x in (str(me.id), me.username, "me", "saved") if x]:
+            to_chat = user_id
+            await _mj_update(job_id, to_chat=to_chat)
+
+        if to_chat_2 and str(to_chat_2).lower() in [x.lower() for x in (str(me.id), me.username, "me", "saved") if x]:
+            to_chat_2 = user_id
+            await _mj_update(job_id, to_chat_2=to_chat_2)
+
         # ── Protected Chat Guard ───────────────────────────────────────────────
         from plugins.utils import check_chat_protection
         prot_err = await check_chat_protection(job["user_id"], from_chat)

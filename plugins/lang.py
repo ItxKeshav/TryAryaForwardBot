@@ -244,6 +244,7 @@ _S["ABOUT_TXT"] = {
 _S["STATUS_TXT"] = {
     "en": (
         "<b>╔════❰ Bot Status ❱═❍⊱❁۪۪\n"
+        "║\n"
         "║╭━━━━━━━━━━━━━━━➣\n"
         "║┣⪼ Users: <code>{users_count}</code>\n"
         "║┣⪼ Bots: <code>{bots_count}</code>\n"
@@ -265,6 +266,7 @@ _S["STATUS_TXT"] = {
     ),
     "hi": (
         "<b>╔════❰ Bot Status ❱═❍⊱❁۪۪\n"
+        "║\n"
         "║╭━━━━━━━━━━━━━━━➣\n"
         "║┣⪼ Users: <code>{users_count}</code>\n"
         "║┣⪼ Bots: <code>{bots_count}</code>\n"
@@ -286,6 +288,7 @@ _S["STATUS_TXT"] = {
     ),
     "hinglish": (
         "<b>╔════❰ Bot Status ❱═❍⊱❁۪۪\n"
+        "║\n"
         "║╭━━━━━━━━━━━━━━━➣\n"
         "║┣⪼ Users: <code>{users_count}</code>\n"
         "║┣⪼ Bots: <code>{bots_count}</code>\n"

@@ -1113,7 +1113,7 @@ async def _run_job(jid, uid, bot):
 
                         fp = await client.download_media(target_msg, file_name=temp_dlp)
                         if fp and os.path.exists(fp):
-                            await db.update_global_stats(total_files_downloaded=1)
+                            await db.update_global_stats(total_files_downloaded=1, total_data_usage_bytes=os.path.getsize(str(fp)) if fp and os.path.exists(str(fp)) else 0)
                             fsz_check = os.path.getsize(fp)
                             expected_sz = getattr(media_obj, 'file_size', 0)
 
@@ -1538,7 +1538,7 @@ async def _run_job(jid, uid, bot):
                 else:
                     dummy_msg = await client.send_audio(chat_id="me", audio=out_path, caption="Temp", file_name=f"{out_name}{out_ext}", thumb=thumb, progress=_up_prog)
                     uploaded_file_id = dummy_msg.audio.file_id
-                await db.update_global_stats(total_files_uploaded=1)
+                await db.update_global_stats(total_files_uploaded=1, total_data_usage_bytes=os.path.getsize(str(out_path)) if out_path and os.path.exists(str(out_path)) else 0)
             except Exception as e:
                 logger.error(f"[MG {jid}] Dummy upload failed: {e}")
                 
@@ -1587,7 +1587,7 @@ async def _run_job(jid, uid, bot):
                             if metadata.get("title"): kw["title"] = metadata["title"]
                             if metadata.get("artist"): kw["performer"] = metadata["artist"]
                             await bot.send_audio(**kw)
-                        await db.update_global_stats(total_files_uploaded=1)
+                        await db.update_global_stats(total_files_uploaded=1, total_data_usage_bytes=os.path.getsize(str(out_path)) if out_path and os.path.exists(str(out_path)) else 0)
                     except Exception as fallback_e:
                         await _db_up(jid, status="error",
                             error=f"Replace failed and DM fallback also failed: {fallback_e}")
@@ -1612,7 +1612,7 @@ async def _run_job(jid, uid, bot):
                             if metadata.get("title"): kw["title"] = metadata["title"]
                             if metadata.get("artist"): kw["performer"] = metadata["artist"]
                             await client.send_audio(**kw)
-                        await db.update_global_stats(total_files_uploaded=1)
+                        await db.update_global_stats(total_files_uploaded=1, total_data_usage_bytes=os.path.getsize(str(out_path)) if out_path and os.path.exists(str(out_path)) else 0)
                         break
                     except FloodWait as fw: await asyncio.sleep(fw.value+2)
                     except Exception as e:
