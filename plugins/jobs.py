@@ -1892,8 +1892,8 @@ async def _create_job_flow(bot, user_id: int):
     CANCEL_BTN = KeyboardButton("⛔ Cᴀɴᴄᴇʟ")
     UNDO_BTN   = KeyboardButton("↩️ Uɴᴅᴏ")
 
-    def _cancel(txt): return txt.strip().startswith("/cancel") or "⛔" in txt or "Cᴀɴᴄᴇʟ" in txt
-    def _undo(txt):   return txt.strip().startswith("/undo") or "↩️" in txt or "Uɴᴅᴏ" in txt
+    def _cancel(txt): return False if not txt else txt.strip().startswith("/cancel") or "⛔" in txt or "Cᴀɴᴄᴇʟ" in txt
+    def _undo(txt):   return False if not txt else txt.strip().startswith("/undo") or "↩️" in txt or "Uɴᴅᴏ" in txt
 
     # ── Step 1: Name ──────────────────────────────────────────────
     name_r = await _ask(bot, user_id,
@@ -2178,6 +2178,17 @@ async def _create_job_flow(bot, user_id: int):
             continue
         break
 
+    ltext = (limit_r.text or "").strip()
+    max_size_mb, max_duration_s, min_duration_s = 0, 0, 0
+    if ltext not in ("0", "0 (No limit)"):
+        parts_l = [p.strip() for p in ltext.split(":")]
+        def _lim_int(v):
+            try: return max(0, int(v))
+            except: return 0
+        max_size_mb    = _lim_int(parts_l[0] if len(parts_l) > 0 else "0")
+        max_duration_s = _lim_int(parts_l[1] if len(parts_l) > 1 else "0") * 60
+        min_duration_s = _lim_int(parts_l[2] if len(parts_l) > 2 else "0") * 60
+
     # ── Step 8: Skip Duplicates ─────────────────────────────
     while True:
         dupe_r = await _ask(bot, user_id,
@@ -2219,7 +2230,7 @@ async def _create_job_flow(bot, user_id: int):
             continue
         break
 
-    skip_dupelicates = "yes" in dupe_r.text.lower() or "✅" in dupe_r.text
+    skip_dupelicates = "yes" in (dupe_r.text or "").lower() or "✅" in (dupe_r.text or "")
 
     # ── Save & Start ──────────────────────────────────────────────
     job_id = f"{user_id}-{int(time.time())}"
