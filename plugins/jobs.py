@@ -239,11 +239,25 @@ async def _inc_forwarded(job_id: str, n: int = 1, forward_type: str = 'batch'):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _get_unique_id(msg) -> str | None:
-    """Extract file_unique_id from a message's media."""
-    for attr in ('document', 'video', 'audio', 'voice', 'animation', 'photo'):
+    """Extract file_unique_id from a message's media robustly."""
+    if not msg: return None
+    try:
+        if getattr(msg, 'media', None):
+            media_type = getattr(msg.media, 'value', str(msg.media))
+            obj = getattr(msg, media_type, None)
+            if obj:
+                if hasattr(obj, 'file_unique_id'): return obj.file_unique_id
+                if hasattr(obj, 'file_id'): return obj.file_id
+                if isinstance(obj, list) and len(obj) > 0:
+                    return getattr(obj[-1], 'file_unique_id', getattr(obj[-1], 'file_id', None))
+    except Exception:
+        pass
+        
+    for attr in ('document', 'video', 'audio', 'voice', 'animation', 'photo', 'sticker', 'video_note'):
         obj = getattr(msg, attr, None)
         if obj:
-            return getattr(obj, 'file_unique_id', None)
+            if isinstance(obj, list) and len(obj) > 0: obj = obj[-1]
+            return getattr(obj, 'file_unique_id', getattr(obj, 'file_id', None))
     return None
 
 def _passes_filters(msg, disabled_types: list) -> bool:
