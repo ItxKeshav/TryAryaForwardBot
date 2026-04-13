@@ -1300,14 +1300,16 @@ async def _create_cl_flow(bot, user_id):
 
     # ── Step 5: Rename Files? ───────────────────────────────────
     r_rename = await _cl_ask(bot, user_id,
-        "<b>»  Step 5/10 — Rename Files?</b>\n\n"
-        "Do you want to <b>rename</b> the files?\n\n"
-        "• <b>Yes</b> → You'll set a base name and starting number. Files will be renamed "
-        "like <code>Saaya 1.mp3</code>, <code>Saaya 2.mp3</code>, etc.\n"
-        "• <b>No</b>  → Original file names and titles are kept exactly as-is. "
-        "You can still update artist, year, genre, cover, etc.",
+        "<b>» Step 5/10 — Rename Files?</b>\n"
+        "<blockquote expandable>"
+        "Do you want to rename the files?\n\n"
+        "• Yes → You'll set a base name and starting number. "
+        "Files will be renamed like Saaya 1.mp3, Saaya 2.mp3, etc.\n"
+        "• No  → Original file names and titles are kept exactly as-is. "
+        "You can still update artist, year, genre, cover, etc."
+        "</blockquote>",
         reply_markup=ReplyKeyboardMarkup(
-            [["✅ Yes, Rename Files", "❌ No, Keep Original Names"],
+            [["✅ Yes", "❌ No"],
              [CANCEL_BTN]],
             resize_keyboard=True, one_time_keyboard=True))
     if _cancelled(r_rename): return await _abort()
@@ -1375,39 +1377,72 @@ async def _create_cl_flow(bot, user_id):
             adv_artists.append(adv_artist)
             await _cl_save_default(user_id, "artist", "|".join(adv_artists))
 
+    # Build album keyboard: saved albums + Clear + Custom + Skip
+    _saved_albums = [a.strip() for a in str(df.get("album_history", "") or "").split("|") if a.strip()]
+    album_rows = [[KeyboardButton(a)] for a in _saved_albums[:5]]
+    album_rows.append([KeyboardButton("✏️ Custom Album"), KeyboardButton("🗑 Clear Album")])
+    album_rows.append([SKIP_BTN, CANCEL_BTN])
     r_alb = await _cl_ask(bot, user_id,
         f"<b>>  Step 7b/10 — Album Name</b>\n\n"
-        f"Enter the <b>Album</b> name (shown in music apps).\n"
-        f"<i>Current: {adv_album or 'None'}. Skip to use Artist name.</i>",
-        reply_markup=markup_s)
+        f"Select a saved album, enter custom, or skip.\n"
+        f"<i>Saved: {(', '.join(_saved_albums[:5])) if _saved_albums else 'None'}. "
+        f"Current: {adv_album or 'None'}.</i>",
+        reply_markup=ReplyKeyboardMarkup(album_rows, resize_keyboard=True, one_time_keyboard=True))
     if _cancelled(r_alb): return await _abort()
-    if not _skip(r_alb.text or ""): adv_album = (r_alb.text or "").strip()
+    _alb_txt = (r_alb.text or "").strip()
+    if "🗑 Clear Album" in _alb_txt:
+        adv_album = ""
+        await _cl_save_default(user_id, "album_history", "")
+    elif "✏️ Custom Album" in _alb_txt:
+        r_alb2 = await _cl_ask(bot, user_id,
+            "<b>✏️ Enter Custom Album Name:</b>", reply_markup=markup_c)
+        if _cancelled(r_alb2): return await _abort()
+        adv_album = (r_alb2.text or "").strip()
+        if adv_album and adv_album not in _saved_albums:
+            _saved_albums.append(adv_album)
+            await _cl_save_default(user_id, "album_history", "|".join(_saved_albums[-10:]))
+    elif not _skip(_alb_txt):
+        adv_album = _alb_txt
+        if adv_album and adv_album not in _saved_albums:
+            _saved_albums.append(adv_album)
+            await _cl_save_default(user_id, "album_history", "|".join(_saved_albums[-10:]))
     if not adv_album: adv_album = adv_artist
 
     r_yr = await _cl_ask(bot, user_id,
         f"<b>>  Step 7c/10 — Year</b>\n\n"
-        f"Select a preset year or <b>type any custom year</b> (e.g. <code>2021</code>).\n"
-        f"<i>Current: {adv_year or 'None'}. Skip to leave unchanged.</i>",
+        f"Select a preset year, tap <b>✏️ Custom</b> to enter any year, or skip.\n"
+        f"<i>Current: {adv_year or 'None'}.</i>",
         reply_markup=ReplyKeyboardMarkup(
-            [["2022", "2023", "2024", "2025", "2026"],
-             [SKIP_BTN, CANCEL_BTN]],
+            [["2021", "2022", "2023", "2024", "2025", "2026"],
+             ["✏️ Custom Year", SKIP_BTN, CANCEL_BTN]],
             resize_keyboard=True))
     if _cancelled(r_yr): return await _abort()
     yr_text = (r_yr.text or "").strip()
+    if "✏️ Custom Year" in yr_text:
+        r_yr2 = await _cl_ask(bot, user_id,
+            "<b>✏️ Enter Year (e.g. 2020):</b>", reply_markup=markup_c)
+        if _cancelled(r_yr2): return await _abort()
+        yr_text = (r_yr2.text or "").strip()
     if not _skip(yr_text):
-        adv_year = yr_text  # accept any user input (preset button or custom typed year)
+        adv_year = yr_text
 
     r_gen = await _cl_ask(bot, user_id,
         f"<b>>  Step 7d/10 — Genre</b>\n\n"
-        f"Enter the <b>Genre</b> tag (or tap a preset).\n"
+        f"Tap a preset genre or use <b>✏️ Custom</b> to type your own.\n"
         f"<i>Current: {adv_genre or 'None'}. Skip to leave unchanged.</i>",
         reply_markup=ReplyKeyboardMarkup(
             [["Audiobook", "Romance", "Podcast"],
              ["Thriller", "Comedy", "Drama"],
-             [SKIP_BTN, CANCEL_BTN]],
+             ["✏️ Custom Genre", SKIP_BTN, CANCEL_BTN]],
             resize_keyboard=True))
     if _cancelled(r_gen): return await _abort()
-    if not _skip(r_gen.text or ""): adv_genre = (r_gen.text or "").strip()
+    _gen_txt = (r_gen.text or "").strip()
+    if "✏️ Custom Genre" in _gen_txt:
+        r_gen2 = await _cl_ask(bot, user_id,
+            "<b>✏️ Enter Custom Genre:</b>", reply_markup=markup_c)
+        if _cancelled(r_gen2): return await _abort()
+        _gen_txt = (r_gen2.text or "").strip()
+    if not _skip(_gen_txt): adv_genre = _gen_txt
 
     # ── Step 8: Cover Image ──────────────────────────────────────────────────
     r_cov = await _cl_ask(bot, user_id,

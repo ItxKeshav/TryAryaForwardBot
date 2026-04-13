@@ -1338,8 +1338,8 @@ async def settings_query(bot, query):
 
   elif type.startswith("sb_set_autodel_"):
       b_id = type.split("sb_set_autodel_")[1]
-      opts   = [0, 5, 10, 30, 60, 1440]           # minutes; 0 = OFF
-      labels = ["OFF","5m","10m","30m","1h","24h"]
+      opts   = [0, 5, 10, 30, 60, 120, 180, 360, 720, 1080, 1440, 7200]
+      labels = ["OFF", "5m", "10m", "30m", "1h", "2h", "3h", "6h", "12h", "18h", "24h", "5d"]
       about = await db.get_share_bot_about(b_id)
       cur = about.get('auto_delete', 0)
       try:    cur_idx = opts.index(cur)
@@ -1869,8 +1869,8 @@ async def settings_query(bot, query):
      return await settings_query(bot, query)
 
   elif type == "share_autodelete":
-     opts   = [0, 5, 10, 30, 60, 1440]           # minutes; 0 = OFF
-     labels = ["OFF","5m","10m","30m","1h","24h"]
+     opts   = [0, 5, 10, 30, 60, 120, 180, 360, 720, 1080, 1440, 7200]
+     labels = ["OFF", "5m", "10m", "30m", "1h", "2h", "3h", "6h", "12h", "18h", "24h", "5d"]
      cur    = await db.get_share_autodelete_global()
      try:    cur_idx = opts.index(cur)
      except: cur_idx = 0

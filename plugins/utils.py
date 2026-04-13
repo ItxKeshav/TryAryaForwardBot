@@ -189,20 +189,12 @@ async def check_chat_protection(user_id: int, chat_id) -> str | None:
 
 # ── Channel Search Picker (shared across all jobs/wizards) ────────────────────
 async def ask_channel_picker(bot, user_id: int, prompt: str,
-                             extra_options: list[str] | None = None,
+                             extra_options=None,
                              timeout: int = 300):
     """
-    Interactive channel selection with search support.
-
-    Sends a numbered list of the user's channels with a search button.
-    The user can:
-      • Type a number  (e.g. "3") to select directly.
-      • Type any text  to search/filter by name and pick from results.
-      • Type "⛔ Cancel" to abort.
-      • The `extra_options` list (e.g. ["↩️ Undo"]) appear as extra keyboard rows.
-
-    Returns the selected channel dict  {"chat_id": ..., "title": ..., "username": ...}
-    or the extra_option string if one was chosen, or None if cancelled/timed-out.
+    Smart channel picker: shows channels as buttons (max 8 at once).
+    User can tap a button OR type part of a name to filter dynamically.
+    No big numbered text-list is sent — keeps the UI clean.
     """
     import asyncio
     from pyrogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
@@ -210,34 +202,47 @@ async def ask_channel_picker(bot, user_id: int, prompt: str,
     channels = await db.get_user_channels(user_id)
     if not channels:
         await bot.send_message(user_id,
-            "<b>‣ No channels added yet.</b>\nGo to /settings → Channels to add one.",
+            "<b>No channels added yet.</b>\nGo to /settings → Channels to add one.",
             reply_markup=ReplyKeyboardRemove())
         return None
 
-    def _build_kb(ch_list, page_label=""):
-        """Build numbered keyboard rows."""
+    PAGE_SIZE = 8
+
+    def _build_kb(ch_list):
         rows = []
-        for i, ch in enumerate(ch_list, 1):
-            rows.append([KeyboardButton(f"{i}. {ch['title']}")])
+        visible = ch_list[:PAGE_SIZE]
+        for i in range(0, len(visible), 2):
+            pair = visible[i:i+2]
+            rows.append([KeyboardButton(c["title"]) for c in pair])
         if extra_options:
             rows.append([KeyboardButton(o) for o in extra_options])
-        rows.append([KeyboardButton("🔍 Search"), KeyboardButton("⛔ Cancel")])
+        rows.append([KeyboardButton("⛔ Cancel")])
         return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
 
-    # Build display text
-    def _index_text(ch_list):
-        lines = [f"<b>{prompt}</b>\n"]
-        for i, ch in enumerate(ch_list, 1):
-            lines.append(f"  <b>{i}.</b> {ch['title']}")
-        lines.append("\n<i>Type the number, search by name, or tap a button.</i>")
-        return "\n".join(lines)
+    def _prompt_text(ch_list, is_filtered=False, query=""):
+        total = len(channels)
+        shown = min(len(ch_list), PAGE_SIZE)
+        header = "<b>" + prompt + "</b>"
+        if is_filtered:
+            header += ("\n\n🔍 <i>Showing " + str(shown) +
+                       " result(s) for \"<b>" + query + "</b>\"</i>")
+        else:
+            if total > PAGE_SIZE:
+                header += ("\n\n<i>Showing " + str(shown) + " of " + str(total) +
+                           " channels.\nType part of a name to filter.</i>")
+            else:
+                header += "\n\n<i>Tap a channel or type part of its name to search.</i>"
+        return header
 
     current_list = channels
+    is_filtered  = False
+    query        = ""
+
     while True:
         try:
             msg = await bot.ask(
                 user_id,
-                _index_text(current_list),
+                _prompt_text(current_list, is_filtered, query),
                 reply_markup=_build_kb(current_list),
                 timeout=timeout
             )
@@ -249,70 +254,42 @@ async def ask_channel_picker(bot, user_id: int, prompt: str,
         text = (msg.text or "").strip()
 
         # Cancel
-        if not text or any(x in text.lower() for x in ["⛔", "cancel", "/cancel"]):
+        if not text or any(x in text.lower() for x in ["cancel", "/cancel"]) or "⛔" in text:
             await bot.send_message(user_id, "<i>Process Cancelled.</i>",
                                     reply_markup=ReplyKeyboardRemove())
             return None
 
-        # Extra options (e.g. Undo)
+        # Extra options (e.g. Undo, Skip)
         if extra_options and text in extra_options:
             return text
 
-        # Search mode
-        if "search" in text.lower() or text == "🔍":
-            try:
-                search_msg = await bot.ask(
-                    user_id,
-                    "🔍 <b>Type a name or part of a name to search:</b>",
-                    timeout=120
-                )
-            except asyncio.TimeoutError:
-                current_list = channels
-                continue
-            query = (search_msg.text or "").strip().lower()
-            if not query:
-                current_list = channels
-                continue
-            filtered = [c for c in channels if query in c["title"].lower()]
-            if not filtered:
-                await bot.send_message(
-                    user_id,
-                    f"<i>No channels matched <b>{query}</b>. Showing all.</i>")
-                current_list = channels
-            else:
-                current_list = filtered
-            continue
-
-        # Numbered button  "3. Some Channel Name"
-        if ". " in text:
-            try:
-                idx = int(text.split(".")[0]) - 1
-                if 0 <= idx < len(current_list):
-                    return current_list[idx]
-            except (ValueError, IndexError):
-                pass
-
-        # Pure number
-        if text.isdigit():
-            idx = int(text) - 1
-            if 0 <= idx < len(current_list):
-                return current_list[idx]
-
-        # Exact or fuzzy name match
-        exact = next((c for c in current_list if c["title"].lower() == text.lower()), None)
+        # Exact button match (user tapped a channel button)
+        exact = next((c for c in current_list if c["title"] == text), None)
         if exact:
+            await bot.send_message(user_id, "✅ <b>" + exact["title"] + "</b> selected.",
+                                    reply_markup=ReplyKeyboardRemove())
             return exact
-        fuzzy = [c for c in current_list if text.lower() in c["title"].lower()]
+
+        # Fuzzy search across ALL channels
+        q = text.lower()
+        fuzzy = [c for c in channels if q in c["title"].lower()]
         if len(fuzzy) == 1:
+            await bot.send_message(user_id, "✅ <b>" + fuzzy[0]["title"] + "</b> selected.",
+                                    reply_markup=ReplyKeyboardRemove())
             return fuzzy[0]
         if fuzzy:
             current_list = fuzzy
+            is_filtered  = True
+            query        = text
             continue
 
-        # No match — show all again
-        await bot.send_message(user_id, f"<i>Could not find <b>{text}</b>. Try again or use 🔍 Search.</i>")
+        # No match — reset
+        await bot.send_message(user_id,
+            '<i>No channel matched "<b>' + text + '</b>". Type part of the name again.</i>')
         current_list = channels
-
+        is_filtered  = False
+        query        = ""
+
 
 async def safe_resolve_peer(client, chat_id, bot=None):
     try:
