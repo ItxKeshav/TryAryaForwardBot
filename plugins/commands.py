@@ -74,10 +74,17 @@ async def start(client, message):
     user = message.from_user
     if not await db.is_user_exist(user.id):
         await db.add_user(user.id, user.first_name)
-    
-    # --- Live/Task jobs are already natively resumed on bot boot by main.py ---
-    # Triggering them manually on /start creates ghost background task loops
-    # that infinitely cancel and restart jobs every 20 seconds.
+
+    # ── Ban check ──
+    ban_status = await db.get_ban_status(user.id)
+    if ban_status.get('is_banned'):
+        reason = ban_status.get('ban_reason') or 'No reason provided.'
+        return await message.reply_text(
+            f"⛔ <b>You are banned from using this bot.</b>\n"
+            f"<b>Reason:</b> <i>{reason}</i>\n\n"
+            f"If you think this is a mistake, contact the bot owner."
+        )
+
     configs = await db.get_configs(user.id)
     menu_image_id = configs.get('menu_image_id')
     btns = await _main_buttons(user.id)

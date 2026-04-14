@@ -54,6 +54,7 @@ ALERT_COOLDOWN_CRIT  = 300   # 5 min cooldown for CRITICAL/EMERGENCY (real probl
 _last_alert_ts: dict[str, float] = {}   # level → timestamp
 _sys_paused_jobs: set[str] = set()      # job_ids paused by THIS monitor
 _monitor_task: asyncio.Task | None = None
+_ram_baseline: float = 0.0             # RAM % at startup (OS background usage)
 
 # ── Temp dirs the cleanup command will wipe ────────────────────────────────────
 TEMP_DIRS = ["merge_tmp", "downloads"]
@@ -358,6 +359,12 @@ async def _monitor_loop(bot):
     # all subsequent non-blocking calls will return accurate percentages.
     psutil.cpu_percent(interval=1)
     await asyncio.sleep(15)  # Give the bot time to fully start
+
+    # Learn baseline RAM (OS + bot idle footprint) from first reading
+    global _ram_baseline
+    snap0 = await asyncio.get_event_loop().run_in_executor(None, _sys_snapshot)
+    _ram_baseline = snap0["ram_pct"]
+    logger.info(f"[SysMonitor] RAM baseline locked at {_ram_baseline:.1f}%")
     logger.info("[SysMonitor] Background monitor started.")
 
     while True:
@@ -378,11 +385,16 @@ async def _monitor_loop(bot):
             # We only warn for CPU, but never EMERGENCY pause for it, otherwise every encoding job dies instantly.
 
             # Determine current level
+            # Key insight: alert based on INCREASE above baseline, not absolute value.
+            # If the OS itself uses 90%+ RAM at idle, we shouldn't panic on 95%.
+            effective_r = r - _ram_baseline   # how much above idle baseline
+
             if is_ram_emer:
                 level = "emergency"
-            elif (r >= RAM_CRITICAL and avail_gb < 0.3):
+            elif (r >= RAM_CRITICAL and avail_gb < 0.3) and effective_r > 3:
+                # Only CRITICAL if RAM rose >3% above idle baseline
                 level = "critical"
-            elif (r >= RAM_WARN and avail_gb < 0.5) or c >= CPU_WARN:
+            elif (r >= RAM_WARN and avail_gb < 0.5 and effective_r > 2) or c >= CPU_WARN:
                 level = "warning"
             else:
                 level = "ok"
@@ -409,7 +421,10 @@ async def _monitor_loop(bot):
                             try: await bot.send_message(uid, txt)
                             except: pass
 
-            if level != "ok" and total_active > 0:
+            # CRITICAL/EMERGENCY: only act when there's actual work to pause.
+            # A single passive merger running alone + high idle RAM → no auto-pause.
+            meaningful_active = jobs["mj_active"] + max(0, jobs["mg_active"] - 1)
+            if level != "ok" and (meaningful_active > 0 or level == "emergency"):
                 cooldown = ALERT_COOLDOWN_WARN if level == "warning" else ALERT_COOLDOWN_CRIT
                 last = _last_alert_ts.get(level, 0)
                 if now - last >= cooldown:
@@ -486,6 +501,9 @@ async def _monitor_loop(bot):
                                 InlineKeyboardButton("Cleanup Now", callback_data="sysmon#cleanup"),
                             ],
                             [InlineKeyboardButton("Stats", callback_data="sysmon#stats")],
+        [
+            InlineKeyboardButton("👥 Uѕᴇʀѕ", callback_data="sysmon#users"),
+        ],
                         ])
                         for uid in Config.BOT_OWNER_ID:
                             try: await bot.send_message(uid, txt, reply_markup=btns)
@@ -565,6 +583,9 @@ async def cmd_sysstat(bot, message: Message):
         [
             InlineKeyboardButton("⏸ Pᴀᴜsᴇ Aʟʟ", callback_data="sysmon#pauseall"),
             InlineKeyboardButton("▶️ Rᴇsᴜᴍᴇ Aʟʟ", callback_data="sysmon#resumeall"),
+        ],
+        [
+            InlineKeyboardButton("👥 Uѕᴇʀѕ", callback_data="sysmon#users"),
         ],
     ])
     await message.reply_text(txt, reply_markup=btns)
@@ -667,6 +688,9 @@ async def sysmon_cb(bot, query: CallbackQuery):
                 InlineKeyboardButton("⏸ Pᴀᴜsᴇ Aʟʟ", callback_data="sysmon#pauseall"),
                 InlineKeyboardButton("▶️ Rᴇsᴜᴍᴇ Aʟʟ", callback_data="sysmon#resumeall"),
             ],
+        [
+            InlineKeyboardButton("👥 Uѕᴇʀѕ", callback_data="sysmon#users"),
+        ],
         ])
         try:
             await query.message.edit_text(txt, reply_markup=btns)
@@ -780,3 +804,200 @@ async def sysmon_cb(bot, query: CallbackQuery):
             InlineKeyboardButton("📊 Sᴛᴀᴛs", callback_data="sysmon#stats"),
         ]])
         await query.message.edit_text(txt, reply_markup=btns)
+
+    elif action.startswith("users"):
+        # action = "users" or "users_<page>"
+        parts = action.split("_")
+        page = int(parts[1]) if len(parts) > 1 else 1
+        await _show_users_panel(bot, query.message, uid, page=page, edit=True)
+
+    elif action.startswith("ban_"):
+        target_uid = int(action.split("_", 1)[1])
+        from database import db
+        await db.ban_user(target_uid, ban_reason="Banned by owner via /users panel")
+        await query.answer(f"✅ User {target_uid} banned!", show_alert=True)
+        # Refresh panel
+        await _show_users_panel(bot, query.message, uid, page=1, edit=True)
+
+    elif action.startswith("unban_"):
+        target_uid = int(action.split("_", 1)[1])
+        from database import db
+        await db.remove_ban(target_uid)
+        await query.answer(f"✅ User {target_uid} unbanned!", show_alert=True)
+        await _show_users_panel(bot, query.message, uid, page=1, edit=True)
+
+    elif action.startswith("userinfo_"):
+        target_uid = int(action.split("_", 1)[1])
+        await _show_user_detail(bot, query, uid, target_uid)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# User Management Helpers
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _get_user_active_jobs(user_id: int) -> dict:
+    """Returns dict of active job counts for a given user."""
+    result = {"lj": 0, "mj": 0, "mg": 0}
+    try:
+        from plugins.jobs import _job_tasks
+        from plugins.multijob import _mj_tasks
+        from plugins.merger import _mg_tasks
+        # Live Jobs store user_id in task name or we check DB; use running tasks heuristic
+        result["lj"] = sum(1 for tid, t in _job_tasks.items()
+                           if not t.done() and str(user_id) in str(tid))
+        result["mj"] = sum(1 for tid, t in _mj_tasks.items()
+                           if not t.done() and str(user_id) in str(tid))
+        result["mg"] = sum(1 for tid, t in _mg_tasks.items()
+                           if not t.done() and str(user_id) in str(tid))
+    except Exception:
+        pass
+    return result
+
+
+async def _show_users_panel(bot, message, owner_uid: int, page: int = 1, edit: bool = False):
+    from database import db
+    PAGE_SIZE = 8
+
+    all_users_cursor = db.col.find({}, {"id": 1, "name": 1, "ban_status": 1}).sort("_id", -1)
+    all_users = await all_users_cursor.to_list(length=500)
+
+    total = len(all_users)
+    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = max(1, min(page, total_pages))
+    slice_ = all_users[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
+
+    # Count active jobs across all plugins
+    try:
+        from plugins.jobs import _job_tasks
+        lj_map: dict[str, int] = {}
+        for tid in _job_tasks:
+            if not _job_tasks[tid].done():
+                uid_part = str(tid).split("_")[0] if "_" in str(tid) else ""
+                if uid_part.lstrip("-").isdigit():
+                    lj_map[uid_part] = lj_map.get(uid_part, 0) + 1
+    except Exception:
+        lj_map = {}
+
+    try:
+        from plugins.multijob import _mj_tasks
+        mj_map: dict[str, int] = {}
+        for tid in _mj_tasks:
+            if not _mj_tasks[tid].done():
+                uid_part = str(tid).split("_")[0] if "_" in str(tid) else ""
+                if uid_part.lstrip("-").isdigit():
+                    mj_map[uid_part] = mj_map.get(uid_part, 0) + 1
+    except Exception:
+        mj_map = {}
+
+    lines = [
+        f"<b>👥 Bot Users</b>  <i>({total} total • Page {page}/{total_pages})</i>\n"
+    ]
+    kb = []
+
+    for u in slice_:
+        uid_val = u.get("id", 0)
+        name = u.get("name", str(uid_val))[:18]
+        bs = u.get("ban_status", {})
+        is_banned = bs.get("is_banned", False) if isinstance(bs, dict) else False
+        ban_icon = "🚫" if is_banned else "✅"
+        lj = lj_map.get(str(uid_val), 0)
+        mj = mj_map.get(str(uid_val), 0)
+
+        job_note = ""
+        if lj or mj:
+            job_note = f"  [LJ:{lj} MJ:{mj}]"
+
+        lines.append(f"{ban_icon} <code>{uid_val}</code> — <b>{name}</b>{job_note}")
+
+        # Row: [Info] [Ban / Unban]
+        ban_btn = (
+            InlineKeyboardButton("✅ Unban", callback_data=f"sysmon#unban_{uid_val}")
+            if is_banned
+            else InlineKeyboardButton("🚫 Ban", callback_data=f"sysmon#ban_{uid_val}")
+        )
+        kb.append([
+            InlineKeyboardButton(f"👤 {name[:14]}", callback_data=f"sysmon#userinfo_{uid_val}"),
+            ban_btn
+        ])
+
+    # Pagination
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton("⬅ Prev", callback_data=f"sysmon#users_{page-1}"))
+    if page < total_pages:
+        nav.append(InlineKeyboardButton("Next ➡", callback_data=f"sysmon#users_{page+1}"))
+    if nav:
+        kb.append(nav)
+    kb.append([InlineKeyboardButton("📊 Sᴛᴀᴛs", callback_data="sysmon#stats")])
+
+    txt = "\n".join(lines)
+    markup = InlineKeyboardMarkup(kb)
+    try:
+        if edit:
+            await message.edit_text(txt, reply_markup=markup)
+        else:
+            await message.reply_text(txt, reply_markup=markup)
+    except Exception:
+        await bot.send_message(owner_uid, txt, reply_markup=markup)
+
+
+async def _show_user_detail(bot, query: CallbackQuery, owner_uid: int, target_uid: int):
+    from database import db
+    user_doc = await db.col.find_one({"id": int(target_uid)}) or {}
+    bs = user_doc.get("ban_status", {})
+    is_banned = bs.get("is_banned", False) if isinstance(bs, dict) else False
+    ban_reason = bs.get("ban_reason", "") if isinstance(bs, dict) else ""
+
+    # Fetch running jobs from DB for accuracy
+    lj_count = await db.db.jobs.count_documents({"user_id": target_uid, "status": "running"})
+    mj_count = await db.db.multijobs.count_documents({"user_id": str(target_uid), "status": "running"})
+    mg_count = await db.db.merger_jobs.count_documents({"user_id": str(target_uid), "status": "running"})
+
+    tg_user = None
+    try:
+        tg_user = await bot.get_users(target_uid)
+    except Exception:
+        pass
+
+    name = getattr(tg_user, "first_name", user_doc.get("name", str(target_uid)))
+    uname = f"@{tg_user.username}" if tg_user and tg_user.username else "N/A"
+    lang = user_doc.get("language", "en")
+
+    txt = (
+        f"<b>👤 User Detail</b>\n\n"
+        f"<b>Name:</b> {name}\n"
+        f"<b>Username:</b> {uname}\n"
+        f"<b>ID:</b> <code>{target_uid}</code>\n"
+        f"<b>Language:</b> {lang}\n\n"
+        f"<b>Active Jobs:</b>\n"
+        f"  • Live Jobs: <code>{lj_count}</code>\n"
+        f"  • Multi Jobs: <code>{mj_count}</code>\n"
+        f"  • Mergers: <code>{mg_count}</code>\n\n"
+        f"<b>Ban Status:</b> {'🚫 Banned' if is_banned else '✅ Active'}\n"
+        + (f"<b>Ban Reason:</b> {ban_reason}\n" if is_banned and ban_reason else "")
+    )
+
+    ban_btn = (
+        InlineKeyboardButton("✅ Unban", callback_data=f"sysmon#unban_{target_uid}")
+        if is_banned
+        else InlineKeyboardButton("🚫 Ban User", callback_data=f"sysmon#ban_{target_uid}")
+    )
+    kb = [
+        [ban_btn],
+        [InlineKeyboardButton("« Back to Users", callback_data="sysmon#users")]
+    ]
+    try:
+        await query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+    except Exception:
+        await bot.send_message(owner_uid, txt, reply_markup=InlineKeyboardMarkup(kb))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# /users command
+# ══════════════════════════════════════════════════════════════════════════════
+
+@Client.on_message(filters.private & filters.command("users"))
+async def cmd_users(bot, message: Message):
+    if not _is_owner(message.from_user.id):
+        return await message.reply_text("⛔ Owner-only command.")
+    await _show_users_panel(bot, message, message.from_user.id, page=1, edit=False)
