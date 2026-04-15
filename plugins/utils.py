@@ -326,3 +326,69 @@ async def safe_resolve_peer(client, chat_id, bot=None):
                 logging.getLogger(__name__).warning(f'Failed to resolve {chat_id}: {e2}')
                 return False
         return False
+
+
+def extract_ep_label_robust(fname: str) -> dict:
+    import re
+    # 1. Extensions & Metadata Markers
+    base = re.sub(r'\.\w{2,5}$', '', fname)
+    base = re.sub(r'(?i)\b(?:copy|duplicate|v\d+)\b', '', base)
+    base = re.sub(r'(?i)\(\s*(?:copy|duplicate|\d+)\s*\)\s*$', '', base)
+    base = re.sub(r'(?<!\d)_\d+\s*$', '', base)
+    
+    b_norm = base.strip()
+    
+    # 2. Normalize common delimiters
+    b_norm = re.sub(r'[\-\u2013\u2014—~]+', '-', b_norm)
+    b_norm = re.sub(r'\.\.', '-', b_norm)
+    b_norm = re.sub(r'(?i)\s*_?to_?\s*', '-', b_norm)
+    
+    num = r'\d{1,5}'
+    # Delimiters: - , | / & +
+    delims = r'(?:\s*[\-\,\|\/\&\+]\s*)'
+    num_seq_regex = f'(?:{num}(?:{delims}{num})*)'
+    
+    # Priority 1: Keywords like Ep, Episode, etc.
+    # Note: we use a limited set of delimiters here to avoid catching things like "Ep_10_100_Title"
+    # as "10_100" range.
+    kw_delims = r'(?:\s*[\-\,\|\/]\s*)' # more restrictive for keyword match
+    kw_num_seq = f'(?:{num}(?:{kw_delims}{num})*)'
+    kw_pattern = r'(?i)\b(?:episode|epi|ep|e|part|#|एपिसोड|भाग|eps)(?:s)?\s*[\-\:\.\_\*\#]*\s*(' + kw_num_seq + r')(?![0-9])'
+    kw_m = re.search(kw_pattern, b_norm)
+    if kw_m:
+        label = kw_m.group(1).strip()
+        nums = [int(n) for n in re.findall(r'\d+', label) if int(n) < 10000]
+        return {"label": label, "numbers": nums, "is_range": len(nums) > 1}
+
+    # Priority 2: Bracketed group sequences like [100-110], (100 | 101)
+    br_delims = r'(?:\s*[\-\,\|\/\&\+\_]\s*)' # Brackets can use _ safely
+    br_num_seq = f'(?:{num}(?:{br_delims}{num})*)'
+    br_pattern = r'[\[\(\<\{【『]\s*(' + br_num_seq + r')\s*[\]\)\>\}】』]'
+    br_m = re.search(br_pattern, b_norm)
+    if br_m:
+        label = br_m.group(1).strip().replace('_', '-')
+        nums = [int(n) for n in re.findall(r'\d+', label) if int(n) < 10000]
+        return {"label": label, "numbers": nums, "is_range": len(nums) > 1}
+    
+    # Priority 3: Pure number sequence (must have clearly intended range/list delimiter)
+    pure_delims = r'(?:\s*[\-\,\|\/\&\+]\s*)' # No lone _ as pure range delimiter unless bracketed
+    pure_num_seq = f'(?:{num}(?:{pure_delims}{num})+)'
+    r_m = re.search(r'\b(' + pure_num_seq + r')\b', b_norm)
+    if r_m:
+        label = r_m.group(1).strip()
+        nums = [int(n) for n in re.findall(r'\d+', label) if int(n) < 10000]
+        return {"label": label, "numbers": nums, "is_range": len(nums) > 1}
+
+    # Priority 4: Leading zero-padded or plain number
+    lead = re.match(r'^0*(\d{1,5})(?:[^0-9]|$)', b_norm)
+    if lead:
+        n_str = lead.group(1)
+        return {"label": n_str, "numbers": [int(n_str)], "is_range": False}
+
+    # Priority 5: Single lone numbers
+    nums_all = re.findall(r'(?<!\d)(\d{1,5})(?!\d)', b_norm)
+    filtered = [n for n in nums_all if not (1900 <= int(n) <= 2100)]
+    if filtered:
+        return {"label": filtered[0], "numbers": [int(filtered[0])], "is_range": False}
+
+    return {"label": "", "numbers": [], "is_range": False}

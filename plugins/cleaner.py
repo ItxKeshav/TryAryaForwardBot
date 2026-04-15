@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import datetime
 from database import db
+from plugins.utils import extract_ep_label_robust, format_tg_error
 from .test import CLIENT, start_clone_bot
 from pyrogram import Client, filters, ContinuePropagation
 from pyrogram.errors import FloodWait
@@ -261,14 +262,20 @@ async def _process_audio_ffmpeg(input_path, output_path, cover_path, meta: dict)
 
     cmd.append(output_path)
 
-    loop = asyncio.get_event_loop()
     try:
-        rc, stderr = await asyncio.wait_for(
-            loop.run_in_executor(_CL_FFMPEG_EXECUTOR, _make_cl_run(cmd)),
-            timeout=10800  # 3 hours max for a massive 4GB extraction
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        if rc != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) < 100:
-            return False, stderr[-1500:]
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=21600)  # 6h
+        except asyncio.TimeoutError:
+            try: proc.kill()
+            except: pass
+            return False, "FFmpeg processing timed out (6-hour limit reached)."
+            
+        if proc.returncode != 0:
+            err = stderr.decode('utf-8', errors='ignore')
+            return False, f"FFmpeg failed (code {proc.returncode}): {err[:500]}"
         return True, ""
     except Exception as e:
         return False, str(e)
@@ -467,69 +474,6 @@ async def _cl_run_job(job_id: str, bot=None):
             phase_start = time.time()
             job_failed = False
 
-            def _extract_ep_label(fname: str) -> str:
-                """
-                Extract an episode number or range from a filename for output naming.
-
-                PRIORITY ORDER:
-                  1. Explicit range: '388-389', '567 to 677', '576–580'
-                  2. Ep/Episode keyword: 'Episode 66- some suffix16' → '66'
-                     (IMPORTANT: keyword match wins over any trailing numbers to avoid
-                      picking up track counters like the '16' in 'Episode 66-...16.mp3')
-                  3. Leading zero-padded number: '01 Title.mp3' → '1'
-                  4. Fall back: empty string (cleaner uses sequential counter)
-                """
-                import re as _re
-                base = _re.sub(r'\.\w{2,5}$', '', fname)             # strip extension
-                base = _re.sub(r'\s*\(\d+\)\s*$', '', base).strip()  # strip (1),(2) copy markers
-                base_norm = base.replace('\u2013', '-').replace('\u2014', '-')
-
-                # Always locate keyword first (needed by both range guard and P2 below)
-                kw_m = _re.search(
-                    r'(?i)(?:episode|epi|ep)\b[\s\-\:\.\#\_\*]*',
-                    base_norm)
-
-                # ── Priority 1 (no-keyword only): pure numeric range file ───────────
-                # e.g. 'Shadow 388-389.mp3' or 'Story 576-580.mp3'
-                # When a keyword IS present the keyword's number wins, so we skip
-                # this block entirely (prevents 'Episode 34 - 48 ghante' -> '34-48').
-                if not kw_m:
-                    r_m = _re.search(
-                        r'\b(\d{1,4})\s*(?:-|to|and|&|~|,|/)\s*(\d{1,4})\b',
-                        base_norm, _re.IGNORECASE)
-                    if r_m:
-                        a, b = int(r_m.group(1)), int(r_m.group(2))
-                        if 0 < a < 5000 and a <= b + 1 < 5001:
-                            orig_slice = base[r_m.start():r_m.end()].strip()
-                            return orig_slice if orig_slice else (f"{a}-{b}" if a != b else str(a))
-
-                # ── Priority 2: Ep/Episode keyword (most important fix) ─────────
-                # This prevents trailing track-counter digits from being used
-                # e.g. 'Episode 66- maa sab jaanti hai16' → '66' (not '16')
-                if kw_m:
-                    kw_ep = _re.search(
-                        r'(?i)(?:episode|epi|ep)\b[\s\-\:\.\#\_\*]*(\d{1,4})(?!\d)',
-                        base_norm)
-                    if kw_ep:
-                        n = int(kw_ep.group(1))
-                        if 0 < n < 5000:
-                            return str(n)
-
-                # ── Priority 3: Leading zero-padded number ──────────────────────
-                lead = _re.match(r'^0*(\d{1,4})(?:[^0-9]|$)', base_norm)
-                if lead:
-                    n = int(lead.group(1))
-                    if 0 < n < 5000:
-                        return str(n)
-
-                # ── Priority 4: Single lone number (no keyword, no leading) ─────
-                nums = [int(x) for x in _re.findall(r'(?<!\d)(\d{1,4})(?!\d)', base_norm)
-                        if 0 < int(x) < 5000 and not (1900 <= int(x) <= 2100)]
-                if len(nums) == 1:
-                    return str(nums[0])
-
-                return ''  # no unambiguous episode found — fall back to sequential
-
             # Loop through all message IDs
             msg_id = curr_msg_id
             while msg_id <= eid:
@@ -601,7 +545,8 @@ async def _cl_run_job(job_id: str, bot=None):
                     # ── Determine output title ──
                     change_meta = job.get("change_metadata", True)
                     rename_files = job.get("rename_files", True)  # True = use base_name, False = keep original
-                    ep_label = _extract_ep_label(orig_fn) if orig_fn else ''
+                    ep_label_res = extract_ep_label_robust(orig_fn) if orig_fn else {}
+                    ep_label = ep_label_res.get("label", "")
 
                     if rename_files:
                         # User wants renaming: use base_name + episode/number
@@ -662,7 +607,6 @@ async def _cl_run_job(job_id: str, bot=None):
                         client = await _ensure_client_alive(client, None, uid)
                     except Exception as hc_err:
                         raise Exception(f"Client reconnect failed: {hc_err}")
-
                     # ── Download ────────────────────────────────────────────────
                     in_path = os.path.abspath(f"temp_cl_in_{job_id}_{msg_id}{orig_ext}")
                     if use_ffmpeg:
@@ -673,23 +617,23 @@ async def _cl_run_job(job_id: str, bot=None):
                     try:
                         dl_path = await asyncio.wait_for(
                             client.download_media(msg, file_name=in_path),
-                            timeout=7200  # 2 hours max for 4GB files
+                            timeout=36000  # 10 hours max for massive 4GB files
                         )
                     except asyncio.TimeoutError:
-                        raise Exception("Download timed out after 2 hours.")
+                        raise Exception("Download timeout after 10 hours.")
 
                     if not dl_path or not os.path.exists(str(dl_path)):
-                        msg_id += 1
-                        continue
+                        raise Exception("Download failed: Pyrogram returned None or file missing.")
 
                     # Verify complete download
                     tg_size = getattr(media_obj, 'file_size', 0)
                     dl_size = os.path.getsize(str(dl_path))
-                    if tg_size > 0 and dl_size < (tg_size * 0.95):
+                    # Fallback generic size check if tg_size is mysteriously missing for very large files
+                    if (tg_size > 0 and dl_size < (tg_size * 0.95)) or (dl_size < 1024):
                         try: os.remove(str(dl_path))
                         except: pass
                         raise Exception(
-                            f"Incomplete download: {dl_size} / {tg_size} bytes. Forcing retry.")
+                            f"Incomplete/corrupted download: {dl_size} / {tg_size} bytes. Forcing retry.")
 
                     await db.update_global_stats(total_files_downloaded=1, total_data_usage_bytes=dl_size)
 
@@ -701,12 +645,7 @@ async def _cl_run_job(job_id: str, bot=None):
                         try: os.remove(str(dl_path))
                         except: pass
                         if not ok:
-                            if "Invalid data found" in err:
-                                logger.error(f"[Cleaner {job_id}] Fatal decode error on "
-                                             f"{msg_id}: Invalid data. Skipping.")
-                                msg_id += 1
-                                continue
-                            raise Exception(f"FFmpeg failed: {err[:500]}")
+                            raise Exception(f"FFmpeg failed (corrupted or timeout): {err[:500]}")
                     else:
                         # Non-audio (video / document / photo): rename-only, no re-encoding.
                         # Just move the downloaded file to the output path with the new name.

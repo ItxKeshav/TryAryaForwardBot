@@ -19,10 +19,7 @@ from pyrogram.types import (
 from pyrogram.errors import FloodWait
 from database import db
 from plugins.test import CLIENT
-from plugins.share_jobs import _deep_extract_ep, _sc
-from bot import BOT_INSTANCE
-
-logger = logging.getLogger(__name__)
+from plugins.utils import extract_ep_label_robust, format_tg_error
 _CLIENT = CLIENT()
 COLL = "live_batch_jobs"
 
@@ -127,7 +124,8 @@ async def _post_live_batch(sb_client, job: dict, chunk_msgs: list):
             eps = []
             for m in bucket:
                 fname = getattr(getattr(m, 'document', None) or getattr(m, 'audio', None) or getattr(m, 'video', None) or getattr(m, 'voice', None), "file_name", None) or m.caption or ""
-                extracted = _deep_extract_ep(fname)
+                res = extract_ep_label_robust(fname)
+                extracted = (res["numbers"][0], res["numbers"][-1]) if res["numbers"] else None
                 if extracted:
                     eps.append(int(extracted[0]))
             
@@ -367,6 +365,30 @@ async def _lb_run_job(job_id: str):
                 new_added = 0
                 for m in valid:
                     if m.id not in existing_buf:
+                        # ─── Strict Duplicate Check by Filename ───
+                        # Fetch filename from any media type
+                        media_obj = (m.audio or m.voice or m.document or m.video or m.photo)
+                        fname = getattr(media_obj, "file_name", "") or getattr(media_obj, "title", "") or ""
+                        
+                        if fname:
+                            # Use a persistent tracking collection for this job
+                            # Normalizing filename to avoid case/extension variations
+                            base_fn = os.path.splitext(fname.lower())[0]
+                            dup = await db.db["live_batch_seen"].find_one({"job_id": job_id, "filename": base_fn})
+                            if dup:
+                                if dup.get("msg_id") != m.id:
+                                    logger.info(f"[LiveBatch {job_id}] Skipping duplicate file: {fname} (ID {m.id})")
+                                    # Still advance last_seen to skip this message
+                                    last_seen = max(last_seen, m.id)
+                                    continue
+                            else:
+                                await db.db["live_batch_seen"].insert_one({
+                                    "job_id": job_id, 
+                                    "filename": base_fn, 
+                                    "msg_id": m.id, 
+                                    "at": time.time()
+                                })
+                        
                         buffer_mids.append(m.id)
                         existing_buf.add(m.id)
                         new_added += 1

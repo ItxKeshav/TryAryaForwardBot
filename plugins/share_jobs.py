@@ -606,55 +606,14 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             
         def _extract_range_from_text(text: str):
             """
-            Ultra-robust episode extraction combining both range detection
-            and smart fallback logic for single episodes.
+            Unified robust episode extraction.
+            Returns (min, max, is_range) or None.
             """
-            c = text
-            # Step 1: Strip file extension (e.g. .mp3, .m4a, .mp4, .txt)
-            dot = c.rfind('.')
-            if dot > 0 and (len(c) - dot) <= 5: c = c[:dot]
-            
-            # Step 2: Strip TRAILING copy-counter suffixes like " (1)", " (2)", " (1)" BEFORE any number extraction
-            # These are NOT episode numbers — they are duplicate markers added by Telegram/OS
-            import re as _re
-            c = _re.sub(r'\s*\(\d+\)\s*$', '', c).strip()
-            
-            # 1. Comma / Space sequence of numbers (e.g. 1 2 3 4 5)
-            s = _re.search(r'(?<!\d)(\d{1,4}(?:(?:,\s*|\s+)\d{1,4}){2,})(?!\d)', c)
-            if s:
-                nums = [int(x) for x in _re.findall(r'\d+', s.group(1))]
-                if max(nums) < 5000: return (min(nums), max(nums), True)
-
-            # 2. Explicit range with '-', 'to' etc
-            r = _re.search(r'(?<!\d)(\d{1,4}(?:(?:\s*[-\u2013\u2014]|(?i:\s+to\s+))\s*\d{1,4})+)(?!\d)', c)
-            if r:
-                nums = [int(x) for x in _re.findall(r'\d+', r.group(1))]
-                if max(nums) < 5000 and len(nums) >= 2 and nums == sorted(nums) and len(set(nums)) == len(nums):
-                    if (nums[-1] - nums[0]) < 1000:
-                        return (min(nums), max(nums), True)
-
-            # 3. Strategy zero-padded prefix "000047" or "047" with no letters before
-            m = _re.match(r'^0*(\d{1,4})(?:[^0-9]|$)', c)
-            if m:
-                n = int(m.group(1))
-                if 0 < n < 5000: return (n, n, False)
-
-            # 4. Explicit keywords: "Ep 23", "Episode 23", "Part 23", "Ch 2", hindi
-            kw = _re.search(r'(?i)(?:episode|epi|ep|chapter|ch|part|e|एपिसोड|भाग)[\s\-\:\.\#\_]*(\d{1,4})(?!\d)', c)
-            if kw:
-                n = int(kw.group(1))
-                if 0 < n < 5000: return (n, n, False)
-
-            # 5. Last number fallback: separate letters/numbers, strip years
-            c2 = _re.sub(r'([a-zA-Z])(\d)', r'\1 \2', c)
-            c2 = _re.sub(r'(\d)([a-zA-Z])', r'\1 \2', c2)
-            c2 = _re.sub(r'(?i)\b19\d{2}\b|\b20\d{2}\b', ' ', c2) # strip lone years
-            
-            nums = [int(x) for x in _re.findall(r'(?<!\d)(\d{1,4})(?!\d)', c2) if 0 < int(x) < 5000]
-            if nums:
-                return (nums[-1], nums[-1], False)
-                
-            return None
+            from plugins.utils import extract_ep_label_robust
+            res = extract_ep_label_robust(text)
+            nums = res.get("numbers", [])
+            if not nums: return None
+            return (min(nums), max(nums), res.get("is_range", False))
 
         def _get_file_names(msg):
             """Collect file_name strings (without extension) from all media attributes."""
@@ -1392,43 +1351,14 @@ import re as _deepre
 
 def _deep_extract_ep(filename: str) -> tuple[int, int] | None:
     """
-    Multi-strategy episode extractor for deep scan correction.
-    Tries 6 progressively looser strategies. Returns (ep_start, ep_end) or None.
+    Multi-strategy episode extractor. Unified with robust engine.
+    Returns (ep_start, ep_end) or None.
     """
-    base = filename
-    # Strip extension
-    dot = base.rfind('.')
-    if dot > 0: base = base[:dot]
-
-    # Strategy 1: zero-padded prefix "000047" or "047" with no letters before
-    m = _deepre.match(r'^0*(\d{1,4})(?:[^0-9]|$)', base)
-    if m:
-        n = int(m.group(1))
-        if 0 < n < 5000: return (n, n)
-
-    # Strategy 2: "Ep47", "EP 47", "episode47"
-    m = _deepre.search(r'(?i)(?:episode|epi|ep|chapter|ch|part|e|एपिसोड|भाग)[\s\-\:\.\#\_]*(\d{1,4})(?!\d)', base)
-    if m:
-        n = int(m.group(1))
-        if 0 < n < 5000: return (n, n)
-
-    # Strategy 3: range "47-53" or "47–53"
-    m = _deepre.search(r'(?<!\d)(\d{1,4})\s*[-–—]\s*(\d{1,4})(?!\d)', base)
-    if m:
-        a, b = int(m.group(1)), int(m.group(2))
-        if 0 < a < 5000 and a < b < 5000: return (a, b)
-
-    # Strategy 4: underscored sequence "001_047"
-    m = _deepre.search(r'_0*(\d{1,4})(?:[_\-\s]|$)', base)
-    if m:
-        n = int(m.group(1))
-        if 0 < n < 5000: return (n, n)
-
-    # Strategy 5: last number in filename (loosest)
-    nums = [int(x) for x in _deepre.findall(r'(?<![0-9])\d{1,4}(?![0-9])', base) if 0 < int(x) < 5000]
-    if nums: return (nums[-1], nums[-1])
-
-    return None
+    from plugins.utils import extract_ep_label_robust
+    res = extract_ep_label_robust(filename)
+    nums = res.get("numbers", [])
+    if not nums: return None
+    return (min(nums), max(nums))
 
 
 def _analyze_scan_report(report_text: str) -> dict:
