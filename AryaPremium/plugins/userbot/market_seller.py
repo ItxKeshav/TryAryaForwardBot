@@ -276,38 +276,58 @@ def _get_premium_menu_markup(bt_cfg: dict, lang: str):
 
 
 def _menu_card_text(user, bt_cfg: dict, bot_name: str) -> str:
-    # 1. Clickable First Name
-    first_name_clean = html.escape((user.first_name or "User").strip())
-    u_mention = f'<a href="tg://user?id={user.id}">{first_name_clean}</a>'
+    # 1. Clickable First Name (Escape for HTML safety)
+    u_mention = f'<a href="tg://user?id={user.id}">{html.escape((user.first_name or "User").strip())}</a>'
     
-    # Block 1: Greeting with first name only
-    # ›› ʜᴇʏ, Taniya❣️
-    greetings = f"›› ʜᴇʏ, {u_mention}❣️"
+    # --- 1. Welcome Section ---
+    welcome = bt_cfg.get("welcome")
+    if welcome:
+        if welcome.lower() == "disable":
+            welcome = ""
+        else:
+            welcome = welcome.replace("{user}", u_mention).replace("{name}", u_mention)
+    else:
+        welcome = f"<b>HELLO {u_mention}, ❞</b>"
     
-    # Block 2: Welcome line
-    # » ᴡᴇʟᴄᴏᴍᴇ ᴛᴏ Ishα by Aryα!
-    welcome_line = f"<b>»  {to_smallcap('Welcome to')} {bot_name}!</b>"
+    # --- 2. About Section ---
+    about = bt_cfg.get("about")
+    if not about:
+        about = "I'M AN AUTO POST MAKER & AND THUMB MAKER BOT, BUILT WITH LOVE. ❞"
+        
+    # --- 3. Quote Section ---
+    quote = bt_cfg.get("quote")
+    if not quote:
+        quote = "❝ IF YOU WERE TO WRITE A STORY WITH ME IN THE LEAD ROLE... IT WOULD CERTAINLY BE A TRAGEDY. ❞"
+        
+    # --- 4. Author Section ---
+    author = bt_cfg.get("quote_author")
+    if author and author.lower() == "disable":
+        author = ""
+    elif not author:
+        author = "<b>— KEN KENEKI</b>"
+    else:
+        author = f"<b>— {author}</b>"
     
-    # Block 3: Description
-    description = bt_cfg.get("about")
-    if not description:
-        description = "I am a file delivery bot. Tap any link button from the channel and I will send you the files directly here."
-    description = to_smallcap(description)
-
-    # Block 4: Help Hint
-    help_hint = to_smallcap("Click Help for more info.")
-
-    # Assembly
-    # Assembly into separate Quatoblocks
-    # Wrapping happens AFTER formatting to prevent Font corruption (e.g. ʙʟᴏᴄᴋǫᴜᴏᴛᴇ)
-    blocks = [
-        f"<blockquote expandable>{greetings}</blockquote>",
-        f"<blockquote expandable>{welcome_line}</blockquote>",
-        f"<blockquote expandable>{description}</blockquote>",
-        f"<blockquote expandable>{help_hint}</blockquote>"
-    ]
+    # Assembly into Quatoblocks
+    # We use expandable="true" for maximum parser compatibility.
+    blocks = []
+    if welcome.strip():
+        blocks.append(f'<blockquote expandable="true">{welcome}</blockquote>')
+    if about.strip():
+        blocks.append(f'<blockquote expandable="true">{about}</blockquote>')
+    
+    # Separator for the quote block
+    if about.strip() and quote.strip():
+        blocks.append("")
+        
+    if quote.strip():
+        blocks.append(f'<blockquote expandable="true">{quote}</blockquote>')
+    if author.strip():
+        # Author usually follows quote immediately
+        blocks.append(f'<blockquote expandable="true">{author}</blockquote>')
         
     return "\n".join(blocks)
+
 
 
 async def _edit_main_menu_in_place(client, query, user, lang: str):

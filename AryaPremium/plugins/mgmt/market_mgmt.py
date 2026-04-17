@@ -59,16 +59,17 @@ async def _render_home(client, chat_id: int, *, edit_message=None):
 
     txt = (
         f"<b>⟦ 𝗠𝗔𝗥𝗞𝗘𝗧𝗣𝗟𝗔𝗖𝗘 𝗗𝗔𝗦𝗛𝗕𝗢𝗔𝗥𝗗 ⟧</b>\n\n"
-        f"<blockquote expandable>"
+        f'<blockquote expandable="true">'
         f"<b>⧉ ʙᴏᴛꜱ        ⟶</b> <code>{bots}</code>\n"
         f"<b>⧉ ꜱᴛᴏʀɪᴇꜱ     ⟶</b> <code>{stories}</code>\n"
         f"<b>⧉ ᴘᴇɴᴅɪɴɢ     ⟶</b> <code>{pendings}</code>\n"
         f"<b>⧉ ʙᴜʏᴇʀꜱ      ⟶</b> <code>{buyers}</code>\n"
         f"<b>⧉ ᴅʙ ᴄʜᴀɴɴᴇʟꜱ ⟶</b> <code>{db_ch}</code>\n"
         f"<b>⧉ ᴅᴇʟɪᴠᴇʀʏ    ⟶</b> <code>{dl_ch}</code>"
-        f"</blockquote>\n"
-        f"<blockquote expandable><i>💡 <b>𝗧𝗶𝗽:</b> Use 'Channels → Bulk Add' for large delivery pools.</i></blockquote>"
+        f'</blockquote>\n'
+        f'<blockquote expandable="true"><i>💡 <b>𝗧𝗶𝗽:</b> Use "Channels → Bulk Add" for large delivery pools.</i></blockquote>'
     )
+
 
 
     kb = [
