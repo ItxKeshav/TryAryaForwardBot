@@ -8,6 +8,7 @@ import asyncio
 import base64
 import io
 import re
+import html
 from datetime import datetime
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove
@@ -19,8 +20,11 @@ from utils import native_ask, _deliver_purchased_story
 from plugins.userbot.razorpay_helpers import _create_rzp_link, _check_rzp_status
 from plugins.userbot.easebuzz_helpers import _create_easebuzz_link, _check_easebuzz_status
 
+from utils_upi import generate_upi_card
+
 logger = logging.getLogger(__name__)
 market_clients: dict = {}
+dm_aborts = set()
 
 
 def _clean_upi_note(s: str) -> str:
@@ -39,17 +43,13 @@ def _build_upi_uri(*, upi_id: str, payee_name: str, amount: int, note: str) -> s
     - Keep tn generic and short to reduce fraud/risk heuristics
     """
     import urllib.parse
-    pa = urllib.parse.quote((upi_id or "").strip())
+    pa = (upi_id or "").strip()
     am = str(amount)
     q = [f"pa={pa}", f"am={am}", "cu=INR"]
 
     pn_clean = (payee_name or "").strip()
     if pn_clean:
-        q.append(f"pn={urllib.parse.quote(pn_clean)}")
-
-    tn_clean = _clean_upi_note(note)
-    if tn_clean:
-        q.append(f"tn={urllib.parse.quote(tn_clean)}")
+        q.append(f"pn={urllib.parse.quote_plus(pn_clean)}")
 
     return "upi://pay?" + "&".join(q)
 
@@ -188,9 +188,15 @@ def _sc(text: str) -> str:
         "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡxʏᴢᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡxʏᴢ"
     ))
 
+def _bs(text: str) -> str:
+    return text.translate(str.maketrans(
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+        "𝗮𝗯𝗰𝗱𝗲𝗳𝗴𝗵𝗶𝗷𝗸𝗹𝗺𝗻𝗼𝗽𝗾𝗿𝘀𝘁𝘂𝘃𝘄𝘅𝘆𝘇𝗔𝗕𝗖𝗗𝗘𝗙𝗚𝗛𝗜𝗝𝗞𝗟𝗠𝗡𝗢𝗣𝗤𝗥𝗦𝗧𝗨𝗩𝗪𝗫𝗬𝗭𝟬𝟭𝟮𝟯𝟰𝟱𝟲𝟳𝟴𝟵"
+    ))
+
 def _get_base_header(user) -> str:
     u_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "User"
-    return f"<blockquote expandable><b>{_sc('HELLO')} {_sc(u_name)}</b></blockquote>\n\n"
+    return f"<blockquote expandable><b>Hello {u_name}</b></blockquote>\n\n"
 
 # Language Texts
 T = {
@@ -224,12 +230,24 @@ T = {
 
 def _get_main_menu(lang='en'):
     kb = [
-        [InlineKeyboardButton(f"• {_sc('MARKETPLACE')} •", callback_data="mb#main_marketplace"),
-         InlineKeyboardButton(f"• {_sc('MY STORIES')} •", callback_data="mb#my_buys")],
-        [InlineKeyboardButton(f"👤 {_sc('PROFILE')}", callback_data="mb#main_profile"),
-         InlineKeyboardButton(f"⚙️ {_sc('SETTINGS')}", callback_data="mb#main_settings")],
-        [InlineKeyboardButton(f"ℹ️ {_sc('HELP')}", callback_data="mb#main_help"),
-         InlineKeyboardButton(f"✖️ {_sc('CLOSE')}", callback_data="mb#main_close")]
+        [
+            InlineKeyboardButton("ᴀ", callback_data="mb#about_arya_0"),
+            InlineKeyboardButton("ʀ", callback_data="mb#about_arya_0"),
+            InlineKeyboardButton("ʏ", callback_data="mb#about_arya_0"),
+            InlineKeyboardButton("ᴀ", callback_data="mb#about_arya_0")
+        ],
+        [InlineKeyboardButton(f"• {_bs('MARKETPLACE')} •", callback_data="mb#main_marketplace"),
+         InlineKeyboardButton(f"• {_bs('MY STORIES')} •", callback_data="mb#my_buys")],
+        [InlineKeyboardButton(f"{_sc('Profile')}", callback_data="mb#main_profile"),
+         InlineKeyboardButton(f"{_sc('Settings')}", callback_data="mb#main_settings")],
+        [InlineKeyboardButton(f"{_sc('Help')}", callback_data="mb#main_help")],
+        [
+            InlineKeyboardButton("ᴄ", callback_data="mb#main_close"),
+            InlineKeyboardButton("ʟ", callback_data="mb#main_close"),
+            InlineKeyboardButton("ᴏ", callback_data="mb#main_close"),
+            InlineKeyboardButton("ꜱ", callback_data="mb#main_close"),
+            InlineKeyboardButton("ᴇ", callback_data="mb#main_close")
+        ]
     ]
     return InlineKeyboardMarkup(kb)
 
@@ -258,26 +276,55 @@ def _get_premium_menu_markup(bt_cfg: dict, lang: str):
 
 
 def _menu_card_text(user, bt_cfg: dict, bot_name: str) -> str:
-    welcome = (bt_cfg.get("welcome") or "").strip()
-    about = (bt_cfg.get("about") or "").strip()
-    quote = (bt_cfg.get("quote") or "").strip()
-    author = (bt_cfg.get("quote_author") or "").strip()
+    # 1. Clickable First Name
+    first_name_clean = html.escape((user.first_name or "User").strip())
+    u_mention = f'<a href="tg://user?id={user.id}">{first_name_clean}</a>'
+    
+    welcome = bt_cfg.get("welcome")
+    if welcome:
+        if welcome.lower() == "disable":
+            welcome = ""
+        else:
+            welcome = welcome.replace("{user}", u_mention).replace("{name}", u_mention)
+    else:
+        welcome = f"<b>HELLO {u_mention}, ❞</b>"
+    
+    # 2. About
+    about = bt_cfg.get("about")
+    if not about:
+        about = "I'M AN AUTO POST MAKER & AND THUMB MAKER BOT, BUILT WITH LOVE. ❞"
+        
+    # 3. Quote
+    quote = bt_cfg.get("quote")
+    if not quote:
+        quote = "❝ IF YOU WERE TO WRITE A STORY WITH ME IN THE LEAD ROLE... IT WOULD CERTAINLY BE A TRAGEDY. ❞"
+        
+    # 4. Author (Optional)
+    author = bt_cfg.get("quote_author")
+    if author and author.lower() == "disable":
+        author = ""
+    elif not author:
+        author = "<b>— KEN KENEKI</b>"
+    else:
+        author = f"<b>— {author}</b>"
 
-    u_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "User"
-    welcome_txt = welcome.strip()
-    about_txt = about if about else _sc("BROWSE OUR PREMIUM COLLECTION. TAP MARKETPLACE TO EXPLORE STORIES BY PLATFORM.")
-    quote_txt = quote if quote else _sc("Quality stories. Fast delivery. Trusted support.")
-    author_txt = author if author else _sc("Arya Premium")
-
-    blocks = [f"<blockquote><b>{_sc('HELLO')} {u_name}</b></blockquote>"]
-    if welcome_txt:
-        blocks.append(f"<blockquote>{welcome_txt}</blockquote>")
-    if about_txt:
-        blocks.append(f"<blockquote>{about_txt}</blockquote>")
-    blocks.append("")
-    blocks.append(f"<blockquote>❝ {quote_txt} ❞</blockquote>")
-    blocks.append(f"<blockquote>— {author_txt}</blockquote>")
-    return "\n".join(blocks) + "\n"
+    # Assembly
+    blocks = []
+    if welcome.strip():
+        blocks.append(f"<blockquote expandable>{welcome}</blockquote>")
+    if about.strip():
+        blocks.append(f"<blockquote expandable>{about}</blockquote>")
+        
+    # Add a blank line if both about and quote are present like before
+    if about.strip() and quote.strip():
+        blocks.append("")
+        
+    if quote.strip():
+        blocks.append(f"<blockquote expandable>{quote}</blockquote>")
+    if author.strip():
+        blocks.append(f"<blockquote expandable>{author}</blockquote>")
+        
+    return "\n".join(blocks)
 
 
 async def _edit_main_menu_in_place(client, query, user, lang: str):
@@ -308,7 +355,7 @@ async def _safe_edit(msg, *, text: str, markup: InlineKeyboardMarkup):
         return None
 
 
-async def _send_main_menu(client, user_id: int, user, lang: str):
+async def _send_main_menu(client, user_id: int, user, lang: str, reply_to_message_id: int = None):
     bt = await db.db.premium_bots.find_one({"id": client.me.id})
     bt_cfg = bt.get("config", {}) if bt else {}
     bot_name = client.me.first_name
@@ -336,7 +383,8 @@ async def _send_main_menu(client, user_id: int, user, lang: str):
                         animation=fid,
                         caption=msg_txt,
                         reply_markup=markup,
-                        parse_mode=enums.ParseMode.HTML
+                        parse_mode=enums.ParseMode.HTML,
+                        reply_to_message_id=reply_to_message_id
                     )
                 if t == "video":
                     return await client.send_video(
@@ -344,14 +392,16 @@ async def _send_main_menu(client, user_id: int, user, lang: str):
                         video=fid,
                         caption=msg_txt,
                         reply_markup=markup,
-                        parse_mode=enums.ParseMode.HTML
+                        parse_mode=enums.ParseMode.HTML,
+                        reply_to_message_id=reply_to_message_id
                     )
                 return await client.send_photo(
                     user_id,
                     photo=fid,
                     caption=msg_txt,
                     reply_markup=markup,
-                    parse_mode=enums.ParseMode.HTML
+                    parse_mode=enums.ParseMode.HTML,
+                    reply_to_message_id=reply_to_message_id
                 )
             except Exception as e:
                 # Auto-heal: remove broken media entries (MEDIA_EMPTY / expired file_id)
@@ -363,7 +413,9 @@ async def _send_main_menu(client, user_id: int, user, lang: str):
                     )
                 except Exception:
                     pass
-    return await client.send_message(user_id, msg_txt, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
+                return await client.send_message(user_id, msg_txt, reply_markup=markup, parse_mode=enums.ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+
+    return await client.send_message(user_id, msg_txt, reply_markup=markup, parse_mode=enums.ParseMode.HTML, reply_to_message_id=reply_to_message_id)
 
 
 def _fmt_delivery_text(tpl: str, user, story, sent_count: int = 0, fail_count: int = 0) -> str:
@@ -451,11 +503,13 @@ async def _show_story_profile(client, user_id, story, lang):
 
     # Description intentionally hidden for now.
     header_txt = (
+        f"<blockquote expandable>"
         f"<b>♨️Story :</b> {to_mathbold(name)}\n"
         f"<b>🔰Status :</b> <b>{status}</b>\n"
         f"<b>🖥Platform :</b> <b>{platform}</b>\n"
         f"<b>🧩Genre :</b> <b>{genre}</b>\n"
-        f"<b>🎬Episodes :</b> <b>{episodes}</b>\n"
+        f"<b>🎬Episodes :</b> <b>{episodes}</b>"
+        f"</blockquote>"
     )
     txt = header_txt
         
@@ -468,70 +522,62 @@ async def _show_story_profile(client, user_id, story, lang):
     from pyrogram import enums
 
     # Need to send a message but remove the reply keyboard first (from marketplace)
-    tmp = await client.send_message(user_id, "<i>⏳ Loading Profile...</i>", reply_markup=ReplyKeyboardRemove())
+    tmp = await client.send_message(user_id, "<b>› › ⏳ " + _sc("LOADING PROFILE...") + "</b>", reply_markup=ReplyKeyboardRemove(), parse_mode=enums.ParseMode.HTML)
+    
     try:
+        if image:
+            try:
+                await client.send_photo(
+                    user_id,
+                    photo=image,
+                    caption=txt,
+                    reply_markup=markup,
+                    parse_mode=enums.ParseMode.HTML,
+                )
+                await tmp.delete()
+                return
+            except Exception:
+                pass
+        await client.send_message(
+            user_id,
+            txt,
+            reply_markup=markup,
+            disable_web_page_preview=True,
+            parse_mode=enums.ParseMode.HTML
+        )
         await tmp.delete()
-    except:
-        pass
-
-    if image:
-        try:
-            await client.send_photo(
-                user_id,
-                photo=image,
-                caption=txt,
-                reply_markup=markup,
-                parse_mode=enums.ParseMode.HTML,
-            )
-            return
-        except Exception:
-            pass
-    await client.send_message(
-        user_id,
-        txt,
-        reply_markup=markup,
-        disable_web_page_preview=True,
-        parse_mode=enums.ParseMode.HTML
-    )
+    except Exception as e:
+        logger.error(f"Error in show_story_profile: {e}")
+        try: await tmp.delete()
+        except: pass
 
 async def _show_tc(client, user_id, story_id, lang='en'):
-    if lang == 'en':
-        tc_text = (
-            f"<b>\u26a0\ufe0f {_sc('TERMS & CONDITIONS')}</b>\n\n"
-            "<blockquote expandable>"
-            + _sc("Before purchasing, you must carefully read and agree to the following:") + "\n\n"
-            "\ud83d\udccc " + _sc("MISSING EPISODES") + "\n"
-            + _sc("3\u20135 episodes may be unavailable as they were not publicly released. If they become available later, they will be added automatically. If more than 5 are missing, contact support \u2014 we will do our best.") + "\n\n"
-            "\ud83d\udccc " + _sc("QUALITY") + "\n"
-            + _sc("Some older recorded episodes may have reduced audio/video quality. We cannot guarantee 100% quality, but we always try to deliver the best version available.") + "\n\n"
-            "\ud83d\udccc " + _sc("EPISODE ORDER") + "\n"
-            + _sc("Episodes may rarely arrive out of sequence. We are not directly responsible, but this almost never happens. All files come with Arya Bot branding and cleaned metadata.") + "\n\n"
-            "\ud83d\udccc " + _sc("NO REFUNDS") + "\n"
-            + _sc("Strictly no refunds once payment is confirmed and delivery has started.") + "\n\n"
-            "\ud83d\udccc " + _sc("FAKE SCREENSHOTS") + "\n"
-            + _sc("Sending test, fake, wrong, or random payment screenshots will result in a permanent ban from all our groups and channels. No warnings will be given.")
-            + "</blockquote>"
-        )
-    else:
-        tc_text = (
-            "<b>\u26a0\ufe0f \u0928\u093f\u092f\u092e \u0914\u0930 \u0936\u0930\u094d\u0924\u0947\u0902</b>\n\n"
-            "<blockquote expandable>"
-            "\u0916\u0930\u0940\u0926\u0928\u0947 \u0938\u0947 \u092a\u0939\u0932\u0947 \u0907\u0928 \u0928\u093f\u092f\u092e\u094b\u0902 \u0915\u094b \u0927\u094d\u092f\u093e\u0928 \u0938\u0947 \u092a\u0922\u093c\u0947\u0902:\n\n"
-            "\ud83d\udccc \u0917\u093e\u092f\u092c \u090f\u092a\u093f\u0938\u094b\u0921\n"
-            "3-5 \u090f\u092a\u093f\u0938\u094b\u0921 \u0909\u092a\u0932\u092c\u094d\u0927 \u0928\u0939\u0940\u0902 \u0939\u094b \u0938\u0915\u0924\u0947\u0964 \u092c\u093e\u0926 \u092e\u0947\u0902 \u092e\u093f\u0932\u0928\u0947 \u092a\u0930 \u091c\u094b\u0921\u093c\u0947 \u091c\u093e\u090f\u0902\u0917\u0947\u0964 \u091c\u094d\u092f\u093e\u0926\u093e \u0939\u094b\u0928\u0947 \u092a\u0930 \u0938\u092a\u094b\u0930\u094d\u091f \u0938\u0947 \u0938\u0902\u092a\u0930\u094d\u0915 \u0915\u0930\u0947\u0902\u0964\n\n"
-            "\ud83d\udccc \u0917\u0941\u0923\u0935\u0924\u094d\u0924\u093e\n"
-            "\u092a\u0941\u0930\u093e\u0928\u0947 \u090f\u092a\u093f\u0938\u094b\u0921 \u0915\u0940 \u0915\u094d\u0935\u093e\u0932\u093f\u091f\u0940 \u0915\u092e \u0939\u094b \u0938\u0915\u0924\u0940 \u0939\u0948\u0964 \u0939\u092e \u092c\u0947\u0939\u0924\u0930\u0940\u0928 \u0909\u092a\u0932\u092c\u094d\u0927 \u0938\u0902\u0938\u094d\u0915\u0930\u0923 \u0926\u0947\u0928\u0947 \u0915\u0940 \u0915\u094b\u0936\u093f\u0936 \u0915\u0930\u0924\u0947 \u0939\u0948\u0902\u0964\n\n"
-            "\ud83d\udccc \u090f\u092a\u093f\u0938\u094b\u0921 \u0915\u093e \u0915\u094d\u0930\u092e\n"
-            "\u0915\u092d\u0940-\u0915\u092d\u0940 \u0915\u094d\u0930\u092e \u092e\u0947\u0902 \u0905\u0902\u0924\u0930 \u0939\u094b \u0938\u0915\u0924\u093e \u0939\u0948, \u0932\u0947\u0915\u093f\u0928 \u092f\u0939 \u0906\u092e\u0924\u094c\u0930 \u092a\u0930 \u0928\u0939\u0940\u0902 \u0939\u094b\u0924\u093e\u0964 \u092b\u093c\u093e\u0907\u0932\u0947\u0902 Arya Bot \u092c\u094d\u0930\u093e\u0902\u0921\u093f\u0902\u0917 \u0915\u0947 \u0938\u093e\u0925 \u0906\u0924\u0940 \u0939\u0948\u0902\u0964\n\n"
-            "\ud83d\udccc \u0915\u094b\u0908 \u0930\u093f\u092b\u0902\u0921 \u0928\u0939\u0940\u0902\n"
-            "\u0921\u093f\u0932\u0940\u0935\u0930\u0940 \u0936\u0941\u0930\u0942 \u0939\u094b\u0928\u0947 \u0915\u0947 \u092c\u093e\u0926 <b>\u0915\u094b\u0908 \u0930\u093f\u092b\u0902\u0921 \u0928\u0939\u0940\u0902</b> \u0926\u093f\u092f\u093e \u091c\u093e\u090f\u0917\u093e\u0964\n\n"
-            "\ud83d\udccc \u092b\u0930\u094d\u091c\u0940 \u0938\u094d\u0915\u094d\u0930\u0940\u0928\u0936\u0949\u091f\n"
-            "\u092b\u0930\u094d\u091c\u0940 \u092f\u093e \u0917\u0932\u0924 \u0938\u094d\u0915\u094d\u0930\u0940\u0928\u0936\u0949\u091f \u092d\u0947\u091c\u0928\u0947 \u092a\u0930 \u0938\u092d\u0940 \u0917\u094d\u0930\u0941\u092a \u0938\u0947 <b>\u0938\u094d\u0925\u093e\u092f\u0940 \u092c\u0948\u0928</b> \u0939\u094b\u0917\u093e\u0964"
-            "</blockquote>"
-        )
+    # Enforced premium UI exactly as specified
+    tc_text = (
+        "<b>⟦ 𝗧𝗘𝗥𝗠𝗦 & 𝗖𝗢𝗡𝗗𝗜𝗧𝗜𝗢𝗡𝗦 ⟧</b>\n\n"
+        "<blockquote expandable>"
+        "𝖡𝖾𝖿𝗈𝗋𝖾 𝗉𝗎𝗋𝖼𝗁𝖺𝗌𝗂𝗇𝗀, 𝗉𝗅𝖾𝖺𝗌𝖾 𝗋𝖾𝖺𝖽 𝖺𝗇𝖽 𝖺𝗀𝗋𝖾𝖾 𝗍𝗈 𝗍𝗁𝖾 𝖿𝗈𝗅𝗅𝗈𝗐𝗂𝗇𝗀:\n\n"
+        "• <b>𝗠𝗶𝘀𝘀𝗶𝗻𝗴 𝗘𝗽𝗶𝘀𝗼𝗱𝗲𝘀</b>\n"
+        "𝟹–𝟻 𝖾𝗉𝗂𝗌𝗈𝖽𝖾𝗌 𝗆𝖺𝗒 𝖻𝖾 𝗎𝗇𝖺𝗏𝖺𝗂𝗅𝖺𝖻𝗅𝖾 𝗂𝖿 𝗇𝗈𝗍 𝗉𝗎𝖻𝗅𝗂𝖼𝗅𝗒 𝗋𝖾𝗅𝖾𝖺𝗌𝖾𝖽.\n"
+        "𝖨𝖿 𝖺𝗏𝖺𝗂𝗅𝖺𝖻𝗅𝖾 𝗅𝖺𝗍𝖾𝗋, 𝗍𝗁𝖾𝗒 𝗐𝗂𝗅𝗅 𝖻𝖾 𝖺𝖽𝖽𝖾𝖽 𝖺𝗎𝗍𝗈𝗆𝖺𝗍𝗂𝖼𝖺𝗅𝗅𝗒.\n"
+        "𝖬𝗈𝗋𝖾 𝗍𝗁𝖺𝗇 𝟻 𝗆𝗂𝗌𝗌𝗂𝗇𝗀? 𝖢𝗈𝗇𝗍𝖺𝖼𝗍 𝗌𝗎𝗉𝗉𝗈𝗋𝗍.\n\n"
+        "• <b>𝗤𝘂𝗮𝗹𝗶𝘁𝘆</b>\n"
+        "𝖲𝗈𝗆𝖾 𝗈𝗅𝖽𝖾𝗋 𝖾𝗉𝗂𝗌𝗈𝖽𝖾𝗌 𝗆𝖺𝗒 𝗁𝖺𝗏𝖾 𝗋𝖾𝖽𝗎𝖼𝖾𝖽 𝗊𝗎𝖺𝗅𝗂𝗍𝗒.\n"
+        "𝖶𝖾 𝖼𝖺𝗇𝗇𝗈𝗍 𝗀𝗎𝖺𝗋𝖺𝗇𝗍𝖾𝖾 𝟣𝟢𝟢% 𝗊𝗎𝖺𝗅𝗂𝗍𝗒, 𝖻𝗎𝗍 𝖺𝗅𝗐𝖺𝗒𝗌 𝗉𝗋𝗈𝗏𝗂𝖽𝖾 𝖻𝖾𝗌𝗍 𝗏𝖾𝗋𝗌𝗂𝗈𝗇.\n\n"
+        "• <b>𝗘𝗽𝗶𝘀𝗼𝗱𝗲 𝗢𝗿𝗱𝗲𝗿</b>\n"
+        "𝖤𝗉𝗂𝗌𝗈𝖽𝖾𝗌 𝗆𝖺𝗒 𝗋𝖺𝗋𝖾𝗅𝗒 𝖻𝖾 𝗈𝗎𝗍 𝗈𝖿 𝗌𝖾𝗊𝗎𝖾𝗇𝖼𝖾.\n"
+        "𝖠𝗅𝗅 𝖿𝗂𝗅𝖾𝗌 𝖺𝗋𝖾 𝖼𝗅𝖾𝖺𝗇𝖾𝖽 𝖺𝗇𝖽 𝖻𝗋𝖺𝗇𝖽𝖾𝖽 𝖻𝗒 𝖠𝗋𝗒𝖺 𝖡𝗈𝗍.\n\n"
+        "• <b>𝗡𝗼 𝗥𝗲𝗳𝘂𝗻𝗱𝘀</b>\n"
+        "𝖭𝗈 𝗋𝖾𝖿𝗎𝗇𝖽𝗌 𝗈𝗇𝖼𝖾 𝗉𝖺𝗒𝗆𝖾𝗇𝗍 𝗂𝗌 𝖼𝗈𝗇𝖿𝗂𝗋𝗆𝖾𝖽 𝖺𝗇𝖽 𝖽𝖾𝗅𝗂𝗏𝖾𝗋𝗒 𝗌𝗍𝖺𝗋𝗍𝗌.\n\n"
+        "• <b>𝗙𝗮𝗸𝗲 𝗦𝗰𝗿𝗲𝗲𝗻𝘀𝗵𝗼𝘁𝘀</b>\n"
+        "𝖥𝖺𝗄𝖾 𝗈𝗋 𝗂𝗇𝗏𝖺𝗅𝗂𝖽 𝗉𝖺𝗒𝗆𝖾𝗇𝗍 𝗉𝗋𝗈𝗈𝖿𝗌 𝗐𝗂𝗅𝗅 𝗅𝖾𝖺𝖽 𝗍𝗈 𝗉𝖾𝗋𝗆𝖺𝗇𝖾𝗇𝗍 𝖻𝖺𝗇."
+        "</blockquote>"
+    )
+    
     kb = [
-        [InlineKeyboardButton(f"✅ {_sc('I ACCEPT')}", callback_data=f"mb#tc_accept_{story_id}"),
-         InlineKeyboardButton(f"❌ {_sc('REJECT')}", callback_data=f"mb#tc_reject")]
+        [InlineKeyboardButton("𝗜 𝗔𝗰𝗰𝗲𝗽𝘁", callback_data=f"mb#tc_accept_{story_id}")],
+        [InlineKeyboardButton("𝗥𝗲𝗷𝗲𝗰𝘁", callback_data="mb#tc_reject"),
+         InlineKeyboardButton("‹ Back", callback_data=f"mb#view_{story_id}")]
     ]
     from pyrogram import enums
     await client.send_message(user_id, tc_text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=enums.ParseMode.HTML)
@@ -544,34 +590,59 @@ def _cfg_list(cfg: dict, key: str):
 # ─────────────────────────────────────────────────────────────────
 # Story Payment Detail
 # ─────────────────────────────────────────────────────────────────
-async def _show_story_details(client, msg_or_query, story, lang):
+def _is_upi_restricted() -> bool:
+    """Returns True if current IST time is between 9 PM (21:00) and 6 AM (06:00)."""
+    from datetime import timezone, timedelta
+    ist = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(ist)
+    h = now_ist.hour
+    return h >= 21 or h < 6
+
+
+async def _show_story_details(client, msg_or_query, story, lang, bot_cfg: dict = None):
     from pyrogram.types import Message
     is_msg = isinstance(msg_or_query, Message)
+    bot_cfg = bot_cfg or {}
 
     name = story.get(f'story_name_{lang}', story.get('story_name_en'))
     platform = story.get('platform', 'Other')
     ep_count = abs(story.get('end_id', 0) - story.get('start_id', 0)) + 1 if story.get('end_id') else "?"
     price = story.get('price', 0)
 
+    upi_enabled = bot_cfg.get('upi_enabled', True)  # Default ON unless admin disables
+    upi_restricted = _is_upi_restricted()
+    show_upi = upi_enabled and not upi_restricted
+
+    # The user wants this specific block in a quoteblock and collapsible (expandable)
+    # Removing ONLY the ⚡ emoji and fixing font (standard readable)
+    rzp_benefit = (
+        f"<blockquote expandable>"
+        f"Instant methods ensure immediate delivery.\n"
+        f"Pay via Razorpay for instant access — no waiting, no manual verification.\n"
+        f"Supports UPI, Debit/Credit Card, Net Banking, Wallets & more."
+        f"</blockquote>"
+    )
+
     txt = (
-        f"<b>🛒 {_sc('SHOPPING CART')}</b>\n"
+        f"<b>🛒 SHOPPING CART</b>\n"
         f"────────────────────\n"
-        f"<b>📦 {_sc('Product')} :</b> {name}\n"
-        f"<b>🏷️ {_sc('Platform')} :</b> {platform}\n"
-        f"<b>🎬 {_sc('Episodes')} :</b> ~{ep_count}\n"
+        f"<b>📦 Product :</b> {name}\n"
+        f"<b>🏷️ Platform :</b> {platform}\n"
+        f"<b>🎬 Episodes :</b> ~{ep_count}\n"
         f"────────────────────\n"
-        f"<b>💰 {_sc('Total Amount')} : ₹{price}</b>\n"
+        f"<b>💰 Total Amount : ₹{price}</b>\n"
         f"────────────────────\n"
-        f"<i>{_sc('Select your preferred payment method:')}</i>\n\n"
-        f"💡 <i>{_sc('Instant methods ensure immediate delivery.')}</i>"
+        f"<i>Select your preferred payment method:</i>\n\n"
+        f"💡 {rzp_benefit}"
     )
 
     kb = [
-        [InlineKeyboardButton(f"💳 {_sc('RAZORPAY')}", callback_data=f"mb#pay#razorpay#{str(story['_id'])}"),
-         InlineKeyboardButton(f"💸 {_sc('EASEBUZZ')}", callback_data=f"mb#pay#easebuzz#{str(story['_id'])}")],
-        [InlineKeyboardButton(f"🏦 {_sc('UPI')} ({_sc('MANUAL')})", callback_data=f"mb#pay#upi#{str(story['_id'])}")],
-        [InlineKeyboardButton(f"❮ {_sc('BACK')}", callback_data="mb#return_main")]
+        [InlineKeyboardButton("RAZORPAY", callback_data=f"mb#pay#razorpay#{str(story['_id'])}")],
     ]
+    if show_upi:
+        kb.append([InlineKeyboardButton(f"UPI (Manual)", callback_data=f"mb#pay#upi#{str(story['_id'])}")])
+    kb.append([InlineKeyboardButton("❮ BACK", callback_data="mb#return_main")])
+
     if is_msg:
         await msg_or_query.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb))
     else:
@@ -583,6 +654,17 @@ async def _show_story_details(client, msg_or_query, story, lang):
 # ─────────────────────────────────────────────────────────────────
 async def _process_start(client, message):
     user_id = message.from_user.id
+    
+    is_new = await db.db.users.count_documents({"id": int(user_id)}) == 0
+    if is_new:
+        from utils import log_arya_event
+        asyncio.create_task(log_arya_event(
+            event_type="NEW USER JOIN",
+            user_id=user_id,
+            user_info={"first_name": message.from_user.first_name, "last_name": getattr(message.from_user, "last_name", ""), "username": getattr(message.from_user, "username", "")},
+            details="User started the Premium Store bot for the first time."
+        ))
+        
     user = await db.get_user(user_id)
     args = message.command
 
@@ -608,12 +690,70 @@ async def _process_start(client, message):
     # Standard Main Menu
     msg_txt = None
         
-    wait_msg = await client.send_message(user_id, "<b>› › " + _sc("WAIT A SECOND...") + "</b>")
-    await asyncio.sleep(0.5)
+    wait_msg = await message.reply_text("<b>› › ⏳ " + _sc("WAIT A SECOND...") + "</b>", parse_mode=enums.ParseMode.HTML)
+    await asyncio.sleep(0.4)
+    await wait_msg.edit_text("<b>› › ⌛ " + _sc("WAIT A SECOND...") + "</b>", parse_mode=enums.ParseMode.HTML)
+    await asyncio.sleep(0.4)
     await wait_msg.delete()
 
     # Always use the centralized menu sender (handles MEDIA_EMPTY and optional URL buttons)
-    await _send_main_menu(client, user_id, message.from_user, lang)
+    await _send_main_menu(client, user_id, message.from_user, lang, reply_to_message_id=message.id)
+
+    
+# ─────────────────────────────────────────────────────────────────
+# /mystories Handler
+# ─────────────────────────────────────────────────────────────────
+async def _process_my_stories(client, message):
+    user_id = message.from_user.id
+    user = await db.get_user(user_id)
+    lang = user.get('lang', 'en')
+    
+    # Send a fresh "My Stories" menu
+    purchases = user.get('purchases', [])
+    from bson.objectid import ObjectId
+
+    PAGE_SIZE = 5
+    page = 0
+    total = len(purchases)
+    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    page_purchases = purchases[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+
+    kb = []
+    for pid in page_purchases:
+        try:
+            st = await db.db.premium_stories.find_one({"_id": ObjectId(pid)})
+            if st:
+                s_name = st.get(f'story_name_{lang}', st.get('story_name_en'))
+                kb.append([InlineKeyboardButton(s_name, callback_data=f"mb#purchased_view_{pid}")])
+        except Exception:
+            pass
+
+    if total_pages > 1:
+        nav = []
+        nav.append(InlineKeyboardButton(f"ᴘᴀɢᴇ 1/{total_pages}", callback_data="mb#noop"))
+        nav.append(InlineKeyboardButton("𝗡𝗲𝘅𝘁 ❭", callback_data="mb#my_buys_page_1"))
+        kb.append(nav)
+
+    kb.append([InlineKeyboardButton(_bs("Back to Menu"), callback_data="mb#main_back")])
+
+    if total > 0:
+        txt_b = (
+            "<b>⟦ 𝗠𝗬 𝗦𝗧𝗢𝗥𝗜𝗘𝗦 ⟧</b>\n\n"
+            f"<b>ᴛᴏᴛᴀʟ ⟶</b> {total}\n\n"
+            "𝖠𝗅𝗅 𝗌𝗍𝗈𝗋𝗂𝖾𝗌 𝗅𝗂𝗌𝗍𝖾𝖽 𝖻𝖾𝗅𝗈𝗐 𝖺𝗋𝖾 𝖺𝗅𝗋𝖾𝖺𝖽𝗒\n"
+            "𝗈𝗇 𝗒𝗈𝗎𝗋 𝖺𝖼𝖼𝗈𝗎𝗇𝗍. 𝖲𝖾𝗅𝖾𝖼𝗍 𝖺𝗇𝗒 𝗌𝗍𝗈𝗋𝗒 𝗍𝗈 𝗏𝗂𝖾𝗐\n"
+            "𝖽𝖾𝗍𝖺𝗂𝗅𝗌 𝗈𝗋 𝖺𝖼𝖼𝖾𝗌𝗌 𝗂𝗍 𝖺𝗀𝖺𝗂𝗇."
+        )
+    else:
+        txt_b = (
+            "<b>⟦ 𝗠𝗬 𝗦𝗧𝗢𝗥𝗜𝗘𝗦 ⟧</b>\n\n"
+            "<b>ᴛᴏᴛᴀʟ ⟶</b> 0\n\n"
+            "ɴᴏ ᴘᴜʀᴄʜᴀꜱᴇꜱ ꜰᴏᴜɴᴅ.\n"
+            "ᴠɪꜱɪᴛ ᴛʜᴇ ᴍᴀʀᴋᴇᴛᴘʟᴀᴄᴇ ᴛᴏ ᴇxᴘʟᴏʀᴇ."
+        )
+        kb.insert(0, [InlineKeyboardButton(_bs("OPEN MARKETPLACE"), callback_data="mb#main_marketplace")])
+
+    await client.send_message(user_id, txt_b, reply_markup=InlineKeyboardMarkup(kb))
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -626,7 +766,7 @@ async def _process_text(client, message):
     txt = message.text.strip()
 
     # Back to main menu
-    if txt == "↩️ " + "BACK TO MAIN MENU":
+    if "𝗕𝗮𝗰𝗸 𝘁𝗼 𝗠𝗲𝗻𝘂" in txt or "BACK TO MAIN MENU" in txt:
         m = await message.reply_text("<i>⏳ Loading...</i>", reply_markup=ReplyKeyboardRemove())
         try:
             await m.delete()
@@ -677,10 +817,12 @@ async def _process_text(client, message):
             s_name = s.get(f'story_name_{lang}', s.get('story_name_en'))
             kb.append([f"{idx}. {s_name} [ ₹ {s.get('price', 0)} ]"])
         kb.append(["🔍 " + "SEARCH"])
-        kb.append(["↩️ " + "BACK TO MAIN MENU"])
+        kb.append(["« " + "𝗕𝗮𝗰𝗸 𝘁𝗼 𝗠𝗲𝗻𝘂"])
 
         await message.reply_text(
-            f"<b>{_sc('Available Stories')} — {txt}</b>\n\n{_sc('Tap on a story from the menu below:')}",
+            f"<b>Available Stories — {txt}</b>\n\n"
+            f"All available stories and their prices are shown in the menu below. "
+            f"Please tap or click on any story name from the keyboard menu below to view details and purchase it:",
             reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
         )
         return
@@ -688,14 +830,14 @@ async def _process_text(client, message):
     # ── SEARCH trigger ──
     if txt == "🔍 " + "SEARCH":
         await message.reply_text(
-            f"<b>🔍 {_sc('SEARCH')}</b>\n\n<i>{_sc('Type a few words of the story name to search:')}</i>",
-            reply_markup=ReplyKeyboardMarkup([["↩️ " + "CANCEL"]], resize_keyboard=True)
+            f"<b>🔍 SEARCH</b>\n\n<i>Type a few words of the story name to search:</i>",
+            reply_markup=ReplyKeyboardMarkup([["« " + "CANCEL"]], resize_keyboard=True)
         )
         await db.update_user(user_id, {"state": "searching"})
         return
 
     # ── CANCEL search ──
-    if txt == "↩️ " + "CANCEL" or (user.get("state") == "searching" and txt.startswith("↩️")):
+    if txt == "« " + "CANCEL" or (user.get("state") == "searching" and txt.startswith("«")):
         await db.update_user(user_id, {"state": None})
         m = await message.reply_text("<i>❌ Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())
         await asyncio.sleep(1.5)
@@ -717,12 +859,118 @@ async def _process_text(client, message):
         for idx, s in enumerate(matches, start=1):
             s_name = s.get(f'story_name_{lang}', s.get('story_name_en'))
             kb.append([f"{idx}. {s_name} [ ₹ {s.get('price', 0)} ]"])
-        kb.append(["↩️ " + "CANCEL"])
+        kb.append(["« " + "CANCEL"])
         await message.reply_text(
-            f"<b>🔍 {_sc('Search Results')} ({len(matches)})</b>\n\n{_sc('Tap on a story to view it:')}",
-            reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
+            f"<b>🔍 {_sc('Search Results')} ({len(matches)})</b>\n\n"
+            f"<blockquote expandable>{_sc('Tap on a story name from the keyboard menu below to view its details and purchase options.')}</blockquote>",
+            reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True),
+            parse_mode=enums.ParseMode.HTML
         )
         return
+
+
+async def _show_about_arya(client, query, page: int):
+    if page == 0:
+        txt = (
+            f"<b>⟦ {_sc('ABOUT ARYA PREMIUM')} ⟧</b>\n\n"
+            f"<blockquote expandable>"
+            f"<i>{_sc('Welcome to Arya Premium — the ultimate, fully automated storefront for exclusive, high-quality stories.')}</i>\n\n"
+            f"<u>{_sc('WHAT IT IS:')}</u>\n"
+            f"{_sc('Arya Premium is a state-of-the-art paid content delivery ecosystem. It enables users to browse, purchase, and instantly receive premium stories without any manual intervention.')}\n\n"
+            f"<u>{_sc('HOW IT WORKS:')}</u>\n"
+            f"• {_sc('Browse the Marketplace to find your desired story.')}\n"
+            f"• {_sc('Make a secure payment via automatic gateways (Razorpay) or manual UPI.')}\n"
+            f"• {_sc('Upon successful validation, choose your preferred delivery method (Direct DM or Secure Channel).')}\n\n"
+            f"<u>{_sc('CORE FEATURES:')}</u>\n"
+            f"• <b>{_sc('Instant Access:')}</b> {_sc('The moment your payment is verified, the content is unlocked forever.')}\n"
+            f"• <b>{_sc('Permanent Library:')}</b> {_sc('All your purchases are safely stored in ')}<b>{_sc('My Stories')}</b>. {_sc('You never lose access.')}\n"
+            f"• <b>{_sc('Seamless Experience:')}</b> {_sc('Clean UI, fast response times, and high-quality file delivery.')}\n"
+            f"</blockquote>"
+        )
+        kb = [
+            [InlineKeyboardButton(f"ɴᴇxᴛ ❭", callback_data="mb#about_arya_1")],
+            [InlineKeyboardButton(f"« ❮ {_sc('BACK')}", callback_data="mb#main_back")]
+        ]
+    else:
+        txt = (
+            f"<b>⟦ {_sc('ABOUT ARYA BOT (PARENT)')} ⟧</b>\n\n"
+            f"<blockquote expandable>"
+            f"<i>{_sc('Arya Premium is proudly powered by the Main Arya Bot architecture — a trusted name in Telegram automation.')}</i>\n\n"
+            f"<u>{_sc('WHAT IT IS:')}</u>\n"
+            f"{_sc('The parent Arya Bot is a highly advanced file management and delivery juggernaut, built to handle massive loads and complex operations.')}\n\n"
+            f"<u>{_sc('WHY CHOOSE US:')}</u>\n"
+            f"• <b>{_sc('Instant Delivery:')}</b> {_sc('High-speed servers ensure files are forwarded to you with zero lag.')}\n"
+            f"• <b>{_sc('Fully Automatic:')}</b> {_sc('No waiting for human admins. Everything is handled securely by code.')}\n"
+            f"• <b>{_sc('Trusted Service:')}</b> {_sc('Used by thousands to manage and deliver files reliably every single day.')}\n\n"
+            f"<u>{_sc('FEATURES:')}</u>\n"
+            f"• <b>{_sc('Batch Links:')}</b> {_sc('Group hundreds of files securely for public or private sharing.')}\n"
+            f"• <b>{_sc('Live Sync:')}</b> {_sc('Real-time mirroring across multiple channels.')}\n"
+            f"• <b>{_sc('Smart Management:')}</b> {_sc('Auto-approve logic, Force Subscribe walls, and deep user analytics.')}\n"
+            f"</blockquote>"
+        )
+        kb = [
+            [InlineKeyboardButton(f"❬ ᴘʀᴇᴠ", callback_data="mb#about_arya_0")],
+            [InlineKeyboardButton(f"« ❮ {_sc('BACK')}", callback_data="mb#main_back")]
+        ]
+
+    await _safe_edit(query.message, text=txt, markup=InlineKeyboardMarkup(kb))
+
+
+async def _show_help_menu(client, query, page: int):
+    if page == 0:
+        txt = (
+            f"<b>⟦ {_sc('HELP & DOCUMENTATION')} ⟧</b>\n\n"
+            f"<blockquote expandable>"
+            f"<i>{_sc('Welcome to the detailed guide for using Arya Premium.')}</i>\n\n"
+            f"<u>{_sc('COMMANDS:')}</u>\n"
+            f"• /start — {_sc('Launches the main interface menu.')}\n\n"
+            f"<u>{_sc('MENU BUTTONS:')}</u>\n"
+            f"• <b>{_sc('Marketplace:')}</b> {_sc('Browse all available stories filtered by platform.')}\n"
+            f"• <b>{_sc('My Stories:')}</b> {_sc('Access your previously purchased stories. You can instantly redownload them from here.')}\n"
+            f"• <b>{_sc('Profile:')}</b> {_sc('View your account details, Telegram ID, and purchase count.')}\n"
+            f"• <b>{_sc('Settings:')}</b> {_sc('Change your preferred bot language.')}\n\n"
+            f"<u>{_sc('HOW TO BUY:')}</u>\n"
+            f"<i><b>1.</b></i> {_sc('Find a story in the Marketplace.')}\n"
+            f"<i><b>2.</b></i> {_sc('Choose to pay securely via Razorpay (Instant) or Manual UPI.')}\n"
+            f"<i><b>3.</b></i> {_sc('For UPI, send the exact amount to the provided details and upload your screenshot.')}\n"
+            f"<i><b>4.</b></i> {_sc('Once verified, tap ')}<b>{_sc('Get Delivery')}</b> {_sc('and choose your method (Direct DM or Secure Channel Invite).')}\n\n"
+            f"<i>{_sc('For technical issues, use the Terms & Refund buttons below.')}</i>"
+            f"</blockquote>"
+        )
+        kb = [
+            [InlineKeyboardButton(f"{_sc('TERMS')}", callback_data="mb#help_tc"),
+             InlineKeyboardButton(f"{_sc('REFUND')}", callback_data="mb#help_refund")],
+            [InlineKeyboardButton(f"हिंदी (NEXT) ❭", callback_data="mb#help_page_1")],
+            [InlineKeyboardButton(f"« ❮ {_sc('MAIN MENU')}", callback_data="mb#main_back")]
+        ]
+    else:
+        txt = (
+            f"<b>⟦ {_sc('सहायता और जानकारी')} ⟧</b>\n\n"
+            f"<blockquote expandable>"
+            f"<i>{_sc('आर्या प्रीमियम के विस्तृत गाइड में आपका स्वागत है।')}</i>\n\n"
+            f"<u>{_sc('कमांड्स:')}</u>\n"
+            f"• /start — {_sc('मुख्य मेनू खोलने के लिए।')}\n\n"
+            f"<u>{_sc('मेनू बटन:')}</u>\n"
+            f"• <b>{_sc('Marketplace:')}</b> {_sc('पसंदीदा प्लेटफार्म द्वारा सभी कहानियों को ब्राउज़ करें।')}\n"
+            f"• <b>{_sc('My Stories:')}</b> {_sc('अपनी खरीदी हुई कहानियों तक पहुँचें और उन्हें फिर से डाउनलोड करें।')}\n"
+            f"• <b>{_sc('Profile:')}</b> {_sc('अपनी खाता जानकारी और कुल खरीदारी देखें।')}\n"
+            f"• <b>{_sc('Settings:')}</b> {_sc('अपनी पसंदीदा भाषा बदलें।')}\n\n"
+            f"<u>{_sc('कहानी कैसे खरीदें:')}</u>\n"
+            f"<i><b>1.</b></i> {_sc('Marketplace में कहानी चुनें।')}\n"
+            f"<i><b>2.</b></i> {_sc('Razorpay (ऑटोमैटिक) या UPI (मैन्युअल) द्वारा सुरक्षित भुगतान करें।')}\n"
+            f"<i><b>3.</b></i> {_sc('UPI के मामले में सही राशि भेजें और अपनी रसीद/स्क्रीनशॉट अपलोड करें।')}\n"
+            f"<i><b>4.</b></i> {_sc('वेरिफिकेशन पूरा होने के बाद, ')}<b>{_sc('Get Delivery')}</b> {_sc('चुनें (सीधा DM या चैनल लिंक)।')}\n\n"
+            f"<i>{_sc('किसी भी समस्या के लिए नीचे दिए गए Terms या Refund बटन का उपयोग करें।')}</i>"
+            f"</blockquote>"
+        )
+        kb = [
+            [InlineKeyboardButton(f"{_sc('TERMS')}", callback_data="mb#help_tc"),
+             InlineKeyboardButton(f"{_sc('REFUND')}", callback_data="mb#help_refund")],
+            [InlineKeyboardButton(f"❬ PREV (English)", callback_data="mb#help_page_0")],
+            [InlineKeyboardButton(f"« ❮ {_sc('MAIN MENU')}", callback_data="mb#main_back")]
+        ]
+        
+    await _safe_edit(query.message, text=txt, markup=InlineKeyboardMarkup(kb))
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -734,6 +982,18 @@ async def _process_callback(client, query):
     lang = user.get('lang', 'en')
     data = query.data.split('#')
     cmd = data[1]
+
+    # ── About Arya ──
+    if cmd.startswith("about_arya_"):
+        page = int(cmd.replace("about_arya_", ""))
+        await query.answer()
+        return await _show_about_arya(client, query, page)
+
+    # ── Help Menu Pagination ──
+    if cmd.startswith("help_page_"):
+        page = int(cmd.replace("help_page_", ""))
+        await query.answer()
+        return await _show_help_menu(client, query, page)
 
     # ── Main Menu actions (inline buttons) ──
     if cmd.startswith("main_"):
@@ -748,11 +1008,11 @@ async def _process_callback(client, query):
                 kb.append(row)
             if "Other" not in platforms:
                 kb.append(["Other"])
-            kb.append(["↩️ " + "BACK TO MAIN MENU"])
+            kb.append(["« " + "𝗕𝗮𝗰𝗸 𝘁𝗼 𝗠𝗲𝗻𝘂"])
             await query.message.delete()
             await client.send_message(
                 user_id,
-                f"<b>🎧 {_sc('Platform Selection')}</b>\n\n{_sc('Choose a platform from the keyboard below:')}",
+                f"<b>🎧 Platform Selection</b>\n\nChoose a platform from the keyboard below:",
                 reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
             )
 
@@ -764,20 +1024,21 @@ async def _process_callback(client, query):
             purchases = user.get('purchases', [])
             uname = f"@{u.username}" if u.username else "N/A"
             lang_label = "English" if lang == 'en' else "हिंदी"
+            name = f"{u.first_name or ''} {u.last_name or ''}".strip() or "Unknown"
             txt_p = (
-                f"<b>✧⋄⋆⋅⋆⋄✧⋄⋆⋅⋆⋄✧ 👤 {_sc('PROFILE')} ✧⋄⋆⋅⋆⋄✧⋄⋆⋅⋆⋄✧</b>\n\n"
-                f"<blockquote expandable>"
-                f"<b>{_sc('Name')}:</b> {u.first_name or ''} {u.last_name or ''}\n"
-                f"<b>{_sc('Username')}:</b> {uname}\n"
-                f"<b>{_sc('Telegram ID')}:</b> <code>{u.id}</code>\n"
-                f"<b>{_sc('Total Purchases')}:</b> {len(purchases)}\n"
-                f"<b>{_sc('Language')}:</b> {lang_label}\n"
-                f"<b>{_sc('Join Date')}:</b> {joined}"
-                f"</blockquote>"
+                "<b>╔═⟦ 𝗣𝗥𝗢𝗙𝗜𝗟𝗘 ⟧═╗</b>\n\n"
+                f"<b>⧉ ɴᴀᴍᴇ        ⟶</b> {name}\n"
+                f"<b>⧉ ᴜꜱᴇʀɴᴀᴍᴇ    ⟶</b> {uname}\n"
+                f"<b>⧉ ᴛɢ ɪᴅ       ⟶</b> <code>{u.id}</code>\n\n"
+                "<b>╠══════════════════╣</b>\n\n"
+                f"<b>⧉ ᴘᴜʀᴄʜᴀꜱᴇꜱ   ⟶</b> {len(purchases)}\n"
+                f"<b>⧉ ʟᴀɴɢᴜᴀɢᴇ    ⟶</b> {lang_label}\n"
+                f"<b>⧉ ᴊᴏɪɴᴇᴅ      ⟶</b> {joined}\n\n"
+                "<b>╚══════════════════╝</b>"
             )
             kb = [
-                [InlineKeyboardButton(f"🌐 {_sc('LANGUAGE')}", callback_data="mb#main_settings")],
-                [InlineKeyboardButton(f"❮ {_sc('BACK')}", callback_data="mb#main_back")]
+                [InlineKeyboardButton(f"{_sc('LANGUAGE')}", callback_data="mb#main_settings")],
+                [InlineKeyboardButton(f"{_sc('BACK')}", callback_data="mb#main_back")]
             ]
             await _safe_edit(query.message, text=txt_p, markup=InlineKeyboardMarkup(kb))
 
@@ -787,22 +1048,12 @@ async def _process_callback(client, query):
                  InlineKeyboardButton("हिंदी", callback_data="mb#lang#hi")],
                 [InlineKeyboardButton(f"❮ {_sc('BACK')}", callback_data="mb#main_back")]
             ]
-            await _safe_edit(query.message, text=f"<b>⚙️ {_sc('Settings')}</b>\n\n{_sc('Select your language:')}", markup=InlineKeyboardMarkup(kb))
+            await _safe_edit(query.message, text=f"<b>⚙️ Settings</b>\n\nSelect your language:", markup=InlineKeyboardMarkup(kb))
 
         elif action == "help":
-            kb = [
-                [InlineKeyboardButton(f"📜 {_sc('TERMS')}", callback_data="mb#help_tc"),
-                 InlineKeyboardButton(f"🔁 {_sc('REFUND POLICY')}", callback_data="mb#help_refund")],
-                [InlineKeyboardButton(f"❮ {_sc('BACK')}", callback_data="mb#main_back")]
-            ]
-            help_txt = (
-                f"<b>ℹ️ {_sc('HELP & SUPPORT')}</b>\n\n"
-                f"<blockquote expandable>"
-                f"{_sc('For issues with payments, missing episodes, or story delivery, contact the bot administrator.')}\n\n"
-                f"{_sc('Use the buttons below to read our Terms & Conditions or Refund Policy.')}"
-                f"</blockquote>"
-            )
-            await _safe_edit(query.message, text=help_txt, markup=InlineKeyboardMarkup(kb))
+            await query.answer()
+            return await _show_help_menu(client, query, 0)
+
 
         elif action == "close":
             await query.message.delete()
@@ -824,44 +1075,93 @@ async def _process_callback(client, query):
             pass
         return await _show_tc(client, user_id, s_id, lang)
 
-    # ── My Buys (My Stories) ──
-    elif cmd == "my_buys":
+    # -- My Buys (My Stories) --
+    elif cmd == "my_buys" or cmd.startswith("my_buys_page_"):
         await query.answer()
-        purchases = user.get('purchases', [])
+        # 1. Get raw purchases
+        raw_purchases = user.get('purchases', [])
         from bson.objectid import ObjectId
-        kb = []
-        for pid in purchases:
+
+        # 2. Filter VALID stories (handle deleted content)
+        # We fetch valid IDs from the database to ensure the count is accurate
+        p_oids = []
+        for p in raw_purchases:
+            try: p_oids.append(ObjectId(p))
+            except: pass
+        
+        valid_stories_cursor = db.db.premium_stories.find({"_id": {"$in": p_oids}})
+        valid_stories = await valid_stories_cursor.to_list(length=1000)
+        valid_ids_set = {str(s['_id']) for s in valid_stories}
+        
+        # 3. Maintain user purchase order and filter
+        purchases = [p for p in raw_purchases if str(p) in valid_ids_set]
+        purchases.reverse() # NEWEST stories on Page 1
+
+        PAGE_SIZE = 5
+        page = 0
+        if cmd.startswith("my_buys_page_"):
             try:
-                st = await db.db.premium_stories.find_one({"_id": ObjectId(pid)})
+                page = int(cmd.replace("my_buys_page_", ""))
+            except Exception:
+                page = 0
+
+        total = len(purchases)
+        total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+        page = max(0, min(page, total_pages - 1))
+        page_purchases = purchases[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+
+        kb = []
+        for pid in page_purchases:
+            try:
+                # We already know it exists from the filter step
+                st = next((s for s in valid_stories if str(s['_id']) == str(pid)), None)
                 if st:
                     s_name = st.get(f'story_name_{lang}', st.get('story_name_en'))
-                    kb.append([InlineKeyboardButton(f"{s_name}", callback_data=f"mb#purchased_view_{pid}")])
+                    kb.append([InlineKeyboardButton(s_name, callback_data=f"mb#purchased_view_{pid}")])
             except Exception:
                 pass
-        kb.append([InlineKeyboardButton(f"❮ {_sc('BACK')}", callback_data="mb#main_back")])
 
-        txt_b = f"<b>📚 {_sc('MY STORIES')} ({len(purchases)})</b>\n\n"
-        if purchases:
-            txt_b += (
-                "<blockquote>"
-                + _sc(
-                    "ALL STORIES LISTED BELOW ARE ALREADY UNLOCKED ON YOUR ACCOUNT. "
-                    "SELECT ANY STORY TO VIEW DETAILS OR ACCESS IT AGAIN INSTANTLY. "
-                )
-                + "</blockquote>"
+        if total_pages > 1:
+            nav = []
+            if page > 0:
+                nav.append(InlineKeyboardButton(
+                    "❬ ᴘʀᴇᴠ",
+                    callback_data=f"mb#my_buys_page_{page - 1}"
+                ))
+            nav.append(InlineKeyboardButton(
+                f"ᴘᴀɢᴇ {page + 1}/{total_pages}",
+                callback_data="mb#noop"
+            ))
+            if page < total_pages - 1:
+                nav.append(InlineKeyboardButton(
+                    "𝗡𝗲𝘅𝘁 ❭",
+                    callback_data=f"mb#my_buys_page_{page + 1}"
+                ))
+            kb.append(nav)
+
+        kb.append([InlineKeyboardButton(_sc("BACK"), callback_data="mb#main_back")])
+
+        if total > 0:
+            txt_b = (
+                "<b>⟦ 𝗠𝗬 𝗦𝗧𝗢𝗥𝗜𝗘𝗦 ⟧</b>\n\n"
+                f"<b>ᴛᴏᴛᴀʟ ⟶</b> {total}\n\n"
+                "𝖠𝗅𝗅 𝗌𝗍𝗈𝗋𝗂𝖾𝗌 𝗅𝗂𝗌𝗍𝖾𝖽 𝖻𝖾𝗅𝗈𝗐 𝖺𝗋𝖾 𝖺𝗅𝗋𝖾𝖺𝖽𝗒\n"
+                "𝗈𝗇 𝗒𝗈𝗎𝗋 𝖺𝖼𝖼𝗈𝗎𝗇𝗍. 𝖲𝖾𝗅𝖾𝖼𝗍 𝖺𝗇𝗒 𝗌𝗍𝗈𝗋𝗒 𝗍𝗈 𝗏𝗂𝖾𝗐\n"
+                "𝖽𝖾𝗍𝖺𝗂𝗅𝗌 𝗈𝗋 𝖺𝖼𝖼𝖾𝗌𝗌 𝗂𝗍 𝖺𝗀𝖺𝗂𝗇."
             )
         else:
-            txt_b += (
-                "<blockquote>"
-                + _sc(
-                    "YOU HAVE NO PURCHASED STORIES YET. "
-                    "DISCOVER EXCLUSIVE PREMIUM CONTENT IN THE MARKETPLACE."
-                )
-                + "</blockquote>"
+            txt_b = (
+                "<b>⟦ 𝗠𝗬 𝗦𝗧𝗢𝗥𝗜𝗘𝗦 ⟧</b>\n\n"
+                "<b>ᴛᴏᴛᴀʟ ⟶</b> 0\n\n"
+                "ɴᴏ ᴘᴜʀᴄʜᴀꜱᴇꜱ ꜰᴏᴜɴᴅ.\n"
+                "ᴠɪꜱɪᴛ ᴛʜᴇ ᴍᴀʀᴋᴇᴛᴘʟᴀᴄᴇ ᴛᴏ ᴇxᴘʟᴏʀᴇ."
             )
-            kb.insert(0, [InlineKeyboardButton(f"🛒 {_sc('OPEN MARKETPLACE')}", callback_data="mb#main_marketplace")])
-            
+            kb.insert(0, [InlineKeyboardButton(_sc("OPEN MARKETPLACE"), callback_data="mb#main_marketplace")])
+
         await _safe_edit(query.message, text=txt_b, markup=InlineKeyboardMarkup(kb))
+
+    elif cmd == "noop":
+        await query.answer()
 
     # ── Language ──
     elif cmd == "lang":
@@ -882,30 +1182,47 @@ async def _process_callback(client, query):
         s_id = cmd.replace("tc_accept_", "")
         await db.update_user(user_id, {"tc_accepted": True})
         await query.answer("Terms Accepted!")
+        
+        from utils import log_arya_event
+        user_obj = await client.get_users(user_id)
+        asyncio.create_task(log_arya_event(
+            event_type="T&C ACCEPTED",
+            user_id=user_id,
+            user_info={"first_name": user_obj.first_name if user_obj else "Unknown", "last_name": user_obj.last_name if user_obj else "", "username": user_obj.username if user_obj else ""},
+            details=f"User accepted the Terms & Conditions."
+        ))
+
         from bson.objectid import ObjectId
         story = await db.db.premium_stories.find_one({"_id": ObjectId(s_id)})
         if story:
-            return await _show_story_details(client, query, story, lang)
+            _bt = await db.db.premium_bots.find_one({"id": client.me.id})
+            _bt_cfg = (_bt or {}).get("config", {})
+            return await _show_story_details(client, query, story, lang, bot_cfg=_bt_cfg)
 
     elif cmd == "help_tc":
         await query.answer()
+        # Synchronized with updated T&C from purchase flow
         tc_text = (
-            f"<b>\u26a0\ufe0f {_sc('TERMS & CONDITIONS')}</b>\n\n"
-            "<blockquote expandable>"
-            + _sc("Before purchasing, you must agree to the following:") + "\n\n"
-            + _sc("\ud83d\udccc MISSING EPISODES") + "\n"
-            + _sc("3\u20135 episodes may be unavailable as they were not publicly released. If they become available later, they will be added. If more than that is missing, contact support and we will try our best to resolve it.") + "\n\n"
-            + _sc("\ud83d\udccc QUALITY") + "\n"
-            + _sc("Some older recorded episodes may have reduced audio/video quality. We cannot guarantee 100% quality, but we always try to provide the best available version.") + "\n\n"
-            + _sc("\ud83d\udccc ORDER") + "\n"
-            + _sc("Episodes may rarely arrive out of sequence. We are not responsible for ordering issues, but this usually does not happen. All files come with Arya Bot branding and cleaned metadata.") + "\n\n"
-            + _sc("\ud83d\udccc NO REFUNDS") + "\n"
-            + _sc("Strictly no refunds after payment is confirmed and delivery is initiated.") + "\n\n"
-            + _sc("\ud83d\udccc FAKE SCREENSHOTS") + "\n"
-            + _sc("Submitting test, fake, wrong, or random payment screenshots will result in a permanent ban from all our groups and channels.")
-            + "</blockquote>"
+            f"<b>⟦ 𝗧𝗘𝗥𝗠𝗦 & 𝗖𝗢𝗡𝗗𝗜𝗧𝗜𝗢𝗡𝗦 ⟧</b>\n\n"
+            f"<blockquote expandable>"
+            f"𝖡𝖾𝖿𝗈𝗋𝖾 𝗉𝗎𝗋𝖼𝗁𝖺𝗌𝗂𝗇𝗀, 𝗉𝗅𝖾𝖺𝗌𝖾 𝗋𝖾𝖺𝖽 𝖺𝗇𝖽 𝖺𝗀𝗋𝖾𝖾 𝗍𝗈 𝗍𝗁𝖾 𝖿𝗈𝗅𝗅𝗈𝗐𝗂ɴ𝗀:\n\n"
+            f"• <b>𝗠𝗶𝘀𝘀𝗶𝗻𝗴 𝗘𝗽𝗶𝘀𝗼𝗱𝗲𝘀</b>\n"
+            f"𝟹–𝟻 𝖾𝗉𝗂𝗌𝗈𝖽𝖾𝗌 𝗆𝖺𝗒 𝖻𝖾 𝗎𝗇𝖺𝗏𝖺𝗂ʟ𝖺𝖻𝗅𝖾 𝗂𝖿 𝗇𝗈𝗍 𝗉𝗎𝖻𝗅𝗂𝖼𝗅𝗒 𝗋𝖾𝗅𝖾𝖺𝗌𝖾𝖽.\n"
+            f"𝖨𝖿 𝖺𝗏𝖺𝗂ʟ𝖺𝖻𝗅𝖾 𝗅𝖺𝗍𝖾𝗋, 𝗍𝗁𝖾𝗒 𝗐𝗂𝗅𝗅 𝖻𝖾 𝖺𝖽𝖽𝖾𝖽 𝖺𝗎𝗍𝗈𝗆𝖺𝗍𝗂𝖼𝖺𝗅𝗅𝗒.\n"
+            f"𝖬𝗈𝗋𝖾 𝗍𝗁𝖺𝗇 𝟧 𝗆𝗂𝗌𝗌𝗂𝗇𝗀? 𝖢𝗈𝗇𝗍𝖺𝖼𝗍 𝗌𝗎𝗉𝗉𝗈𝗋𝗍.\n\n"
+            f"• <b>𝗤𝘂𝗮𝗹𝗶𝘁𝘆</b>\n"
+            f"𝖲𝗈𝗆𝖾 𝗈𝗅𝖽𝖾𝗋 𝖾𝗉𝗂𝗌𝗈𝖽𝖾𝗌 𝗆𝖺𝗒 𝗁𝖺𝗏𝖾 𝗋𝖾𝖽𝗎𝖼𝖾𝖽 𝗊𝗎𝖺𝗅𝗂𝘁𝗒.\n"
+            f"𝖶𝖾 𝖼𝖺𝗇𝗇𝗈𝗍 𝗀𝗎𝖺𝗋𝖺𝗇𝗍𝖾𝖾 𝟣𝟢𝟢% 𝗊𝗎𝖺𝗅𝗂𝗍𝗒, 𝖻𝗎𝗍 𝖺𝗅𝗐𝖺𝗒𝗌 𝗉𝗋𝗈𝗏𝗂𝖽𝖾 𝖻𝖾𝗌𝗍 𝗏𝖾𝗋𝗌𝗂𝗈𝗻.\n\n"
+            f"• <b>𝗘𝗽𝗶𝘀𝗼𝗱𝗲 𝗢𝗿𝗱𝗲𝗿</b>\n"
+            f"𝖤𝗉𝗂𝗌𝗈ᴅ𝖾𝗌 𝗆𝖺𝗒 𝗋𝖺𝗋𝖾𝗅𝗒 𝖻𝖾 𝗈𝗎𝗍 𝗈𝖿 𝗌𝖾𝗊𝗎𝖾𝗇𝖼𝖾.\n"
+            f"𝖠𝗅𝗅 𝖿𝗂𝗅𝖾𝗌 𝖺𝗋𝖾 𝖼𝗅𝖾𝖺𝗇𝖾𝖽 𝖺𝗇𝖽 𝖻𝗋𝖺𝗇𝖽𝖾𝖽 𝖻𝗒 𝖠𝗋𝗒𝖺 𝖡𝗈𝗍.\n\n"
+            f"• <b>𝗡𝗼 𝗥𝗲𝗳𝘂𝗻𝗱𝘀</b>\n"
+            f"𝖭𝗈 𝗋𝖾𝖿𝗎𝗇𝖽𝗌 𝗈𝗇𝼄𝖾 𝗉𝖺𝗒𝗆𝖾𝗇𝗍 𝗂𝗌 𝖼𝗈𝗇𝖿𝗂𝗋𝗆𝖾𝖽 𝖺𝗇𝖽 𝖽𝖾𝗅𝗂𝗏𝖾𝗋𝗒 𝗌𝗍𝖺𝗋𝗍𝗌.\n\n"
+            f"• <b>𝗙𝗮𝗸𝗲 𝗦𝗰𝗿𝗲𝗲𝗻𝘀𝗵𝗼𝘁𝘀</b>\n"
+            f"𝖥𝖺𝗄𝖾 𝗈𝗋 𝗂𝗇𝗏𝖺𝗅𝗂𝖽 𝗉𝖺𝗒𝗆𝖾𝗇𝗍 𝗉𝗋𝗈𝗈𝖿𝗌 𝗐𝗂𝗅𝗅 𝗅𝖾𝖺𝖽 𝗍𝗈 𝗉𝖾𝗋𝗆𝖺𝗇𝖾𝗇𝗍 𝖻𝖺𝗇."
+            f"</blockquote>"
         )
-        kb = [[InlineKeyboardButton(f"↩️ ❮ {_sc('BACK')}", callback_data="mb#main_help")]]
+        kb = [[InlineKeyboardButton(f"« ❮ {_sc('BACK')}", callback_data="mb#main_help")]]
         await query.message.edit_text(tc_text, reply_markup=InlineKeyboardMarkup(kb))
     elif cmd == "help_refund":
         await query.answer()
@@ -918,12 +1235,22 @@ async def _process_callback(client, query):
             + _sc("Refund requests are reviewed individually and processed after full verification. Misuse of refund requests will result in a ban.")
             + "</blockquote>"
         )
-        kb = [[InlineKeyboardButton(f"↩️ ❮ {_sc('BACK')}", callback_data="mb#main_help")]]
+        kb = [[InlineKeyboardButton(f"« ❮ {_sc('BACK')}", callback_data="mb#main_help")]]
         await query.message.edit_text(refund_text, reply_markup=InlineKeyboardMarkup(kb))
 
     # ── T&C Reject ──
     elif cmd == "tc_reject":
         await query.answer("Cancelled.", show_alert=False)
+        
+        from utils import log_arya_event
+        user_obj = await client.get_users(user_id)
+        asyncio.create_task(log_arya_event(
+            event_type="T&C REJECTED",
+            user_id=user_id,
+            user_info={"first_name": user_obj.first_name if user_obj else "Unknown", "last_name": user_obj.last_name if user_obj else "", "username": user_obj.username if user_obj else ""},
+            details=f"User rejected the Terms & Conditions and aborted the purchase."
+        ))
+
         await query.message.edit_text(
             "<b>❌ Purchase Cancelled</b>\n\n<i>You have rejected the Terms & Conditions. You can start over anytime from the Marketplace.</i>",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(f"❮ {_sc('MAIN MENU')}", callback_data="mb#main_back")]])
@@ -960,22 +1287,35 @@ async def _process_callback(client, query):
             
             s_name = story.get(f'story_name_{lang}', story.get('story_name_en'))
             ep_count = abs(story.get('end_id', 0) - story.get('start_id', 0)) + 1 if story.get('end_id') else "?"
-            
+
+            # Clean payment label — no emojis
+            payment_label = "Verified"
+            if purchase:
+                src = str(purchase.get("source", "manual")).lower()
+                amount_paid = purchase.get("amount", story.get('price', 0))
+                payment_label = {
+                    "razorpay":   f"Razorpay (₹{amount_paid})",
+                    "easebuzz":   f"Easebuzz (₹{amount_paid})",
+                    "upi":        f"Manual UPI (₹{amount_paid})",
+                    "manual_upi": f"Manual UPI (₹{amount_paid})",
+                }.get(src, f"{src.capitalize()} (₹{amount_paid})")
+
             txt_req = (
-                f"<b>📖 {s_name}</b>\n"
-                f"────────────────────\n"
-                f"<b>🏷️ {_sc('Platform')} :</b> {story.get('platform', 'Other')}\n"
-                f"<b>🎬 {_sc('Episodes')} :</b> ~{ep_count}\n"
-                f"<b>✅ {_sc('Status')}   :</b> <b>{_sc('OWNED')}</b>\n"
-                f"<b>💳 {_sc('Receipt')}  :</b> {method_info}\n"
-                f"────────────────────\n"
-                f"<i>{_sc('Click below to get your files delivered immediately.')}</i>"
+                "<b>⟦ 𝗦𝗧𝗢𝗥𝗬 ⟧</b>\n\n"
+                f"<b>{s_name}</b>\n\n"
+                "──────────────\n"
+                f"<b>ᴘʟᴀᴛꜰᴏʀᴍ ⟶</b> {story.get('platform', 'Other')}\n"
+                f"<b>ᴇᴘɪꜱᴏᴅᴇꜱ ⟶</b> {story.get('episodes', 'N/A')}\n"
+                f"<b>ꜰɪʟᴇꜱ    ⟶</b> {ep_count}\n"
+                f"<b>ꜱᴛᴀᴛᴜꜱ   ⟶</b> ᴏᴡɴᴇᴅ\n"
+                f"<b>ᴘᴀʏᴍᴇɴᴛ  ⟶</b> {payment_label}\n"
+                "──────────────\n"
+                "𝖳𝖺𝗉 𝖻𝖾𝗅𝗈𝗐 𝗍𝗈 𝗋𝖾𝖼𝖾𝗂𝗏𝖾 𝗒𝗈𝗎𝗋 𝖿𝗂𝗅𝖾𝗌."
             )
             kb = [
-                [InlineKeyboardButton(f"📥 {_sc('GET DELIVERY')}", callback_data=f"mb#access_{s_id}")],
-                [InlineKeyboardButton(f"❮ {_sc('BACK')}", callback_data="mb#my_buys")]
+                [InlineKeyboardButton(_bs("GET DELIVERY"), callback_data=f"mb#access_{s_id}")],
+                [InlineKeyboardButton(_bs("Back to My Stories"), callback_data="mb#my_buys")]
             ]
-            
             await _safe_edit(query.message, text=txt_req, markup=InlineKeyboardMarkup(kb))
             
     # ── Access purchased story directly ──
@@ -1015,6 +1355,23 @@ async def _process_callback(client, query):
         story = await db.db.premium_stories.find_one({"_id": ObjectId(s_id)})
         if not story: return await query.answer("Story not found!", show_alert=True)
 
+        # Block UPI if time-restricted or admin has disabled it per-bot
+        if method == "upi":
+            bt_cfg = (await db.db.premium_bots.find_one({"id": client.me.id}) or {}).get("config", {})
+            if not bt_cfg.get("upi_enabled", True) or _is_upi_restricted():
+                rzp_kb = [
+                    [InlineKeyboardButton(f"💳 {_sc('PAY VIA RAZORPAY')}", callback_data=f"mb#pay#razorpay#{s_id}")],
+                    [InlineKeyboardButton(f"❮ {_sc('BACK')}", callback_data="mb#return_main")]
+                ]
+                return await query.message.edit_text(
+                    f"<b>🚫 {_sc('UPI UNAVAILABLE')}</b>\n\n"
+                    f"<i>{_sc('Manual UPI payments are not available between 9 PM and 6 AM IST.')}</i>\n"
+                    f"<i>{_sc('Manual verification is not active during this time.')}</i>\n\n"
+                    f"{_sc('Please use')} <b>Razorpay</b> {_sc('for instant automatic payment and immediate delivery.')}\n"
+                    f"{_sc('Supports UPI, Card, Net Banking, Wallets & more.')}",
+                    reply_markup=InlineKeyboardMarkup(rzp_kb)
+                )
+
         if method in ["razorpay", "easebuzz"]:
             await query.message.edit_text(f"🔐 <b>{_sc('PREPARING YOUR SECURE CHECKOUT')}...</b>\n<i>{_sc('Please wait a moment while we connect to the gateway.')}</i>")
             import time
@@ -1051,7 +1408,7 @@ async def _process_callback(client, query):
             kb = [
                 [InlineKeyboardButton(f"💳 {_sc('PAY VIA')} {_sc(method.upper())}", url=url)],
                 [InlineKeyboardButton(f"✅ {_sc('VERIFY PAYMENT')}", callback_data=f"mb#{method}_check#{s_id}")],
-                [InlineKeyboardButton(f"❮ {_sc('BACK')}", callback_data="mb#return_main")]
+                [InlineKeyboardButton(f"« ❮ {_sc('BACK')}", callback_data="mb#return_main")]
             ]
             check_txt = (
                 f"<b>🛍️ {_sc('CHECKOUT')}</b>\n"
@@ -1070,36 +1427,27 @@ async def _process_callback(client, query):
             upi_id = await db.get_config("upi_id") or "heyjeetx@naviaxis"
             bt = await db.db.premium_bots.find_one({"id": client.me.id})
             bt_cfg = bt.get("config", {}) if bt else {}
-            # IMPORTANT:
-            # - Do not fallback to bot display name for pn, it causes payer-app mismatch alerts.
-            # - Leave pn empty unless admin explicitly sets real beneficiary name in config.upi_name.
-            payee_name = (bt_cfg.get("upi_name") or "").strip()
-            # Keep note neutral; user-id heavy notes can trigger anti-fraud checks in some UPI apps.
-            note = "Story purchase"
+            
+            s_price = str(story["price"])
+            s_name = story.get(f'story_name_{lang}', story.get('story_name_en', 'Story'))
+            
+            # Generate Premium UPI Card
+            qr_card = None
+            try:
+                # Pass the configured payee name to match the official bank record
+                p_name = (bt_cfg.get("upi_name") or "Merchant").strip()
+                qr_card = generate_upi_card(upi_id, s_price, s_name, payee_name=p_name)
+            except Exception as e:
+                logger.error(f"UPI Card generation failed: {e}")
+                qr_card = None
+
             upi_uri = _build_upi_uri(
                 upi_id=upi_id,
-                payee_name=payee_name,
+                payee_name=(bt_cfg.get("upi_name") or "").strip(),
                 amount=int(story["price"]),
-                note=note
+                note=f"Payment for {s_name[:20]}"
             )
 
-            logo_file_id = (bt_cfg.get("logo") or "").strip()
-            logo_bytes = None
-            if logo_file_id:
-                try:
-                    bio = await client.download_media(logo_file_id, in_memory=True)
-                    if bio:
-                        logo_bytes = bio.getvalue() if hasattr(bio, "getvalue") else None
-                except Exception:
-                    logo_bytes = None
-
-            qr_png = None
-            try:
-                qr_png = _make_qr_png_bytes(upi_uri, logo_png_bytes=logo_bytes)
-            except Exception:
-                qr_png = None
-
-            # Strict SliceURL-only mode: no /r fallback.
             slice_api_url = (getattr(Config, "SLICEURL_API_URL", "") or "").strip()
             slice_api_key = (getattr(Config, "SLICEURL_API_KEY", "") or "").strip()
             slice_direct = ""
@@ -1107,61 +1455,92 @@ async def _process_callback(client, query):
                 slice_direct = await _sliceurl_api_shorten(upi_uri)
             button_url = slice_direct
 
-            # Save checkout BEFORE sending UI.
             await db.db.premium_checkout.update_one(
                 {"user_id": user_id, "bot_id": client.me.id, "story_id": ObjectId(s_id)},
                 {"$set": {
-                    "status": "waiting_screenshot",
+                    "status": "pending_gateway",
                     "bot_username": client.me.username,
                     "method": "upi",
                     "upi_uri": upi_uri,
-                    "upi_open_https": "",
-                    "sliceurl_direct": bool(slice_direct),
                     "pay_link_copy": button_url,
                     "updated_at": datetime.utcnow(),
                 }, "$setOnInsert": {"created_at": datetime.utcnow()}},
                 upsert=True
             )
 
+            p_name = (bt_cfg.get("upi_name") or "Merchant").strip()
             txt = (
-                T[lang]['qr_msg'].format(price=story['price'])
-                + "\n\n<b>✅ Tap “Open UPI App” below</b> — amount and payee are prefilled.\n"
-                + "<i>Or scan the QR. “Copy payment link” is your short SliceURL link (no UPI ID shown).</i>"
+                f"<b>⟦ 𝗖𝗢𝗠𝗣𝗟𝗘𝗧𝗘 𝗣𝗔𝗬𝗠𝗘𝗡𝗧 ⟧</b>\n\n"
+                f"<b>𝚂𝚝𝚎𝚙 𝟷: Pay ₹{s_price}</b>\n\n"
+                f"• Scan the QR code or pay using the details below:\n\n"
+                f"<b>UPI ID:</b> <code>{upi_id}</code>\n"
+                f"<b>Name:</b> <code>{p_name}</code>\n"
+                f"<b>Amount:</b> <code>₹{s_price}</code>\n\n"
+                f"• Make sure the amount is entered correctly.\n\n"
+                f"<b>𝚂𝚝𝚎𝚙 𝟸: Verify Payment</b>\n\n"
+                f"• After payment, click <b>PAYMENT DONE</b> to upload your screenshot.\n"
+                f"────────────────────"
             )
-            if not button_url:
-                txt += (
-                    "\n\n⚠️ <i>SliceURL short link unavailable.</i>\n"
-                    "<i>Set valid <code>SLICEURL_API_URL</code> + <code>SLICEURL_API_KEY</code> in .env "
-                    "and deploy latest SliceURL <b>api-public</b> with UPI support.</i>"
-                )
 
-            open_btn = InlineKeyboardButton(f"✅ {_sc('OPEN UPI APP')}", url=button_url) if button_url else None
-            kb = []
-            if open_btn:
-                kb.append([open_btn])
-            if button_url:
-                kb.append([InlineKeyboardButton(f"📋 {_sc('COPY PAYMENT LINK')}", callback_data=f"mb#pay_link#{s_id}")])
-            kb.append([InlineKeyboardButton(f"❮ {_sc('BACK')}", callback_data="mb#back")])
+            kb = [
+                [InlineKeyboardButton(f"☑️ {_sc('PAYMENT DONE')}", callback_data=f"mb#upi_done#{s_id}")],
+                [InlineKeyboardButton(f"« ❮ {_sc('BACK')}", callback_data=f"mb#pay_back#{s_id}")]
+            ]
+            
             await query.message.delete()
             try:
-                if qr_png:
-                    await client.send_photo(user_id, photo=io.BytesIO(qr_png), caption=txt, reply_markup=InlineKeyboardMarkup(kb))
+                if qr_card:
+                    await client.send_photo(user_id, photo=qr_card, caption=txt, reply_markup=InlineKeyboardMarkup(kb))
                 else:
                     import urllib.parse
                     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=900x900&margin=1&data={urllib.parse.quote(upi_uri)}"
                     await client.send_photo(user_id, photo=qr_url, caption=txt, reply_markup=InlineKeyboardMarkup(kb))
             except Exception as e:
-                logger.warning(f"UPI payment screen send failed, retrying without Open button: {e}")
-                kb2 = []
-                if button_url:
-                    kb2.append([InlineKeyboardButton(f"📋 {_sc('COPY PAYMENT LINK')}", callback_data=f"mb#pay_link#{s_id}")])
-                kb2.append([InlineKeyboardButton(f"❮ {_sc('BACK')}", callback_data="mb#back")])
-                if qr_png:
-                    await client.send_photo(user_id, photo=io.BytesIO(qr_png), caption=txt + "\n\n⚠️ <i>Open-app button failed; use QR or copy link.</i>", reply_markup=InlineKeyboardMarkup(kb2))
-                else:
-                    import urllib.parse
-                    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=900x900&margin=1&data={urllib.parse.quote(upi_uri)}"
-                    await client.send_photo(user_id, photo=qr_url, caption=txt + "\n\n⚠️ <i>Open-app button failed; use QR or copy link.</i>", reply_markup=InlineKeyboardMarkup(kb2))
+                logger.warning(f"UPI payment screen send failed: {e}")
+                kb2 = [[InlineKeyboardButton(f"☑️ {_sc('PAYMENT DONE')}", callback_data=f"mb#upi_done#{s_id}")]]
+                await client.send_message(user_id, txt, reply_markup=InlineKeyboardMarkup(kb2))
+
+    elif cmd == "pay_back":
+        s_id = data[2]
+        await query.answer()
+        # 1. Cleanup current QR message
+        try: await query.message.delete()
+        except: pass
+
+        # 2. Show temporary loading message
+        wait = await client.send_message(user_id, f"« ❮ ⏳ {_sc('Returning to payment section')}...")
+
+        # 3. Reload Payment Selection Screen
+        from bson.objectid import ObjectId
+        story = await db.db.premium_stories.find_one({"_id": ObjectId(s_id)})
+        if story:
+            _bt = await db.db.premium_bots.find_one({"id": client.me.id})
+            _bt_cfg = (_bt or {}).get("config", {})
+            # We call this with the message object to trigger a NEW message send (reply_text)
+            # since the QR was a photo and cannot be edited into text.
+            await _show_story_details(client, query.message, story, lang, bot_cfg=_bt_cfg)
+            
+        # 4. Auto-delete loading message
+        await asyncio.sleep(0.5)
+        try: await wait.delete()
+        except: pass
+        return
+
+    elif cmd == "upi_done":
+        s_id = data[2]
+        from bson.objectid import ObjectId
+        await db.db.premium_checkout.update_one(
+            {"user_id": user_id, "bot_id": client.me.id, "story_id": ObjectId(s_id)},
+            {"$set": {"status": "waiting_screenshot", "updated_at": datetime.utcnow()}}
+        )
+        await query.answer()
+        await client.send_message(
+            user_id,
+            f"<b>☑️ {_sc('PAYMENT SUBMITTED')}</b>\n\n"
+            f"<i>{_sc('Our system needs to verify your payment.')}</i>\n"
+            f"<i>{_sc('Please upload the successful payment screenshot here now.')}</i>\n"
+            f"<i>{_sc('Ensure the Transaction ID / UTR is clearly visible.')}</i>"
+        )
 
     elif cmd.endswith("_check") and cmd.split("_")[0] in ("razorpay", "easebuzz"):
         s_id = data[2] if len(data) > 2 else None
@@ -1197,6 +1576,9 @@ async def _process_callback(client, query):
             story = await db.db.premium_stories.find_one({"_id": ObjectId(s_id)})
             
             if not await db.has_purchase(user_id, str(s_id)):
+                import random, string
+                order_id = f"OD-{user_id}-{''.join(random.choices(string.ascii_uppercase + string.digits, k=6))}"
+                
                 # Record in global audit collection
                 await db.db.premium_purchases.insert_one({
                     "user_id": user_id,
@@ -1205,10 +1587,36 @@ async def _process_callback(client, query):
                     "purchased_at": datetime.utcnow(),
                     "source": method,
                     "amount": checkout.get("amount", 0),
-                    "reference": checkout.get("payment_id")
+                    "reference": checkout.get("payment_id"),
+                    "order_id": order_id
                 })
                 # Add to user's personal unlocked list (crucial for Unlocked Stories menu)
                 await db.add_purchase(user_id, str(s_id))
+                
+                # Log success
+                from utils import log_payment, log_arya_event
+                user_info = await db.get_user(user_id)
+                s_name = story.get("story_name_en") if story else "Unknown"
+                
+                asyncio.create_task(log_arya_event(
+                    event_type="PAYMENT PROCESSED",
+                    user_id=user_id,
+                    user_info=user_info,
+                    details=f"Story: {s_name}\nGateway: {method.upper()}\nOrder ID: <code>{order_id}</code>\nAmount: ₹{checkout.get('amount', 0)}"
+                ))
+                
+                asyncio.create_task(log_payment(
+                    user_id=user_id,
+                    user_first_name=user_info.get("first_name", "User"),
+                    username=user.get('username', ''),
+                    s_name=s_name,
+                    amount=checkout.get("amount", 0),
+                    method=method,
+                    receipt_id=checkout.get("payment_id", ""),
+                    pay_link=checkout.get("pay_link_copy", ""),
+                    order_id=order_id,
+                    user_last_name=user_info.get("last_name", "")
+                ))
             
             # Re-fetch story to ensure we have channel/pool data for delivery options
             story = await db.db.premium_stories.find_one({"_id": ObjectId(s_id)})
@@ -1220,13 +1628,13 @@ async def _process_callback(client, query):
             kb = [
                 [InlineKeyboardButton(f"💳 {_sc('PAY VIA')} {_sc(method.upper())}", url=checkout.get("pay_link_copy", "https://t.me"))] if "pay_link_copy" in checkout else [],
                 [InlineKeyboardButton(f"✅ {_sc('VERIFY PAYMENT')}", callback_data=f"mb#{method}_check#{s_id}")],
-                [InlineKeyboardButton(f"↩️ ❮ {_sc('BACK')}", callback_data="mb#return_main")]
+                [InlineKeyboardButton(f"« ❮ {_sc('BACK')}", callback_data="mb#return_main")]
             ]
             # Since url is not strictly saved, we might have lost it.
             # actually we didn't save the short url in db in the first replacement chunk. Let's fix that below if needed, but for now just show a simple back button.
             await m.edit_text(
                 f"<b>❌ Payment Not Found</b>\nStatus: <code>{status}</code>\nIf you have paid, please wait a minute and verify again.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Verify Again", callback_data=f"mb#{method}_check#{s_id}")], [InlineKeyboardButton("↩️ Back", callback_data=f"mb#show_tc#{s_id}")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Verify Again", callback_data=f"mb#{method}_check#{s_id}")], [InlineKeyboardButton("« Back", callback_data=f"mb#show_tc#{s_id}")]])
             )
 
     elif cmd in ("pay_link", "upi_uri"):
@@ -1257,11 +1665,25 @@ async def _process_callback(client, query):
         story = await db.db.premium_stories.find_one({"_id": ObjectId(s_id)})
         if not story: return await query.answer("Story not found!", show_alert=True)
         await query.answer()
+        
+        # Immediate visual feedback
         await query.message.edit_text(
-            "<i>⏳ Starting DM Delivery... Please wait while we fetch all your files.</i>",
+            "<i>⏳ Initializing DM Delivery... Preparing your files.</i>",
             reply_markup=None
         )
         asyncio.create_task(_do_dm_delivery(client, user_id, story, query.message))
+
+    elif cmd == "cancel_dm":
+        dm_aborts.add(user_id)
+        await query.answer("⏹️ Stopping delivery...", show_alert=True)
+        try:
+            await query.message.edit_caption(
+                "<b>⏹️ Delivery Stopped!</b>\n\n<i>Processing remaining requests and cleaning up...</i>",
+                reply_markup=None
+            )
+        except:
+            try: await query.message.edit_text("<b>⏹️ Delivery Stopped!</b>\n\n<i>Processing remaining requests...</i>", reply_markup=None)
+            except: pass
 
     elif cmd == "deliver_channel":
         s_id = data[2]
@@ -1308,8 +1730,8 @@ async def _process_screenshot(client, message):
     if p.height < p.width:
         return await message.reply_text("❌ <b>Invalid Screenshot!</b>\n\nPlease send a portrait-mode screenshot (not landscape).", quote=True)
 
-    kb_user = [[InlineKeyboardButton(T[lang]['notify'], callback_data="mb#notify_admin")]]
-    txt_user = f"<code>[==========]</code>\n\n{T[lang]['wait_ver']}\n⏳ <b>Live Status:</b> Starting verification..."
+    kb_user = [[InlineKeyboardButton(f"🔔 {_sc('NOTIFY ADMIN')}", callback_data="mb#notify_admin")]]
+    txt_user = f"⏳ <b>{_sc('Your payment is being verified')}</b>\n<i>{_sc('Please wait (approx 5 minutes)...')}</i>\n\n⏳ <b>{_sc('Time Remaining')} :</b> 05:00"
     msg = await message.reply_text(txt_user, reply_markup=InlineKeyboardMarkup(kb_user))
 
     import os
@@ -1326,21 +1748,48 @@ async def _process_screenshot(client, message):
             "updated_at": datetime.utcnow(),
         }}
     )
+    if db.mgmt_client:
+        try:
+            from config import Config
+            admins = Config.SUDO_USERS or Config.OWNER_IDS
+            from bson.objectid import ObjectId
+            story = await db.db.premium_stories.find_one({"_id": ObjectId(str(checkout['story_id']))})
+            s_name = story.get("story_name_en") if story else "Unknown"
+            price = story.get("price", "0") if story else "0"
+            
+            kb_admin = [
+                [InlineKeyboardButton("✅ Approve", callback_data=f"mk#approve#{checkout['_id']}"),
+                 InlineKeyboardButton("❌ Reject", callback_data=f"mk#reject#{checkout['_id']}")]
+            ]
+            caption = (
+                f"<b>🚨 NEW PAYMENT REQUEST</b>\n"
+                f"────────────────────\n"
+                f"<b>User:</b> {message.from_user.first_name} (<code>{user_id}</code>)\n"
+                f"<b>Story:</b> {s_name}\n"
+                f"<b>Amount:</b> ₹{price}\n"
+                f"<b>Method:</b> Manual UPI\n"
+                f"<b>Date:</b> {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+                f"────────────────────\n"
+                f"<i>Please verify the exact amount in the screenshot.</i>"
+            )
+            for admin_id in admins:
+                try: await db.mgmt_client.send_photo(admin_id, photo=file_path, caption=caption, reply_markup=InlineKeyboardMarkup(kb_admin))
+                except Exception: pass
+        except Exception as e:
+            logger.error(f"Mgmt DM send error: {e}")
 
     async def _live_timer(target_msg, remaining):
         try:
-            for i in range(remaining, 0, -30):
+            for i in range(remaining, 0, -10):
                 m = i // 60
                 s = i % 60
-                filled = 10 - int((i / remaining) * 10)
-                bar = "=" * filled + "-" * (10 - filled)
                 await target_msg.edit_text(
-                    f"<code>[{bar}]</code>\n\n{T[lang]['wait_ver']}\n⏳ <b>Time Remaining:</b> {m}m {s}s",
+                    f"⏳ <b>{_sc('Your payment is being verified')}</b>\n<i>{_sc('Please wait (approx 5 minutes)...')}</i>\n\n⏳ <b>{_sc('Time Remaining')} :</b> {m:02d}:{s:02d}",
                     reply_markup=InlineKeyboardMarkup(kb_user)
                 )
-                await asyncio.sleep(30)
+                await asyncio.sleep(10)
             await target_msg.edit_text(
-                f"<code>[==========]</code>\n\n{T[lang]['wait_ver']}\n⏳ <b>Verification delayed. Click Notify Admin.</b>",
+                f"⏳ <b>{_sc('Verification Timeout')}</b>\n\n<i>{_sc('If your payment is valid, it will be approved soon. For urgent queries, please contact Support.')}</i>",
                 reply_markup=InlineKeyboardMarkup(kb_user)
             )
         except Exception:
@@ -1370,7 +1819,7 @@ async def dispatch_delivery_choice(client, user_id, story):
     # Find purchase source to display as requested
     from bson.objectid import ObjectId
     purchase = await db.db.premium_purchases.find_one({"user_id": int(user_id), "story_id": ObjectId(story_id_str)})
-    method_info = ""
+    method_info = "Verified Purchase"
     if purchase:
         src = str(purchase.get("source", "manual")).lower()
         if src == "razorpay": method_info = "💳 Razorpay"
@@ -1378,27 +1827,25 @@ async def dispatch_delivery_choice(client, user_id, story):
         elif src == "upi": method_info = "🏦 Manual UPI"
         else: method_info = f"🛒 {src.capitalize()}"
 
+    s_name = story.get(f'story_name_{lang}', story.get('story_name_en'))
+
     del_txt = (
-        f"<b>✅ {_sc('ACCESS GRANTED')}!</b>\n"
-        + (f"<b>{_sc('Method')} :</b> {method_info}\n" if method_info else "")
+        "<b>✅ Access Granted!</b>\n\n"
+        f"<b>Product:</b> {s_name}\n"
+        + (f"<b>Method:</b> {method_info}\n" if method_info else "")
         + "\n"
-        + "<blockquote expandable><b>ℹ️ " + _sc("DELIVERY INFO") + "</b>\n\n"
-        + "• <b>" + _sc("DM DELIVERY") + ":</b> " + _sc("FILES ARE SENT DIRECTLY HERE. SAVE OR FORWARD THEM IMMEDIATELY—THEY AUTO-DELETE AFTER SOME TIME.") + "\n"
-        + "• <b>" + _sc("CHANNEL LINK") + ":</b> " + _sc("A 1-TIME PRIVATE INVITE LINK IS GENERATED. EACH STORY ALLOWS ONLY ONE CHANNEL LINK PER ACCOUNT.") + "\n"
-        + "• <b>" + _sc("LIFETIME ACCESS") + ":</b> " + _sc("YOU CAN RE-ACCESS ANY PURCHASED STORY ANYTIME FROM PROFILE → MY BUYS.")
-        + "</blockquote>\n\n"
-        + _sc("How would you like to receive your files?")
-    ) if lang == 'en' else (
-        f"<b>✅ {_sc('ACCESS GRANTED')}!</b>\n"
-        + (f"<b>{_sc('Method')} :</b> {method_info}\n" if method_info else "")
-        + "\n"
-        + "आप अपनी फ़ाइलें कैसे प्राप्त करना चाहेंगे?"
+        + "<b>ℹ️ Delivery Info</b>\n\n"
+        + "• <b>DM Delivery:</b> Files are sent directly here. Save or forward them immediately—they auto-delete after some time.\n\n"
+        + "• <b>Channel Link:</b> A one-time private invite link is generated. Each story allows only one channel link per account.\n\n"
+        + "• <b>Lifetime Access:</b> You can re-access any purchased story anytime from <b>Main Menu ⟶ My Stories</b>.\n"
+        + "──────────────\n\n"
+        + "How would you like to receive your files?"
     )
 
     kb = [[InlineKeyboardButton(f"📥 {_sc('RECEIVE IN DM')}", callback_data=f"mb#deliver_dm#{story_id_str}")]]
     if can_use_channel:
         kb.append([InlineKeyboardButton(f"🔗 {_sc('ACCESS CHANNEL LINK')}", callback_data=f"mb#deliver_channel#{story_id_str}")])
-    kb.append([InlineKeyboardButton(f"❮ {_sc('BACK')}", callback_data="mb#main_back")])
+    kb.append([InlineKeyboardButton(f"« ❮ {_sc('BACK')}", callback_data="mb#main_back")])
 
     await client.send_message(user_id, del_txt, reply_markup=InlineKeyboardMarkup(kb))
 
@@ -1408,87 +1855,188 @@ async def dispatch_delivery_choice(client, user_id, story):
 # ─────────────────────────────────────────────────────────────────
 async def _do_dm_delivery(client, user_id, story, status_msg=None):
     try:
+        dm_aborts.discard(user_id)
         bt = await db.db.premium_bots.find_one({"id": client.me.id})
         bt_cfg = bt.get("config", {}) if bt else {}
         user_obj = await client.get_users(user_id)
         src = story.get('source')
         start = story.get('start_id')
         end = story.get('end_id')
-        lang_user = (await db.get_user(user_id)).get('lang', 'en')
-
+        story_id_str = str(story['_id'])
+        
         if not src or not start or not end:
             await client.send_message(user_id, "❌ Story file range is not configured correctly. Please contact admin.")
             return
 
-        # Send warning first
-        await client.send_message(
-            user_id,
-            "<i>⚠️ <b>Important:</b> Files below will be auto-deleted after some time to avoid copyright flags.\n"
-            "Save or forward them immediately! You can re-access this story anytime from Profile → My Buys.</i>"
-        )
-
-        sent_count = 0
-        failed_count = 0
-        sent_ids = []
-        cap_tpl = bt_cfg.get("caption", "")
-        for msg_id in range(int(start), int(end) + 1):
+        # Fetching Message with Media & Cancel Button
+        fetch_config = bt_cfg.get("fetching_media")
+        fetch_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⛔ CANCEL DELIVERY", callback_data=f"mb#cancel_dm#{story_id_str}")]])
+        fetch_text = f"<b>⏳ Starting DM Delivery...</b>\n\n<i>Please wait while we fetch and deliver your files. This may take a few moments.</i>"
+        
+        fetch_msg = None
+        if fetch_config:
             try:
-                kwargs = dict(
-                    chat_id=user_id,
-                    from_chat_id=int(src),
-                    message_id=msg_id,
-                    protect_content=False,
-                )
-                if cap_tpl:
-                    kwargs["caption"] = _fmt_delivery_text(cap_tpl, user_obj, story)
-                sent = await client.copy_message(**kwargs)
-                sent_ids.append(sent.id)
-                sent_count += 1
-            except Exception as e:
-                logger.warning(f"DM Delivery failed msg {msg_id}: {e}")
-                failed_count += 1
-            await asyncio.sleep(0.08)  # Rate limit buffer
+                # Optimized multi-media handling (Photo/GIF/Video)
+                f_id = fetch_config.get("file_id") if isinstance(fetch_config, dict) else fetch_config
+                f_type = fetch_config.get("type", "photo") if isinstance(fetch_config, dict) else "photo"
 
-        s_name = story.get('story_name_en', 'Story')
-        suc_tpl = (bt_cfg.get("success_msg") or "").strip()
-        if suc_tpl:
-            summary = _fmt_delivery_text(
-                suc_tpl,
-                user_obj,
-                story,
-                sent_count=sent_count,
-                fail_count=failed_count,
-            )
-        else:
-            summary = (
-                f"🎉 <b>Delivery Complete!</b>\n\n"
-                f"📖 <b>{s_name}</b>\n"
-                f"✅ {sent_count} files sent"
-                + (f"\n⚠️ {failed_count} files failed (may not exist in source)" if failed_count else "")
-                + "\n\n<i>Access this story again anytime from your Profile → My Buys.</i>"
-            )
-        notice = await client.send_message(user_id, summary)
+                if f_type == "photo":
+                    fetch_msg = await client.send_photo(user_id, photo=f_id, caption=fetch_text, reply_markup=fetch_kb)
+                elif f_type == "animation":
+                    fetch_msg = await client.send_animation(user_id, animation=f_id, caption=fetch_text, reply_markup=fetch_kb)
+                elif f_type == "video":
+                    fetch_msg = await client.send_video(user_id, video=f_id, caption=fetch_text, reply_markup=fetch_kb)
+                
+                if fetch_msg and status_msg: await status_msg.delete()
+            except Exception: pass
+        
+        # Fallback to Story image or random menu image if custom fetching media fails/not set
+        if not fetch_msg:
+            alt_media = story.get("image") or bt_cfg.get("menuimg")
+            if alt_media:
+                try:
+                    fetch_msg = await client.send_photo(user_id, photo=alt_media, caption=fetch_text, reply_markup=fetch_kb)
+                    if status_msg: await status_msg.delete()
+                except Exception: pass
+
+        if not fetch_msg:
+            if status_msg:
+                try: fetch_msg = await status_msg.edit_text(fetch_text, reply_markup=fetch_kb)
+                except: fetch_msg = await client.send_message(user_id, fetch_text, reply_markup=fetch_kb)
+            else:
+                fetch_msg = await client.send_message(user_id, fetch_text, reply_markup=fetch_kb)
 
         try:
             autodel = int(str(bt_cfg.get("autodel", "0")).strip() or "0")
         except Exception:
             autodel = 0
-        if autodel > 0 and sent_ids:
-            del_tpl = (bt_cfg.get("delete_msg") or "").strip()
-            if del_tpl:
+
+        sent_count = 0
+        failed_count = 0
+        sent_ids = []
+        cap_tpl = bt_cfg.get("caption", "")
+        
+        aborted = False
+        msg_range = range(int(start), int(end) + 1)
+        total_eps = len(msg_range)
+        
+        for idx, msg_id in enumerate(msg_range, start=1):
+            if user_id in dm_aborts:
+                aborted = True
+                break
+            
+            # Progress update
+            if idx % 10 == 0 or idx == 1:
                 try:
-                    await client.send_message(
-                        user_id,
-                        _fmt_delivery_text(
-                            del_tpl,
-                            user_obj,
-                            story,
-                            sent_count=sent_count,
-                            fail_count=failed_count,
-                        ).replace("{time}", str(autodel)),
-                    )
-                except Exception:
-                    pass
+                    p_text = f"<b>⏳ Delivering Files... ({idx}/{total_eps})</b>\n\n<i>Processing your request, please stay tuned.</i>"
+                    if fetch_msg.caption:
+                        await fetch_msg.edit_caption(p_text, reply_markup=fetch_kb)
+                    else:
+                        await fetch_msg.edit_text(p_text, reply_markup=fetch_kb)
+                except Exception: pass
+
+            try:
+                kwargs = dict(
+                    chat_id=user_id,
+                    from_chat_id=int(src),
+                    message_id=msg_id,
+                    protect_content=bt_cfg.get("protect", False),
+                )
+                if cap_tpl:
+                    my_kwargs = dict(kwargs)
+                    if "{original_caption}" in cap_tpl or "{file_name}" in cap_tpl:
+                        try:
+                            orig_msg = await client.get_messages(int(src), msg_id)
+                            orig_cap = (orig_msg.caption or orig_msg.text or "") if orig_msg else ""
+                            doc = getattr(orig_msg, "document", None) or getattr(orig_msg, "video", None) or getattr(orig_msg, "audio", None)
+                            fname = getattr(doc, "file_name", "") or ""
+                            my_kwargs["caption"] = _fmt_delivery_text(cap_tpl, user_obj, story).replace("{original_caption}", orig_cap).replace("{file_name}", fname)
+                        except Exception:
+                            my_kwargs["caption"] = _fmt_delivery_text(cap_tpl, user_obj, story).replace("{original_caption}", "").replace("{file_name}", "")
+                    else:
+                        my_kwargs["caption"] = _fmt_delivery_text(cap_tpl, user_obj, story)
+                    sent = await client.copy_message(**my_kwargs)
+                else:
+                    sent = await client.copy_message(**kwargs)
+
+                sent_ids.append(sent.id)
+                sent_count += 1
+            except Exception as e:
+                logger.warning(f"DM Delivery failed msg {msg_id}: {e}")
+                failed_count += 1
+            await asyncio.sleep(0.08)
+
+        # Finalize and Cleanup
+        try: await fetch_msg.delete()
+        except: pass
+        dm_aborts.discard(user_id)
+
+        s_name = story.get('story_name_en', 'Story')
+        rep_tpl = (bt_cfg.get("delivery_report") or "").strip()
+        
+        if autodel <= 0:
+            time_str = "Disabled"
+        elif autodel < 60:
+            time_str = f"{autodel} seconds"
+        elif autodel % 3600 == 0:
+            time_str = f"{autodel // 3600} hours"
+        elif autodel % 60 == 0:
+            time_str = f"{autodel // 60} minutes"
+        else:
+            time_str = f"{autodel} seconds"
+
+        status_text = "Important" if not aborted else "Stopped"
+        autodel_text = f"{_sc('Due to copyright, all messages will auto-delete after')} <b>{time_str}</b>." if autodel > 0 else _sc("All sent files are now available below.")
+        reaccess_text = f"{_sc('To re-access, go to')} <b>{_sc('Main Menu')} ⟶ {_sc('My Stories')}</b>."
+        
+        if rep_tpl:
+            summary = _fmt_delivery_text(
+                rep_tpl,
+                user_obj,
+                story,
+                sent_count=sent_count,
+                fail_count=failed_count,
+            ).replace("{time}", time_str).replace("DELIVERY COMPLETE", _sc(status_text))
+        else:
+            summary = (
+                f"‣ <b>{_sc(status_text)}:</b> {sent_count} {_sc('file(s) delivered!')} "
+                f"{autodel_text} "
+                f"{reaccess_text}"
+            )
+
+        notice = await client.send_message(user_id, summary)
+
+        from utils import log_delivery, log_arya_event
+        
+        from bson.objectid import ObjectId
+        purchase = await db.db.premium_purchases.find_one({"user_id": int(user_id), "story_id": ObjectId(story_id_str)})
+        order_id = purchase.get("order_id", "") if purchase else ""
+        logged_deliveries = purchase.get("logged_deliveries", []) if purchase else []
+        username = user_obj.username if user_obj else ""
+        last_name = user_obj.last_name if user_obj else ""
+        
+        asyncio.create_task(log_arya_event(
+            event_type="DELIVERY INITIATED",
+            user_id=user_id,
+            user_info={"first_name": user_obj.first_name if user_obj else "User", "last_name": last_name, "username": username},
+            details=f"Story: {s_name}\nMethod: DM\nOrder ID: <code>{order_id}</code>\nStatus: Sent {sent_count}, Failed {failed_count}\nAuto-delete: {time_str}"
+        ))
+
+        if purchase and "dm" not in logged_deliveries:
+            await db.db.premium_purchases.update_one({"_id": purchase["_id"]}, {"$addToSet": {"logged_deliveries": "dm"}})
+            asyncio.create_task(log_delivery(
+                bot_username=client.me.username,
+                user_id=user_id,
+                user_first_name=user_obj.first_name if user_obj else "Unknown",
+                s_name=s_name,
+                d_type="dm",
+                status=f"Sent {sent_count}, Failed {failed_count}",
+                username=username,
+                order_id=order_id,
+                user_last_name=last_name
+            ))
+
+        if autodel > 0 and sent_ids:
             asyncio.create_task(_delete_later(client, user_id, sent_ids + [notice.id], autodel))
 
     except Exception as e:
@@ -1525,8 +2073,7 @@ async def _do_channel_delivery(client, user_id, story, status_msg=None):
             candidates = [int(c["channel_id"]) for c in globals_]
 
         if not candidates:
-            await client.send_message(user_id, "❌ No delivery channels are configured. Falling back to DM delivery...")
-            return await _do_dm_delivery(client, user_id, story)
+            return await client.send_message(user_id, "❌ No delivery channels are configured for this story. Please use DM Delivery instead.")
 
         # Round-robin start index (stored in premium_settings)
         try:
@@ -1564,12 +2111,44 @@ async def _do_channel_delivery(client, user_id, story, status_msg=None):
                 continue
 
         if not channel_id:
-            await client.send_message(user_id, f"❌ Failed to generate invite link from delivery pool. Falling back to DM.\n<i>{last_err}</i>")
-            return await _do_dm_delivery(client, user_id, story)
+            return await client.send_message(user_id, f"❌ Failed to generate invite link from delivery pool. Please use DM Delivery instead.\n<i>{last_err}</i>")
 
         # We already created invite_link in loop above when selecting channel_id
         # Create again to get the link object (safe if already created)
         invite_link = await client.create_chat_invite_link(int(channel_id), member_limit=1, name=f"user_{user_id}")
+        
+        from utils import log_delivery, log_arya_event
+        user_obj = await client.get_users(user_id)
+        
+        from bson.objectid import ObjectId
+        purchase = await db.db.premium_purchases.find_one({"user_id": int(user_id), "story_id": ObjectId(story_id_str)})
+        order_id = purchase.get("order_id", "") if purchase else ""
+        logged_deliveries = purchase.get("logged_deliveries", []) if purchase else []
+        username = user_obj.username if user_obj else ""
+        last_name = user_obj.last_name if user_obj else ""
+        s_name_h = story.get('story_name_en', 'Unknown Story')
+        
+        asyncio.create_task(log_arya_event(
+            event_type="DELIVERY INITIATED",
+            user_id=user_id,
+            user_info={"first_name": user_obj.first_name if user_obj else "User", "last_name": last_name, "username": username},
+            details=f"Story: {s_name_h}\nMethod: CHANNEL\nOrder ID: <code>{order_id}</code>\nGenerated Link Channel: {channel_id}"
+        ))
+
+        if purchase and "channel" not in logged_deliveries:
+            await db.db.premium_purchases.update_one({"_id": purchase["_id"]}, {"$addToSet": {"logged_deliveries": "channel"}})
+            asyncio.create_task(log_delivery(
+                bot_username=client.me.username,
+                user_id=user_id,
+                user_first_name=user_obj.first_name if user_obj else "Unknown",
+                s_name=s_name_h,
+                d_type="channel",
+                status=f"Link created (Channel ID: {channel_id})",
+                username=username,
+                order_id=order_id,
+                user_last_name=last_name
+            ))
+
         # Mark this user as having used their channel link
         await db.db.users.update_one(
             {"id": int(user_id)},
@@ -1581,15 +2160,20 @@ async def _do_channel_delivery(client, user_id, story, status_msg=None):
         if suc_tpl:
             user_obj = await client.get_users(user_id)
             txt = _fmt_delivery_text(suc_tpl, user_obj, story).replace("{channel_link}", invite_link.invite_link)
+            msg = await client.send_message(user_id, txt, disable_web_page_preview=True)
+            _schedule_auto_delete(msg, 86400)
         else:
             txt = (
-                f"🎉 <b>Your 1-Time Access Link is Ready!</b>\n\n"
-                f"📖 <b>{s_name}</b>\n\n"
-                f"🔗 {invite_link.invite_link}\n\n"
-                f"<i>⚠️ This link works for exactly <b>1 person only</b>. Once used, it expires.\n"
-                f"Future access to this story will be via DM Delivery only.</i>"
+                f"<b>Your 1-Time Access Link is Ready!</b>\n\n"
+                f"{s_name}\n\n"
+                f"{invite_link.invite_link}\n\n"
+                f"<i>This link works for exactly 1 person only. Once used, it expires.\n"
+                f"Future access to this story will be via DM delivery only.</i>\n\n"
+                f"<i>⚠️ This message will auto-delete in 24 hours. "
+                f"Once you join, the link will be revoked automatically to ensure privacy.</i>"
             )
-        await client.send_message(user_id, txt, disable_web_page_preview=True)
+            msg = await client.send_message(user_id, txt, disable_web_page_preview=True)
+            _schedule_auto_delete(msg, 86400)
 
     except Exception as e:
         logger.error(f"Channel Link Error: {e}")
@@ -1598,3 +2182,24 @@ async def _do_channel_delivery(client, user_id, story, status_msg=None):
             f"❌ Failed to generate channel link. Falling back to DM Delivery...\n<i>Error: {e}</i>"
         )
         await _do_dm_delivery(client, user_id, story)
+
+def _schedule_auto_delete(msg, seconds: int):
+    async def task():
+        await asyncio.sleep(seconds)
+        try:
+            await msg.delete()
+        except:
+            pass
+    asyncio.create_task(task())
+
+# ─────────────────────────────────────────────────────────────────
+# Join Revoker Helper
+# ─────────────────────────────────────────────────────────────────
+async def _process_chat_member(client, update):
+    # If a user joins the channel with an invite link
+    if getattr(update, "new_chat_member", None) and getattr(update, "invite_link", None):
+        try:
+            # Revoke it instantly to prevent reuse/leakage
+            await client.revoke_chat_invite_link(update.chat.id, update.invite_link.invite_link)
+        except Exception:
+            pass

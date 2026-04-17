@@ -334,16 +334,24 @@ def extract_ep_label_robust(fname: str) -> dict:
     base = re.sub(r'\.\w{2,5}$', '', fname)
     base = re.sub(r'(?i)\b(?:copy|duplicate|v\d+)\b', '', base)
     base = re.sub(r'(?i)\(\s*(?:copy|duplicate|\d+)\s*\)\s*$', '', base)
-    base = re.sub(r'(?<!\d)_\d+\s*$', '', base)
-    
     b_norm = base.strip()
     
     # 2. Normalize common delimiters
     # Matches Hyphen, En Dash, Em Dash, Horizontal Bar, Minus Sign, and multiple Tildes
     dash_variants = r'[\-\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uFE63\uFF0D~～]+'
     b_norm = re.sub(dash_variants, '-', b_norm)
-    # Also normalize common range 'to' keyword (Hinglish/Common)
-    b_norm = re.sub(r'(?i)\s+(?:to|से)\s+', '-', b_norm)
+    
+    # Normalize common range 'to' keywords and underscore-separated numbers
+    # "158 to 190" -> "158-190", "158_to_190" -> "158-190", "158_190" -> "158-190"
+    b_norm = re.sub(r'(?i)[\s_]+(?:to|से)[\s_]+', '-', b_norm)
+    b_norm = re.sub(r'(\d+)_+(\d+)', r'\1-\2', b_norm)
+    
+    # 2.5 Strip trailing numbers ONLY if they aren't part of a range
+    # e.g. "Title_100-200" should stay, "Title_128kbps" can go (if not range)
+    if not re.search(r'\d+-\d+\s*$', b_norm):
+        # Only strip trailing _digits if there's no range detected yet
+        b_norm = re.sub(r'(?<!\d)_\d+\s*$', '', b_norm)
+
     # Strip spaces around dashes
     b_norm = re.sub(r'\s*-\s*', '-', b_norm)
     
@@ -353,16 +361,28 @@ def extract_ep_label_robust(fname: str) -> dict:
         if not nums:
             return {"label": "", "numbers": [], "is_range": False}
         if len(nums) > 1:
-            # User wants "EpisodeNumber-EpisodeNumber" format for grouped files
-            n_min, n_max = min(nums), max(nums)
-            return {"label": f"{n_min}-{n_max}", "numbers": sorted(set(nums)), "is_range": True}
+            # Sort and unique
+            nums = sorted(list(set(nums)))
+            # If it's a range, return as "min-max"
+            return {"label": f"{nums[0]}-{nums[-1]}", "numbers": nums, "is_range": True}
         else:
             return {"label": str(nums[0]), "numbers": [nums[0]], "is_range": False}
     
-    # Priority 1: Keywords like Ep, Episode, etc.
-    # Note: we use a limited set of delimiters here to avoid catching things like "Ep_10_100_Title"
-    # as "10_100" range.
-    kw_delims = r'(?:\s*[\-\,\|\/]\s*)' # more restrictive for keyword match
+    # Priority 1: Greedy Range Check (for grouped files like 100-200, 100 to 200, 100_200)
+    # This must come first to avoid picking just "100" as the episode.
+    range_sep = r'(?:[\s\-_,\.]+|to|से)+'
+    # Look for a sequence of numbers separated by range-like characters
+    # e.g. "158 to 190", "480_482", "540-558"
+    greedy_range = re.search(r'(?<!\d)(' + num + r'(?:' + range_sep + num + r')+)(?!\d)', b_norm, re.IGNORECASE)
+    if greedy_range:
+        label_raw = greedy_range.group(1)
+        # Extract all numbers and verify it's a multi-number sequence
+        nums = [int(n) for n in re.findall(r'\d+', label_raw) if int(n) < 10000]
+        if len(nums) > 1:
+            return _format_res(label_raw, nums)
+
+    # Priority 2: Keywords like Ep, Episode, etc.
+    kw_delims = r'(?:\s*[\-\,\|\/]\s*)' 
     kw_num_seq = f'(?:{num}(?:{kw_delims}{num})*)'
     kw_pattern = r'(?i)\b(?:episode|epi|ep|e|part|#|एपिसोड|भाग|eps)(?:s)?\s*[\-\:\.\_\*\#]*\s*(' + kw_num_seq + r')(?![0-9])'
     kw_m = re.search(kw_pattern, b_norm)
@@ -371,8 +391,8 @@ def extract_ep_label_robust(fname: str) -> dict:
         nums = [int(n) for n in re.findall(r'\d+', label_raw) if int(n) < 10000]
         return _format_res(label_raw, nums)
 
-    # Priority 2: Bracketed group sequences like [100-110], (100 | 101)
-    br_delims = r'(?:\s*[\-\,\|\/\&\+\_]\s*)' # Brackets can use _ safely
+    # Priority 3: Bracketed group sequences like [100-110], (100 | 101)
+    br_delims = r'(?:\s*[\-\,\|\/\&\+\_]\s*)' 
     br_num_seq = f'(?:{num}(?:{br_delims}{num})*)'
     br_pattern = r'[\[\(\<\{【『]\s*(' + br_num_seq + r')\s*[\]\)\>\}】』]'
     br_m = re.search(br_pattern, b_norm)
@@ -381,16 +401,16 @@ def extract_ep_label_robust(fname: str) -> dict:
         nums = [int(n) for n in re.findall(r'\d+', label_raw) if int(n) < 10000]
         return _format_res(label_raw, nums)
     
-    # Priority 3: Pure number sequence (must have clearly intended range/list delimiter)
-    pure_delims = r'(?:\s*[\-\,\|\/\&\+]\s*)' # No lone _ as pure range delimiter unless bracketed
+    # Priority 4: Pure number sequence (fallback)
+    pure_delims = r'(?:\s*[\-\,\|\/\&\+\_]\s*)' 
     pure_num_seq = f'(?:{num}(?:{pure_delims}{num})+)'
-    r_m = re.search(r'\b(' + pure_num_seq + r')\b', b_norm)
+    r_m = re.search(r'(?<!\d)(' + pure_num_seq + r')(?!\d)', b_norm)
     if r_m:
         label_raw = r_m.group(1).strip()
         nums = [int(n) for n in re.findall(r'\d+', label_raw) if int(n) < 10000]
         return _format_res(label_raw, nums)
 
-    # Priority 4: Leading zero-padded or plain number
+    # Priority 5: Leading zero-padded or plain number (single episode)
     lead = re.match(r'^0*(\d{1,5})(?:[^0-9]|$)', b_norm)
     if lead:
         n_str = lead.group(1)

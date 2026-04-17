@@ -981,6 +981,19 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 _raw11 = (_m11.text or "0").strip()
                 sj['live_threshold'] = int(_raw11) if _raw11.isdigit() else 0
 
+            # Step 12: Duplicate Handling (New)
+            _m12 = await _ask(bot, user_id,
+                "<b>❪ STEP 12: DUPLICATE HANDLING ❫</b>\n\n"
+                "Should the bot skip files that already exist in the destination or are repeated in the source?\n\n"
+                "• <b>Yes, Skip Duplicates:</b> Identifies and skips repeated episode numbers.\n"
+                "• <b>No, Post Everything:</b> Forwards every file regardless of repetitions.",
+                reply_markup=_RKM([["✅ Yes, Skip Duplicates"], ["❌ No, Post Everything"], ["⛔ Cancel"]], resize_keyboard=True, one_time_keyboard=True)
+            )
+            if _is_cancel(_m12):
+                await bot.send_message(user_id, "<i>Process Cancelled.</i>", reply_markup=_RKR())
+                return await safe_edit("<i>Process Cancelled.</i>")
+            sj['duplicate_handling'] = "yes" if "yes" in (_m12.text or "").lower() else "no"
+
             # ── NOW rebuild buckets with the real batch_size from Step 9 ──
             # The initial bucket building used placeholder batch_size=20.
             # We have the real answer now, so rebuild with the correct value.
@@ -1290,6 +1303,15 @@ async def _build_share_links(bot, user_id, sj, info_msg):
 
             # Send to target channel — always attempted independently
             try:
+                # Peer injection for Share Bot
+                target_chat_id = sj['target']
+                from pyrogram.raw.types import InputPeerChannel as _IPC
+                _tpeer = await bot.resolve_peer(target_chat_id)
+                if isinstance(_tpeer, _IPC):
+                    await poster.storage.update_peers([(_tpeer.channel_id, _tpeer.access_hash, 'channel', None, None)])
+            except: pass
+
+            try:
                 report_bytes.seek(0)
                 await poster.send_document(
                     sj['target'], report_bytes,
@@ -1312,14 +1334,17 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                     "share_bot_id": selected_bot_id,
                     "account_id": sj.get('account_id', 'bot'),
                     "source": sj['source'],
+                    "is_topic": sj.get('is_topic', False),
+                    "topic_id": sj.get('topic_id'),
                     "target": sj['target'],
                     "target_topic_id": sj.get('target_topic_id'),
                     "story": sj['story'],
+                    "duplicate_handling": sj.get('duplicate_handling', 'no'),
                     "threshold": sj['live_threshold'],
                     "batch_size": sj.get('batch_size', 10),
                     "buttons_per_post": sj.get('buttons_per_post', 10),
                     "protect": True,
-                    "last_seen_id": sj.get('end_id'),
+                    "last_seen_id": int(sj.get('end_id') or 0),
                     "buffer_mids": [],
                     "forwarded": 0
                 }
@@ -1327,7 +1352,9 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 _lb_paused[job_id] = asyncio.Event()
                 _lb_paused[job_id].set()
                 _lb_tasks[job_id] = asyncio.create_task(_lb_run_job(job_id))
-                await bot.send_message(user_id, f"<b>✅ Live Batch Monitoring automatically activated for {sj['story']}!</b>\nMonitoring for new files arriving after Msg ID <code>{sj.get('end_id')}</code>.")
+
+                await bot.send_message(user_id, f"<b>✅ Live Batch Monitoring automatically activated for {sj['story']}!</b>\nMonitoring for new files arriving after Msg ID <code>{ljob['last_seen_id']}</code>.")
+
             except Exception as lb_err:
                 logger.error(f"Live Batch Kickoff error: {lb_err}", exc_info=True)
 

@@ -504,15 +504,15 @@ async def settings_query(bot, query):
      # ---- BOTS SECTION ----
      buttons.append([InlineKeyboardButton("Bᴏᴛs", callback_data="settings#noop")])
      for b in normal_bots:
-         active_mark = "" if b.get('active') else ""
+         active_mark = "✔️ " if b.get('active') else ""
          buttons.append([InlineKeyboardButton(f"{active_mark}{b['name']}", callback_data=f"settings#editbot_{b['id']}")])
-     if len(normal_bots) < 2:
+     if len(normal_bots) < 10:
          buttons.append([InlineKeyboardButton('Aᴅᴅ Bᴏᴛ', callback_data="settings#addbot")])
 
      # ---- USERBOTS SECTION ----
      buttons.append([InlineKeyboardButton("Usᴇʀʙᴏᴛs", callback_data="settings#noop")])
      for b in userbots:
-         active_mark = "" if b.get('active') else ""
+         active_mark = "✔️ " if b.get('active') else ""
          buttons.append([InlineKeyboardButton(f"{active_mark}{b['name']}", callback_data=f"settings#editbot_{b['id']}")])
      if len(userbots) < 2:
          buttons.append([InlineKeyboardButton('Aᴅᴅ Usᴇʀʙᴏᴛ', callback_data="settings#adduserbot")])
@@ -521,7 +521,7 @@ async def settings_query(bot, query):
      
      text = (
          "<b><u>👥 My Accounts</u></b>\n\n"
-         f"<b>🤖 Bots:</b> {len(normal_bots)}/2\n"
+         f"<b>🤖 Bots:</b> {len(normal_bots)}/10\n"
          f"<b>👤 Userbots:</b> {len(userbots)}/2\n\n"
          "<b>Tap an account to view details or set it active.\n"
          "✔️ = Currently active for that type.</b>"
@@ -577,7 +577,7 @@ async def settings_query(bot, query):
   elif type=="addbot":
      await query.message.delete()
      res = await CLIENT.add_bot(bot, query)
-     if res == "LIMIT_REACHED": return await bot.send_message(user_id, "<b>Limit reached: You can only add up to 2 Bots.</b>")
+     if res == "LIMIT_REACHED": return await bot.send_message(user_id, "<b>Limit reached: You can only add up to 10 Bots.</b>")
      if res == "EXISTS": return await bot.send_message(user_id, "<b>This bot has already been added.</b>")
      if res != True: return
      await bot.send_message(user_id, "<b>Bot token successfully added to db</b>\nGo back to /settings to configure.")
@@ -1356,12 +1356,46 @@ async def settings_query(bot, query):
       b_id = type.split("sb_stats_")[1]
       users = await db.get_share_bot_users(b_id)
       cnt = len(users)
+      kb = [
+          [InlineKeyboardButton("📤 Export Users Data", callback_data=f"settings#sb_export_{b_id}")],
+          [InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")]
+      ]
       await query.message.edit_text(
           f"<b>»  SHARE BOT STATS</b>\n\n"
           f"<b>Total Users:</b> <code>{cnt}</code>\n\n"
-          "<i>These are users who have opened or interacted with this specific bot.</i>",
-          reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data=f"settings#sb_view_{b_id}")]])
+          "<i>These are users who have opened or interacted with this specific bot.</i>\n"
+          "<i>You can export their data into a JSON file for analysis.</i>",
+          reply_markup=InlineKeyboardMarkup(kb)
       )
+
+  elif type.startswith("sb_export_"):
+      b_id = type.split("sb_export_")[1]
+      await query.message.edit_text("<i>Exporting users data, please wait...</i>")
+      users = await db.get_share_bot_users(b_id)
+      
+      import json
+      import tempfile
+      import os
+      
+      with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json", encoding="utf-8") as fp:
+          json.dump({"bot_id": b_id, "users": users, "total": len(users)}, fp, default=str, indent=2, ensure_ascii=False)
+          tmp = fp.name
+          
+      bot_name = "ShareBot"
+      bots = await db.get_share_bots()
+      for b in bots:
+          if str(b['id']) == str(b_id):
+              bot_name = b['username']
+              break
+
+      try:
+          await bot.send_document(user_id, tmp, file_name=f"{bot_name}_users.json", caption=f"Export for Delivery Bot @{bot_name} ({len(users)} users)")
+      finally:
+          try: os.remove(tmp)
+          except: pass
+          
+      query.data = f"settings#sb_stats_{b_id}"
+      return await settings_query(bot, query)
 
   elif type.startswith("sb_broadcast_"):
       b_id = type.split("sb_broadcast_")[1]

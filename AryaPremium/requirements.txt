@@ -1,0 +1,8 @@
+pyrogram
+pyromod
+asyncio
+motor
+python-dotenv
+aiohttp
+qrcode[pil]
+pillow

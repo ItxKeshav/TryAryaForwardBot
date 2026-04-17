@@ -489,8 +489,9 @@ class Database:
        
     async def add_bot(self, datas):
        is_bot = datas.get('is_bot', True)
-       count = await self.bot.count_documents({'user_id': datas['user_id'], 'is_bot': is_bot})
-       if count >= 2: return "LIMIT_REACHED"
+       # Enforce account limits: 10 for Normal Bots, 2 for Userbots
+       limit = 10 if is_bot else 2
+       if count >= limit: return "LIMIT_REACHED"
        exists = await self.bot.find_one({'user_id': datas['user_id'], 'id': datas['id']})
        if exists: return "EXISTS"
        
@@ -728,7 +729,7 @@ class Database:
         """Returns global defaults applied to non-owner users."""
         doc = await self.stats.find_one({'_id': 'global_user_limits'})
         return doc or {'max_live_jobs': 3, 'max_multi_jobs': 2,
-                       'max_merge_jobs': 1, 'max_accounts': 2}
+                       'max_merge_jobs': 1, 'max_accounts': 5}
 
     async def set_global_user_limits(self, **kwargs):
         await self.stats.update_one(

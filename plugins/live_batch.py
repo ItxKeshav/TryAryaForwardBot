@@ -18,6 +18,7 @@ from pyrogram.types import (
 )
 from pyrogram.errors import FloodWait
 from database import db
+from bot import BOT_INSTANCE
 from plugins.test import CLIENT
 from plugins.utils import extract_ep_label_robust, format_tg_error
 _CLIENT = CLIENT()
@@ -217,7 +218,29 @@ async def _post_live_batch(sb_client, job: dict, chunk_msgs: list):
                 except Exception as tg_err:
                     logger.warning(f"Live Batch Post TG Send Error: {tg_err}")
                     await asyncio.sleep(5)
-                    
+            
+        # ── Record successful post for Duplicate Handling ──
+        try:
+            # Extract all numbers from all files in this entire batch call
+            all_posted_nums = []
+            for bucket_msg in chunk_msgs:
+                fn = getattr(getattr(bucket_msg, 'document', None) or getattr(bucket_msg, 'audio', None) or getattr(bucket_msg, 'video', None), "file_name", None) or bucket_msg.caption or ""
+                r = extract_ep_label_robust(fn)
+                if r["numbers"]:
+                    all_posted_nums.extend(r["numbers"])
+            
+            if all_posted_nums:
+                await db.db["live_batch_posted_eps"].update_one(
+                    {"target": target_ch, "story": job['story']},
+                    {
+                        "$addToSet": {"nums": {"$each": all_posted_nums}},
+                        "$set": {"at": time.time()}
+                    },
+                    upsert=True
+                )
+        except Exception as e:
+            logger.error(f"[LiveBatch] Error recording posted nums: {e}")
+
         return True, new_mids, all_buttons
     except Exception as grand_err:
         import traceback
@@ -226,11 +249,12 @@ async def _post_live_batch(sb_client, job: dict, chunk_msgs: list):
 
 async def _lb_run_job(job_id: str):
     logger.info(f"Starting Live Batch job {job_id}")
-    from plugins.share_bot import share_clients
-    from plugins.test import CLIENT as _FACTORY
-    
-    src_client = None
-    ub_sess = None
+    try:
+        from plugins.share_bot import share_clients
+        from plugins.test import CLIENT as _FACTORY
+        
+        src_client = None
+        ub_sess = None
     
     while True:
         ev = _lb_paused.get(job_id)
@@ -287,10 +311,17 @@ async def _lb_run_job(job_id: str):
                         # Fallback to main bot if specified account disappears
                         src_client = BOT_INSTANCE
             
-            if not sb_client:
-                # Fallback to main bot if no dedicated Share Bots are configured
-                sb_client = BOT_INSTANCE
-                
+            # ── Peer Resolution for Clients ─────────────────────────────────────────
+            # Ensure both Clients have the source/target in their local peer cache
+            # to avoid PEER_ID_INVALID or CHANNEL_INVALID on restart.
+            for c in (src_client, sb_client):
+                if c:
+                    try: await c.get_chat(source)
+                    except: pass
+                    try: await c.get_chat(target)
+                    except: pass
+            # ──────────────────────────────────────────────────────────────────────
+
             # Setup Progress Bar
             prog_id = job.get("prog_id")
             if not prog_id:
@@ -299,43 +330,51 @@ async def _lb_run_job(job_id: str):
                         f"📡 <b>Bᴀᴛᴄʜ Lɪɴᴋs Lɪᴠᴇ Aᴜᴛᴏ-Gᴇɴᴇʀᴀᴛᴏʀ</b>\n\n"
                         f"✅ Auto-Generated Blocks: <code>{fwd_count}</code>\n"
                         f"»  Last updated: <code>{time.strftime('%H:%M:%S')}</code>\n\n"
-                        f"<i>This message updates every 60s. Arya Bot</i>"
+                        f"<i>This message updates every 60s. Arya Bot</i>",
+                        reply_to_message_id=job.get('target_topic_id')
                     )
                     prog_id = p.id
                     await _lb_update_job(job_id, {"prog_id": prog_id})
                     try: await sb_client.pin_chat_message(target, prog_id, disable_notification=True)
                     except: pass
-                except: pass
+                except Exception as pe:
+                    logger.error(f"Live Batch progress msg error: {pe}")
 
-            fetched = []
-            batch_req = []
-            msgs = []          # ⚠️ Must be initialized BEFORE the try block.
-                               # If get_messages raises, we must NOT fall through to
-                               # the "for m in msgs" loop with stale data from the
-                               # previous iteration — that caused the duplication bug.
+            msgs = []
+            is_topic = job.get("is_topic")
+            topic_id = job.get("topic_id")
+
             try:
-                # Pyrogram's get_chat_history is blocked for Bot accounts!
-                # We systematically just chunk forward using get_messages.
-                batch_req = []
-                for mid in range(last_seen + 1, last_seen + 201):
-                    batch_req.append(mid)
-
-                msgs = await src_client.get_messages(source, batch_req)
-                if not isinstance(msgs, list): msgs = [msgs]
+                if is_topic and topic_id:
+                    # ─── TOPIC MONITORING ───
+                    # For topics, we fetch the latest replies to the topic's service message
+                    # and filter for those we haven't seen.
+                    try:
+                        all_replies = []
+                        async for m in src_client.get_discussion_replies(source, topic_id):
+                            if m.id <= last_seen: 
+                                break # replies are usually desc? depends on lib
+                            all_replies.append(m)
+                            if len(all_replies) >= 50: break
+                        
+                        msgs = sorted(all_replies, key=lambda x: x.id)
+                    except Exception as te:
+                        logger.error(f"Live Batch Topic Scan Error: {te}")
+                        msgs = []
+                else:
+                    # ─── CHANNEL MONITORING ───
+                    batch_req = list(range(last_seen + 1, last_seen + 101))
+                    msgs = await src_client.get_messages(source, batch_req)
+                    if not isinstance(msgs, list): msgs = [msgs]
 
             except Exception as e:
-                logger.error(f"Live Batch get_messages error: {e}")
-                err_str = str(e).lower()
-                if "connection" in err_str or "timeout" in err_str:
-                    logger.warning("[LiveBatch] Connection instability detected. Forcing reconnection in next cycle.")
-                    if getattr(src_client, "session_name", None) != "bot":
-                        pass
-                    src_client = None
-                # msgs stays as [] — the loop below safely produces no results
+                logger.error(f"Live Batch Scan Error: {e}")
+                await asyncio.sleep(20)
+                continue
+
             valid = []
             for m in msgs:
                 if m and not getattr(m, 'empty', True) and not getattr(m, 'service', False):
-                    # Only accept real files/media, completely ignore pure text messages (even if they have WebPage previews)
                     has_media = bool(getattr(m, 'audio', None) or getattr(m, 'document', None) or getattr(m, 'video', None) or getattr(m, 'voice', None) or getattr(m, 'photo', None))
                     if has_media:
                         valid.append(m)
@@ -363,41 +402,60 @@ async def _lb_run_job(job_id: str):
                 # Use a set of existing buffer IDs to skip already-buffered messages.
                 existing_buf = set(buffer_mids)
                 new_added = 0
+                
+                # Check setting
+                use_dup_check = job.get("duplicate_handling") == "yes"
+                target_ch = int(job["target"])
+                story_name = job["story"]
+
                 for m in valid:
                     if m.id not in existing_buf:
-                        # ─── Strict Duplicate Check by Filename ───
-                        # Fetch filename from any media type
-                        media_obj = (m.audio or m.voice or m.document or m.video or m.photo)
-                        fname = getattr(media_obj, "file_name", "") or getattr(media_obj, "title", "") or ""
-                        
-                        if fname:
-                            # Use a persistent tracking collection for this job
-                            # Normalizing filename to avoid case/extension variations
-                            base_fn = os.path.splitext(fname.lower())[0]
-                            dup = await db.db["live_batch_seen"].find_one({"job_id": job_id, "filename": base_fn})
-                            if dup:
-                                if dup.get("msg_id") != m.id:
-                                    logger.info(f"[LiveBatch {job_id}] Skipping duplicate file: {fname} (ID {m.id})")
-                                    # Still advance last_seen to skip this message
+                        if use_dup_check:
+                            # ─── Strict Duplicate Check (by Episode Number) ───
+                            from plugins.utils import extract_ep_label_robust
+                            
+                            media_obj = (m.audio or m.voice or m.document or m.video or m.photo)
+                            fname = getattr(media_obj, "file_name", "") or getattr(media_obj, "title", "") or m.caption or ""
+                            
+                            ep_res = extract_ep_label_robust(fname)
+                            incoming_nums = ep_res["numbers"]
+                            if incoming_nums:
+                                # Check if ANY of the numbers in this file already exist for this story+target
+                                already_posted = await db.db["live_batch_posted_eps"].find_one({
+                                    "target": target_ch,
+                                    "story": story_name,
+                                    "nums": {"$in": incoming_nums}
+                                })
+                                
+                                if already_posted:
+                                    logger.info(f"[LiveBatch {job_id}] Skipping DUPLICATE episodes {incoming_nums} for story {story_name} (Matches existing entry)")
                                     last_seen = max(last_seen, m.id)
                                     continue
-                            else:
+                                
+                                # Session duplicate check (filename based)
+                                base_fn = os.path.splitext(fname.lower())[0] if fname else f"id_{m.id}"
+                                session_dup = await db.db["live_batch_seen"].find_one({"job_id": job_id, "filename": base_fn})
+                                if session_dup:
+                                    logger.info(f"[LiveBatch {job_id}] Skipping SESSION duplicate file: {fname}")
+                                    last_seen = max(last_seen, m.id)
+                                    continue
+                                
                                 await db.db["live_batch_seen"].insert_one({
-                                    "job_id": job_id, 
-                                    "filename": base_fn, 
-                                    "msg_id": m.id, 
-                                    "at": time.time()
+                                    "job_id": job_id, "filename": base_fn, "msg_id": m.id, "at": time.time()
                                 })
-                        
+                            
                         buffer_mids.append(m.id)
                         existing_buf.add(m.id)
                         new_added += 1
+
                 if new_added:
                     logger.info(f"[LiveBatch] Added {new_added} new IDs to buffer. Total: {len(buffer_mids)}")
 
-                # Safely advance last_seen to the highest physically detected message in this chunk!
+                # Safely advance last_seen
                 last_seen = max(m.id for m in raw_exists)
                 await _lb_update_job(job_id, {"last_seen_id": last_seen, "buffer_mids": buffer_mids})
+
+            # ──── BUFFER FLUSH CHECK ────
 
             # ──── BUFFER FLUSH CHECK ────
             # Always check EVERY loop iteration — NOT only when new messages arrive.
@@ -469,9 +527,18 @@ async def _lb_run_job(job_id: str):
 
             await asyncio.sleep(20)
 
+        except asyncio.CancelledError:
+            logger.info(f"Live Batch job {job_id} was cancelled.")
+            raise
         except Exception as e:
             logger.error(f"Live Batch generic loop error: {e}")
             await asyncio.sleep(20)
+    finally:
+        logger.info(f"Stopping Live Batch job {job_id}")
+        _lb_tasks.pop(job_id, None)
+        if src_client and src_client is not BOT_INSTANCE:
+            try: await src_client.disconnect()
+            except: pass
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Change-Source flow (runs as a background task so the callback returns fast)
@@ -682,14 +749,16 @@ async def _lb_callbacks(bot, update: CallbackQuery):
         kb.append([InlineKeyboardButton("❮ Bᴀᴄᴋ", callback_data="lb#main")])
         
         src_display = str(job.get("source", "?"))
+        dup_st = "✅ Enabled" if job.get("duplicate_handling") == "yes" else "❌ Disabled"
         txt = (
             f"<b>📡 Lɪᴠᴇ Bᴀᴛᴄʜ Sᴛᴀᴛᴜs</b>\n\n"
             f"<b>📖 Sᴛᴏʀʏ:</b> <code>{job.get('story')}</code>\n"
             f"<b>📥 Sᴏᴜʀᴄᴇ:</b> <code>{src_display}</code>\n"
             f"<b>ℹ️ Sᴛᴀᴛᴜs:</b> <code>{st.upper()}</code>\n"
+            f"<b>🔄 Dᴜᴘʟɪᴄᴀᴛᴇ Hᴀɴᴅʟɪɴɢ:</b> <code>{dup_st}</code>\n"
             f"<b>🎯 Tʜʀᴇsʜᴏʟᴅ:</b> Wait for {trgt} files\n"
             f"<b>📦 Cᴜʀʀᴇɴᴛ Bᴜғғᴇʀ:</b> <code>{buf} / {trgt}</code>\n"
-            f"<b>✅ Tᴏᴛᴀʟ Pᴏsᴛᴇᴅ Bᴀᴛᴄʜᴇs:</b> {int(job.get('forwarded', 0) / max(1, trgt))}\n\n"
+            f"<b>✅ Tᴏᴛᴀʟ Fᴏʀᴡᴀʀᴅᴇᴅ:</b> <code>{job.get('forwarded', 0)}</code>\n\n"
             f"<i>Auto-checks source database continuously.</i>"
         )
         try: await update.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(kb))
@@ -739,14 +808,29 @@ async def _lb_callbacks(bot, update: CallbackQuery):
         jid = data[2]
         await _lb_update_job(jid, {"status": "stopped"})
         if jid in _lb_paused: _lb_paused[jid].set()
-        if jid in _lb_tasks and not _lb_tasks[jid].done():
-            _lb_tasks[jid].cancel()
+        
+        task = _lb_tasks.get(jid)
+        if task and not task.done():
+            task.cancel()
+            try: await task
+            except asyncio.CancelledError: pass
+            _lb_tasks.pop(jid, None)
+
         update.data = f"lb#view#{jid}"
         return await _lb_callbacks(bot, update)
 
     elif action == "del":
         jid = data[2]
+        # Kill task first
+        task = _lb_tasks.get(jid)
+        if task and not task.done():
+            task.cancel()
+            try: await task
+            except asyncio.CancelledError: pass
+            _lb_tasks.pop(jid, None)
+            
         await _lb_delete_job(jid)
+        _lb_paused.pop(jid, None)
         update.data = "lb#main"
         return await _lb_callbacks(bot, update)
 
