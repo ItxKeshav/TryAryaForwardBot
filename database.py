@@ -489,9 +489,15 @@ class Database:
        
     async def add_bot(self, datas):
        is_bot = datas.get('is_bot', True)
+       user_id = datas.get('user_id')
+       
        # Enforce account limits: 10 for Normal Bots, 2 for Userbots
        limit = 10 if is_bot else 2
-       if count >= limit: return "LIMIT_REACHED"
+       count = await self.bot.count_documents({'user_id': user_id, 'is_bot': is_bot})
+       
+       is_owner = (await self.is_co_owner(user_id)) or (user_id in Config.OWNER_IDS)
+       if not is_owner and count >= limit: 
+           return "LIMIT_REACHED"
        exists = await self.bot.find_one({'user_id': datas['user_id'], 'id': datas['id']})
        if exists: return "EXISTS"
        
