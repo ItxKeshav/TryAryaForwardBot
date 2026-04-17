@@ -994,6 +994,19 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                 return await safe_edit("<i>Process Cancelled.</i>")
             sj['duplicate_handling'] = "yes" if "yes" in (_m12.text or "").lower() else "no"
 
+            # Step 13: Post Format
+            _m13 = await _ask(bot, user_id,
+                "<b>❪ STEP 13: POST FORMAT ❫</b>\n\n"
+                "What layout should be used when sending the post to the channel?\n\n"
+                "• <b>Normal Batch:</b> (Story EPS 1-100)\n"
+                "• <b>Missing Episodes:</b> (Special missing episodes template with list)",
+                reply_markup=_RKM([["Normal Batch"], ["Missing Episodes Format"], ["⛔ Cancel"]], resize_keyboard=True, one_time_keyboard=True)
+            )
+            if _is_cancel(_m13):
+                await bot.send_message(user_id, "<i>Process Cancelled.</i>", reply_markup=_RKR())
+                return await safe_edit("<i>Process Cancelled.</i>")
+            sj['post_format'] = "missing" if "missing" in (_m13.text or "").lower() else "normal"
+
             # ── NOW rebuild buckets with the real batch_size from Step 9 ──
             # The initial bucket building used placeholder batch_size=20.
             # We have the real answer now, so rebuild with the correct value.
@@ -1092,7 +1105,28 @@ async def _build_share_links(bot, user_id, sj, info_msg):
                         res += c
                 return res
             
-            txt = f"{_bold_sans(story)} 𝗘𝗣𝗦 {first_ep} - {last_ep}"
+            if sj.get('post_format') == "missing":
+                ep_strs = []
+                for b_s, b_e, _ in _buckets_to_use:
+                    if b_s == "Extra": continue
+                    ep_strs.append(f"• {b_s}" if b_s == b_e else f"• {b_s}-{b_e}")
+                
+                # Split roughly to line wrap nicely
+                formatted_eps = ""
+                for idx, ev in enumerate(ep_strs):
+                    formatted_eps += ev + "  "
+                    if (idx + 1) % 4 == 0: formatted_eps += "\n"
+                formatted_eps = formatted_eps.strip()
+
+                txt = (
+                    f"👉🏻 {_bold_sans(story)} (English) •\n"
+                    f"<blockquote expandable>{_bold_sans(story)} Missing Episode\n"
+                    f"{formatted_eps}</blockquote>\n"
+                    f"<blockquote expandable>Note :\n"
+                    f"Comment Below 👇 I'll Add Missing Episodes As Soon As Possible</blockquote>"
+                )
+            else:
+                txt = f"{_bold_sans(story)} 𝗘𝗣𝗦 {first_ep} - {last_ep}"
 
             keyboard = []
             for j in range(0, len(chunk), 2):
