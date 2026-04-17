@@ -16,7 +16,7 @@ from pyrogram.handlers import MessageHandler, CallbackQueryHandler
 from pyrogram.errors import MessageNotModified
 from database import db
 from config import Config
-from utils import native_ask, _deliver_purchased_story
+from utils import native_ask, _deliver_purchased_story, to_smallcap
 from plugins.userbot.razorpay_helpers import _create_rzp_link, _check_rzp_status
 from plugins.userbot.easebuzz_helpers import _create_easebuzz_link, _check_easebuzz_status
 
