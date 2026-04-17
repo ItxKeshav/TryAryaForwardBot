@@ -257,9 +257,6 @@ async def _post_live_batch(sb_client, job: dict, chunk_msgs: list):
 
 async def _lb_run_job(job_id: str):
     logger.info(f"Starting Live Batch job {job_id}")
-    # BUG FIX: these MUST be declared OUTSIDE and BEFORE the while loop
-    # so they survive across loop iterations. Previously they were inside
-    # a try: block at the same indent as while True: which caused NameError.
     src_client = None
     ub_sess = None
 
@@ -270,284 +267,256 @@ async def _lb_run_job(job_id: str):
         logger.error(f"[LiveBatch {job_id}] Import error on startup: {import_err}")
         return
 
-    while True:
-        ev = _lb_paused.get(job_id)
-        if ev and not ev.is_set():
-            await ev.wait()
-            
-        job = await _lb_get_job(job_id)
-        if not job or job.get("status") in ("stopped", "failed"):
-            break
-            
-        try:
-            source = job["source"]
-            target = job["target"]
-            
-            # ── Protected Chat Guard ───────────────────────────────────────────────
-            from plugins.utils import check_chat_protection
-            prot_err = await check_chat_protection(job["user_id"], source)
-            if prot_err:
-                # BUG FIX: was called with kwargs, must be a dict
-                await _lb_update_job(job_id, {"status": "error", "error": prot_err})
-                try:
-                    await BOT_INSTANCE.send_message(job["user_id"], prot_err)
-                except Exception:
-                    pass
-                return
-            # ──────────────────────────────────────────────────────────────────────
-            
-            thresh = job["threshold"]
-            last_seen = job.get("last_seen_id", 0)
-            buffer_mids = job.get("buffer_mids", [])
-            # Deduplicate buffer in case duplicates crept in during a previous crash
-            buffer_mids = list(dict.fromkeys(buffer_mids))
-            fwd_count = job.get("forwarded", 0)
-
-            # BUG FIX: share_clients keys may be int or str — try both to be safe
-            raw_sb_id = job["share_bot_id"]
-            sb_client = share_clients.get(str(raw_sb_id)) or share_clients.get(int(raw_sb_id) if str(raw_sb_id).isdigit() else raw_sb_id)
-
-            if not sb_client:
-                logger.error(f"[LiveBatch {job_id}] Share bot client not found for ID={raw_sb_id}. Available: {list(share_clients.keys())}")
-                await asyncio.sleep(30)
-                continue
-            
-            # Reconnect Source Client 
-            if not src_client or not getattr(src_client, "is_connected", False):
-                acc_id = job.get("account_id", "bot")
-                if not acc_id or acc_id == "bot":
-                    src_client = BOT_INSTANCE
-                else:
-                    bots = await db.get_bots(job["user_id"])
-                    acc_bot = next((b for b in bots if str(b.get("id")) == str(acc_id)), None)
-                    if acc_bot and not acc_bot.get("is_bot", True):
-                        ub_sess = acc_bot["session"]
-                        src_client = _FACTORY().client({"session": ub_sess}, False)
-                        try:
-                            await src_client.connect()
-                        except Exception as e:
-                            logger.error(f"Live Batch: Failed to connect user account: {e}")
-                            src_client = None
-                            await asyncio.sleep(60)
-                            continue
-                    else:
-                        # Fallback to main bot if specified account disappears
-                        src_client = BOT_INSTANCE
-
-            # ── Peer Resolution for Clients (once per reconnect, not every loop) ─
-            for c in (src_client, sb_client):
-                if c:
-                    try: await c.get_chat(source)
-                    except: pass
-                    try: await c.get_chat(target)
-                    except: pass
-            # ──────────────────────────────────────────────────────────────────────
-
-            # Setup Progress Bar — only post if not already done
-            prog_id = job.get("prog_id")
-            if not prog_id:
-                try:
-                    p = await sb_client.send_message(target, 
-                        f"📡 <b>Bᴀᴛᴄʜ Lɪɴᴋs Lɪᴠᴇ Aᴜᴛᴏ-Gᴇɴᴇʀᴀᴛᴏʀ</b>\n\n"
-                        f"✅ Auto-Generated Blocks: <code>{fwd_count}</code>\n"
-                        f"»  Last updated: <code>{time.strftime('%H:%M:%S')}</code>\n\n"
-                        f"<i>This message updates every 60s. Arya Bot</i>",
-                        reply_to_message_id=job.get('target_topic_id')
-                    )
-                    prog_id = p.id
-                    await _lb_update_job(job_id, {"prog_id": prog_id})
-                    try: await sb_client.pin_chat_message(target, prog_id, disable_notification=True)
-                    except: pass
-                except Exception as pe:
-                    logger.error(f"Live Batch progress msg error: {pe}")
-
-            msgs = []
-            is_topic = job.get("is_topic")
-            topic_id = job.get("topic_id")
-
-            try:
-                if is_topic and topic_id:
-                    # ─── TOPIC MONITORING ───
-                    # For topics, we fetch the latest replies to the topic's service message
-                    # and filter for those we haven't seen.
-                    try:
-                        all_replies = []
-                        async for m in src_client.get_discussion_replies(source, topic_id):
-                            if m.id <= last_seen: 
-                                break # replies are usually desc? depends on lib
-                            all_replies.append(m)
-                            if len(all_replies) >= 50: break
-                        
-                        msgs = sorted(all_replies, key=lambda x: x.id)
-                    except Exception as te:
-                        logger.error(f"Live Batch Topic Scan Error: {te}")
-                        msgs = []
-                else:
-                    # ─── CHANNEL MONITORING ───
-                    batch_req = list(range(last_seen + 1, last_seen + 101))
-                    msgs = await src_client.get_messages(source, batch_req)
-                    if not isinstance(msgs, list): msgs = [msgs]
-
-            except Exception as e:
-                logger.error(f"Live Batch Scan Error: {e}")
-                await asyncio.sleep(20)
-                continue
-
-            valid = []
-            for m in msgs:
-                if m and not getattr(m, 'empty', True) and not getattr(m, 'service', False):
-                    has_media = bool(getattr(m, 'audio', None) or getattr(m, 'document', None) or getattr(m, 'video', None) or getattr(m, 'voice', None) or getattr(m, 'photo', None))
-                    if has_media:
-                        valid.append(m)
-            valid.sort(key=lambda m: m.id)
-            
-            raw_exists = [m for m in msgs if m and not getattr(m, 'empty', True)]
-            
-            if not raw_exists:
-                # The entire chunk is empty — either end of channel or a big gap.
-                try:
-                    probe = await src_client.get_messages(source, [last_seen + 250, last_seen + 500, last_seen + 1000])
-                    if isinstance(probe, list) and any(p for p in probe if p and not getattr(p, 'empty', True)):
-                        last_seen += 200
-                        await _lb_update_job(job_id, {"last_seen_id": last_seen})
-                except: pass
-            else:
-                existing_buf = set(buffer_mids)
-                new_added = 0
+    try:
+        while True:
+            ev = _lb_paused.get(job_id)
+            if ev and not ev.is_set():
+                await ev.wait()
                 
-                use_dup_check = job.get("duplicate_handling") == "yes"
-                target_ch_int = int(job["target"])
-                story_name = job["story"]
+            job = await _lb_get_job(job_id)
+            if not job or job.get("status") in ("stopped", "failed"):
+                break
+                
+            try:
+                source = job["source"]
+                target = job["target"]
+                
+                # ── Protected Chat Guard ───────────────────────────────────────────────
+                from plugins.utils import check_chat_protection
+                prot_err = await check_chat_protection(job["user_id"], source)
+                if prot_err:
+                    await _lb_update_job(job_id, {"status": "error", "error": prot_err})
+                    try:
+                        await BOT_INSTANCE.send_message(job["user_id"], prot_err)
+                    except Exception:
+                        pass
+                    return
+                # ──────────────────────────────────────────────────────────────────────
+                
+                thresh = job["threshold"]
+                last_seen = job.get("last_seen_id", 0)
+                buffer_mids = job.get("buffer_mids", [])
+                buffer_mids = list(dict.fromkeys(buffer_mids))
+                fwd_count = job.get("forwarded", 0)
 
-                for m in valid:
-                    if m.id in existing_buf:
-                        continue  # Already in buffer, skip
+                raw_sb_id = job["share_bot_id"]
+                sb_client = share_clients.get(str(raw_sb_id)) or share_clients.get(int(raw_sb_id) if str(raw_sb_id).isdigit() else raw_sb_id)
 
-                    if use_dup_check:
-                        # ── LAYER 1: file_unique_id check ──────────────────────────────────
-                        # Catches the SAME FILE re-uploaded in the source (2-3 times).
-                        # file_unique_id is Telegram's permanent identity for a file regardless of message.
-                        media_obj = (m.audio or m.voice or m.document or m.video or m.photo)
-                        f_uid = getattr(media_obj, "file_unique_id", None)
-                        fname = getattr(media_obj, "file_name", "") or getattr(media_obj, "title", "") or m.caption or ""
-
-                        if f_uid:
-                            uid_dup = await db.db["live_batch_seen"].find_one({"job_id": job_id, "file_uid": f_uid})
-                            if uid_dup:
-                                logger.info(f"[LiveBatch {job_id}] Skipping same-file re-upload (file_unique_id={f_uid})")
-                                last_seen = max(last_seen, m.id)
-                                continue
-                            # Register file_uid immediately so future duplicates in same scan are caught
-                            await db.db["live_batch_seen"].update_one(
-                                {"job_id": job_id, "file_uid": f_uid},
-                                {"$set": {"file_uid": f_uid, "msg_id": m.id, "fname": fname, "at": time.time()}},
-                                upsert=True
-                            )
-
-                        # ── LAYER 2: episode-number check against already-POSTED batches ──
-                        # Catches files that were already part of a previously posted button block
-                        # (e.g. episodes 298-300 already have buttons in the destination channel).
-                        ep_res = extract_ep_label_robust(fname)
-                        incoming_nums = ep_res.get("numbers", [])
-                        if incoming_nums:
-                            already_posted = await db.db["live_batch_posted_eps"].find_one({
-                                "target": target_ch_int,
-                                "story": story_name,
-                                "nums": {"$in": incoming_nums}
-                            })
-                            if already_posted:
-                                logger.info(f"[LiveBatch {job_id}] Skipping episodes {incoming_nums} — already posted to destination")
-                                last_seen = max(last_seen, m.id)
-                                continue
-
-                    buffer_mids.append(m.id)
-                    existing_buf.add(m.id)
-                    new_added += 1
-
-                if new_added:
-                    logger.info(f"[LiveBatch] Added {new_added} new IDs to buffer. Total: {len(buffer_mids)}")
-
-                last_seen = max(m.id for m in raw_exists)
-                await _lb_update_job(job_id, {"last_seen_id": last_seen, "buffer_mids": buffer_mids})
-
-            # ──── BUFFER FLUSH CHECK ────
-
-            # ──── BUFFER FLUSH CHECK ────
-            # Always check EVERY loop iteration — NOT only when new messages arrive.
-            # Re-read fresh from DB so we never miss a force_flush signal.
-            fresh_job = await _lb_get_job(job_id)
-            buffer_mids = fresh_job.get("buffer_mids", buffer_mids)  # use freshest buffer
-            force = fresh_job.get("force_flush", False)
-
-            if force:
-                # Immediately clear the flag so it doesn't fire twice
-                await _lb_update_job(job_id, {"force_flush": False})
-
-            if buffer_mids and (len(buffer_mids) >= thresh or force):
-                # Drain as many complete batches as possible
-                # On force: drain everything; otherwise drain in thresh-sized chunks
-                to_post = buffer_mids if force else buffer_mids[:thresh]
-                while to_post:
-                    chunk_ids = to_post[:100]  # Telegram API safety limit
-                    remaining_post = to_post[100:]
-                    
-                    actual_msgs = await src_client.get_messages(source, chunk_ids)
-                    if not isinstance(actual_msgs, list): actual_msgs = [actual_msgs]
-                    actual_msgs = [m for m in actual_msgs if m and not m.empty]
-                    
-                    if not actual_msgs:
-                        logger.info(f"[LiveBatch] All {len(chunk_ids)} messages in chunk were deleted or invalid. Removing from buffer.")
-                        buffer_mids = [mid for mid in buffer_mids if mid not in chunk_ids]
-                        await _lb_update_job(job_id, {"buffer_mids": buffer_mids})
-                        to_post = remaining_post if force else (buffer_mids[:thresh] if len(buffer_mids) >= thresh else [])
-                        continue
-                    
-                    res = await _post_live_batch(sb_client, job, actual_msgs)
-                    success = res[0] if isinstance(res, tuple) else res
-                    
-                    if success:
-                        new_mids = res[1] if isinstance(res, tuple) else []
-                        upd_btns = res[2] if isinstance(res, tuple) else []
-                        
-                        fwd_count += len(chunk_ids)
-                        buffer_mids = [mid for mid in buffer_mids if mid not in chunk_ids]
-                        
-                        update_dict = {"buffer_mids": buffer_mids, "forwarded": fwd_count}
-                        if new_mids: update_dict["posted_mids"] = new_mids
-                        if upd_btns: update_dict["all_buttons"] = upd_btns
-                        
-                        await _lb_update_job(job_id, update_dict)
-                        # Refresh job for next batch post param
-                        job = await _lb_get_job(job_id)
-                        logger.info(f"[LiveBatch] Posted batch of {len(chunk_ids)} files. Buffer remaining: {len(buffer_mids)}")
+                if not sb_client:
+                    logger.error(f"[LiveBatch {job_id}] Share bot client not found for ID={raw_sb_id}. Available: {list(share_clients.keys())}")
+                    await asyncio.sleep(30)
+                    continue
+                
+                if not src_client or not getattr(src_client, "is_connected", False):
+                    acc_id = job.get("account_id", "bot")
+                    if not acc_id or acc_id == "bot":
+                        src_client = BOT_INSTANCE
                     else:
-                        logger.warning(f"[LiveBatch] Post failed, will retry next cycle.")
-                        break
-                    
-                    # Continue draining if force OR still above threshold
-                    to_post = remaining_post if force else (buffer_mids[:thresh] if len(buffer_mids) >= thresh else [])
-            
-            now_t = time.time()
-            up_time = job.get("last_prog_update", 0)
-            if prog_id and (now_t - up_time) > 60:
+                        bots = await db.get_bots(job["user_id"])
+                        acc_bot = next((b for b in bots if str(b.get("id")) == str(acc_id)), None)
+                        if acc_bot and not acc_bot.get("is_bot", True):
+                            ub_sess = acc_bot["session"]
+                            src_client = _FACTORY().client({"session": ub_sess}, False)
+                            try:
+                                await src_client.connect()
+                            except Exception as e:
+                                logger.error(f"Live Batch: Failed to connect user account: {e}")
+                                src_client = None
+                                await asyncio.sleep(60)
+                                continue
+                        else:
+                            src_client = BOT_INSTANCE
+
+                for c in (src_client, sb_client):
+                    if c:
+                        try: await c.get_chat(source)
+                        except: pass
+                        try: await c.get_chat(target)
+                        except: pass
+
+                prog_id = job.get("prog_id")
+                if not prog_id:
+                    try:
+                        p = await sb_client.send_message(target, 
+                            f"📡 <b>Bᴀᴛᴄʜ Lɪɴᴋs Lɪᴠᴇ Aᴜᴛᴏ-Gᴇɴᴇʀᴀᴛᴏʀ</b>\n\n"
+                            f"✅ Auto-Generated Blocks: <code>{fwd_count}</code>\n"
+                            f"»  Last updated: <code>{time.strftime('%H:%M:%S')}</code>\n\n"
+                            f"<i>This message updates every 60s. Arya Bot</i>",
+                            reply_to_message_id=job.get('target_topic_id')
+                        )
+                        prog_id = p.id
+                        await _lb_update_job(job_id, {"prog_id": prog_id})
+                        try: await sb_client.pin_chat_message(target, prog_id, disable_notification=True)
+                        except: pass
+                    except Exception as pe:
+                        logger.error(f"Live Batch progress msg error: {pe}")
+
+                msgs = []
+                is_topic = job.get("is_topic")
+                topic_id = job.get("topic_id")
+
                 try:
-                    await sb_client.edit_message_text(target, prog_id,
-                        f"📡 <b>Bᴀᴛᴄʜ Lɪɴᴋs Lɪᴠᴇ Aᴜᴛᴏ-Gᴇɴᴇʀᴀᴛᴏʀ</b>\n\n"
-                        f"✅ Auto-Generated Blocks: <code>{fwd_count}</code>\n"
-                        f"»  Last updated: <code>{time.strftime('%H:%M:%S')}</code>\n\n"
-                        f"<i>This message updates every 60s. Arya Bot</i>"
-                    )
-                    await _lb_update_job(job_id, {"last_prog_update": now_t})
-                except: pass
+                    if is_topic and topic_id:
+                        try:
+                            all_replies = []
+                            async for m in src_client.get_discussion_replies(source, topic_id):
+                                if m.id <= last_seen: 
+                                    break
+                                all_replies.append(m)
+                                if len(all_replies) >= 50: break
+                            
+                            msgs = sorted(all_replies, key=lambda x: x.id)
+                        except Exception as te:
+                            logger.error(f"Live Batch Topic Scan Error: {te}")
+                            msgs = []
+                    else:
+                        batch_req = list(range(last_seen + 1, last_seen + 101))
+                        msgs = await src_client.get_messages(source, batch_req)
+                        if not isinstance(msgs, list): msgs = [msgs]
 
-            await asyncio.sleep(20)
+                except Exception as e:
+                    logger.error(f"Live Batch Scan Error: {e}")
+                    await asyncio.sleep(20)
+                    continue
 
-        except asyncio.CancelledError:
-            logger.info(f"Live Batch job {job_id} was cancelled.")
-            raise
-        except Exception as e:
-            logger.error(f"Live Batch generic loop error: {e}")
-            await asyncio.sleep(20)
+                valid = []
+                for m in msgs:
+                    if m and not getattr(m, 'empty', True) and not getattr(m, 'service', False):
+                        has_media = bool(getattr(m, 'audio', None) or getattr(m, 'document', None) or getattr(m, 'video', None) or getattr(m, 'voice', None) or getattr(m, 'photo', None))
+                        if has_media:
+                            valid.append(m)
+                valid.sort(key=lambda m: m.id)
+                
+                raw_exists = [m for m in msgs if m and not getattr(m, 'empty', True)]
+                
+                if not raw_exists:
+                    try:
+                        probe = await src_client.get_messages(source, [last_seen + 250, last_seen + 500, last_seen + 1000])
+                        if isinstance(probe, list) and any(p for p in probe if p and not getattr(p, 'empty', True)):
+                            last_seen += 200
+                            await _lb_update_job(job_id, {"last_seen_id": last_seen})
+                    except: pass
+                else:
+                    existing_buf = set(buffer_mids)
+                    new_added = 0
+                    
+                    use_dup_check = job.get("duplicate_handling") == "yes"
+                    target_ch_int = int(job["target"])
+                    story_name = job["story"]
+
+                    for m in valid:
+                        if m.id in existing_buf:
+                            continue
+
+                        if use_dup_check:
+                            media_obj = (m.audio or m.voice or m.document or m.video or m.photo)
+                            f_uid = getattr(media_obj, "file_unique_id", None)
+                            fname = getattr(media_obj, "file_name", "") or getattr(media_obj, "title", "") or m.caption or ""
+
+                            if f_uid:
+                                uid_dup = await db.db["live_batch_seen"].find_one({"job_id": job_id, "file_uid": f_uid})
+                                if uid_dup:
+                                    logger.info(f"[LiveBatch {job_id}] Skipping same-file re-upload (file_unique_id={f_uid})")
+                                    last_seen = max(last_seen, m.id)
+                                    continue
+                                await db.db["live_batch_seen"].update_one(
+                                    {"job_id": job_id, "file_uid": f_uid},
+                                    {"$set": {"file_uid": f_uid, "msg_id": m.id, "fname": fname, "at": time.time()}},
+                                    upsert=True
+                                )
+
+                            ep_res = extract_ep_label_robust(fname)
+                            incoming_nums = ep_res.get("numbers", [])
+                            if incoming_nums:
+                                already_posted = await db.db["live_batch_posted_eps"].find_one({
+                                    "target": target_ch_int,
+                                    "story": story_name,
+                                    "nums": {"$in": incoming_nums}
+                                })
+                                if already_posted:
+                                    logger.info(f"[LiveBatch {job_id}] Skipping episodes {incoming_nums} — already posted to destination")
+                                    last_seen = max(last_seen, m.id)
+                                    continue
+
+                        buffer_mids.append(m.id)
+                        existing_buf.add(m.id)
+                        new_added += 1
+
+                    if new_added:
+                        logger.info(f"[LiveBatch] Added {new_added} new IDs to buffer. Total: {len(buffer_mids)}")
+
+                    last_seen = max(m.id for m in raw_exists)
+                    await _lb_update_job(job_id, {"last_seen_id": last_seen, "buffer_mids": buffer_mids})
+
+                fresh_job = await _lb_get_job(job_id)
+                buffer_mids = fresh_job.get("buffer_mids", buffer_mids)
+                force = fresh_job.get("force_flush", False)
+
+                if force:
+                    await _lb_update_job(job_id, {"force_flush": False})
+
+                if buffer_mids and (len(buffer_mids) >= thresh or force):
+                    to_post = buffer_mids if force else buffer_mids[:thresh]
+                    while to_post:
+                        chunk_ids = to_post[:100]
+                        remaining_post = to_post[100:]
+                        
+                        actual_msgs = await src_client.get_messages(source, chunk_ids)
+                        if not isinstance(actual_msgs, list): actual_msgs = [actual_msgs]
+                        actual_msgs = [m for m in actual_msgs if m and not m.empty]
+                        
+                        if not actual_msgs:
+                            logger.info(f"[LiveBatch] All {len(chunk_ids)} messages in chunk were deleted or invalid. Removing from buffer.")
+                            buffer_mids = [mid for mid in buffer_mids if mid not in chunk_ids]
+                            await _lb_update_job(job_id, {"buffer_mids": buffer_mids})
+                            to_post = remaining_post if force else (buffer_mids[:thresh] if len(buffer_mids) >= thresh else [])
+                            continue
+                        
+                        res = await _post_live_batch(sb_client, job, actual_msgs)
+                        success = res[0] if isinstance(res, tuple) else res
+                        
+                        if success:
+                            new_mids = res[1] if isinstance(res, tuple) else []
+                            upd_btns = res[2] if isinstance(res, tuple) else []
+                            
+                            fwd_count += len(chunk_ids)
+                            buffer_mids = [mid for mid in buffer_mids if mid not in chunk_ids]
+                            
+                            update_dict = {"buffer_mids": buffer_mids, "forwarded": fwd_count}
+                            if new_mids: update_dict["posted_mids"] = new_mids
+                            if upd_btns: update_dict["all_buttons"] = upd_btns
+                            
+                            await _lb_update_job(job_id, update_dict)
+                            job = await _lb_get_job(job_id)
+                            logger.info(f"[LiveBatch] Posted batch of {len(chunk_ids)} files. Buffer remaining: {len(buffer_mids)}")
+                        else:
+                            logger.warning(f"[LiveBatch] Post failed, will retry next cycle.")
+                            break
+                        
+                        to_post = remaining_post if force else (buffer_mids[:thresh] if len(buffer_mids) >= thresh else [])
+
+                now_t = time.time()
+                up_time = job.get("last_prog_update", 0)
+                if prog_id and (now_t - up_time) > 60:
+                    try:
+                        await sb_client.edit_message_text(target, prog_id,
+                            f"📡 <b>Bᴀᴛᴄʜ Lɪɴᴋs Lɪᴠᴇ Aᴜᴛᴏ-Gᴇɴᴇʀᴀᴛᴏʀ</b>\n\n"
+                            f"✅ Auto-Generated Blocks: <code>{fwd_count}</code>\n"
+                            f"»  Last updated: <code>{time.strftime('%H:%M:%S')}</code>\n\n"
+                            f"<i>This message updates every 60s. Arya Bot</i>"
+                        )
+                        await _lb_update_job(job_id, {"last_prog_update": now_t})
+                    except: pass
+
+                await asyncio.sleep(20)
+
+            except asyncio.CancelledError:
+                logger.info(f"Live Batch job {job_id} was cancelled.")
+                raise
+            except Exception as e:
+                logger.error(f"Live Batch generic loop error: {e}")
+                await asyncio.sleep(20)
+
     finally:
         logger.info(f"Stopping Live Batch job {job_id}")
         _lb_tasks.pop(job_id, None)
