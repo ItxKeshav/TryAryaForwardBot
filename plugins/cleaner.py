@@ -824,15 +824,13 @@ async def _cl_run_job(job_id: str, bot=None):
                     fail_count += 1
                     logger.error(f"[Cleaner {job_id}] Error at msg {msg_id}: {e}")
                     if fail_count > 5:
-                        err_msg = f"Failed {fail_count}x at msg {msg_id}: {str(e)[:200]} - Skipping file."
-                        logger.error(f"[Cleaner {job_id}] {err_msg}")
+                        err_msg = f"Failed {fail_count}x at msg {msg_id}: {str(e)[:200]}"
+                        await _cl_update_job(job_id, {"status": "failed", "error": err_msg})
                         if bot:
-                            try: await bot.send_message(uid, f"⚠️ <b>Cleaner job Note:</b>\n<code>{err_msg[:400]}</code>")
+                            try: await bot.send_message(uid, f"⚠️ <b>Cleaner job failed:</b>\n<code>{err_msg[:400]}</code>")
                             except: pass
-                        # Skip the bad message instead of failing the whole job
-                        fail_count = 0
-                        msg_id += 1
-                        continue
+                        job_failed = True
+                        break   # break inner for-loop
                     await asyncio.sleep(5)
             
             # ── End of loop logic ──
