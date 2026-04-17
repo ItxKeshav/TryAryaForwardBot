@@ -260,9 +260,15 @@ class CLIENT:
      elif user == True:
         # data is session string directly, use memory temporarily (wait, add_session handles this right after)
         return Client("temp_userbot_creation", self.api_id, self.api_hash, session_string=data, max_concurrent_transmissions=7, in_memory=True)
-     elif user != False:
-        data = data.get('token')
-     return Client("BOT", self.api_id, self.api_hash, bot_token=data, in_memory=True, max_concurrent_transmissions=7)  
+     
+     if user != False:
+        token = data.get('token')
+        sname = f"bot_{data.get('id', 'temp')}"
+     else:
+        token = data
+        sname = f"bot_{str(token).split(':')[0] if ':' in str(token) else 'temp'}"
+        
+     return Client(sname, self.api_id, self.api_hash, bot_token=token, in_memory=True, max_concurrent_transmissions=7)
   async def add_bot(self, bot, message):
      user_id = int(message.from_user.id)
      msg = await bot.ask(chat_id=user_id, text=BOT_TOKEN_TEXT)
