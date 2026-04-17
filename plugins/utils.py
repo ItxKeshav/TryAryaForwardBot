@@ -330,69 +330,72 @@ async def safe_resolve_peer(client, chat_id, bot=None):
 
 def extract_ep_label_robust(fname: str) -> dict:
     import re
-    # 1. Extensions & Metadata Markers
+
+    # ── 1. Strip extension & metadata markers ────────────────────────────────
     base = re.sub(r'\.\w{2,5}$', '', fname)
     base = re.sub(r'(?i)\b(?:copy|duplicate|v\d+)\b', '', base)
     base = re.sub(r'(?i)\(\s*(?:copy|duplicate|\d+)\s*\)\s*$', '', base)
     b_norm = base.strip()
-    
-    # 2. Normalize common delimiters
-    # Matches Hyphen, En Dash, Em Dash, Horizontal Bar, Minus Sign, and multiple Tildes
+
+    # ── 2. Normalize dash variants → plain hyphen ────────────────────────────
     dash_variants = r'[\-\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uFE63\uFF0D~～]+'
     b_norm = re.sub(dash_variants, '-', b_norm)
-    
-    # Normalize common range 'to' keywords and underscore-separated numbers
-    # "158 to 190" -> "158-190", "158_to_190" -> "158-190", "158_190" -> "158-190"
+
+    # ── 3. Normalize "N _TO_ M" / "N to M" / "N से M" → "N-M" ──────────────
+    # Handles: 480_TO_482 · 540 to 558 · Saaya_158_to_190 · 480 से 490
     b_norm = re.sub(r'(?i)[\s_]+(?:to|से)[\s_]+', '-', b_norm)
+    # Also handle underscore-separated numbers like 480_482 → 480-482
     b_norm = re.sub(r'(\d+)_+(\d+)', r'\1-\2', b_norm)
-    
-    # 2.5 Strip trailing numbers ONLY if they aren't part of a range
-    # e.g. "Title_100-200" should stay, "Title_128kbps" can go (if not range)
+
+    # ── 4. Clean trailing lone `_digits` only if no range present ────────────
     if not re.search(r'\d+-\d+\s*$', b_norm):
-        # Only strip trailing _digits if there's no range detected yet
         b_norm = re.sub(r'(?<!\d)_\d+\s*$', '', b_norm)
 
-    # Strip spaces around dashes
+    # Strip spaces around dashes for cleaner matching
     b_norm = re.sub(r'\s*-\s*', '-', b_norm)
-    
+
+    # Common audio bitrates — should NEVER be mistaken for episode numbers
+    _BITRATES = {32, 64, 96, 128, 160, 192, 224, 256, 320, 512}
+
     num = r'\d{1,5}'
 
     def _format_res(label_found, nums):
         if not nums:
             return {"label": "", "numbers": [], "is_range": False}
-        if len(nums) > 1:
-            # Sort and unique
-            nums = sorted(list(set(nums)))
-            # If it's a range, return as "min-max"
-            return {"label": f"{nums[0]}-{nums[-1]}", "numbers": nums, "is_range": True}
-        else:
+        nums = sorted(set(int(n) for n in nums))
+        if len(nums) == 1 or (len(nums) > 1 and nums[0] == nums[-1]):
+            # Single number OR degenerate range like 536-536
             return {"label": str(nums[0]), "numbers": [nums[0]], "is_range": False}
-    
-    # Priority 1: Greedy Range Check (for grouped files like 100-200, 100 to 200, 100_200)
-    # This must come first to avoid picking just "100" as the episode.
+        return {"label": f"{nums[0]}-{nums[-1]}", "numbers": nums, "is_range": True}
+
+    # ── Priority 1: Greedy Range (N-M, N to M, N_TO_M, etc.) ────────────────
+    # Must come FIRST to prevent single-number fallback from stealing one end.
     range_sep = r'(?:[\s\-_,\.]+|to|से)+'
-    # Look for a sequence of numbers separated by range-like characters
-    # e.g. "158 to 190", "480_482", "540-558"
-    greedy_range = re.search(r'(?<!\d)(' + num + r'(?:' + range_sep + num + r')+)(?!\d)', b_norm, re.IGNORECASE)
+    greedy_range = re.search(
+        r'(?<!\d)(' + num + r'(?:' + range_sep + num + r')+)(?!\d)',
+        b_norm, re.IGNORECASE
+    )
     if greedy_range:
         label_raw = greedy_range.group(1)
-        # Extract all numbers and verify it's a multi-number sequence
         nums = [int(n) for n in re.findall(r'\d+', label_raw) if int(n) < 10000]
-        if len(nums) > 1:
+        if len(nums) >= 1:  # even a single num after dedup is fine
             return _format_res(label_raw, nums)
 
-    # Priority 2: Keywords like Ep, Episode, etc.
-    kw_delims = r'(?:\s*[\-\,\|\/]\s*)' 
+    # ── Priority 2: Keyword-tagged episodes (Ep, Episode, Part, #, eps…) ────
+    kw_delims = r'(?:\s*[\-\,\|\/]\s*)'
     kw_num_seq = f'(?:{num}(?:{kw_delims}{num})*)'
-    kw_pattern = r'(?i)\b(?:episode|epi|ep|e|part|#|एपिसोड|भाग|eps)(?:s)?\s*[\-\:\.\_\*\#]*\s*(' + kw_num_seq + r')(?![0-9])'
+    kw_pattern = (
+        r'(?i)\b(?:episode|epi|ep|e|part|#|एपिसोड|भाग|eps)(?:s)?'
+        r'\s*[\-\:\.\\_\*\#]*\s*(' + kw_num_seq + r')(?![0-9])'
+    )
     kw_m = re.search(kw_pattern, b_norm)
     if kw_m:
         label_raw = kw_m.group(1).strip()
         nums = [int(n) for n in re.findall(r'\d+', label_raw) if int(n) < 10000]
         return _format_res(label_raw, nums)
 
-    # Priority 3: Bracketed group sequences like [100-110], (100 | 101)
-    br_delims = r'(?:\s*[\-\,\|\/\&\+\_]\s*)' 
+    # ── Priority 3: Bracketed number group ([100-110], (100|101), {5&6}) ────
+    br_delims = r'(?:\s*[\-\,\|\/\&\+\_]\s*)'
     br_num_seq = f'(?:{num}(?:{br_delims}{num})*)'
     br_pattern = r'[\[\(\<\{【『]\s*(' + br_num_seq + r')\s*[\]\)\>\}】』]'
     br_m = re.search(br_pattern, b_norm)
@@ -400,9 +403,9 @@ def extract_ep_label_robust(fname: str) -> dict:
         label_raw = br_m.group(1).strip().replace('_', '-')
         nums = [int(n) for n in re.findall(r'\d+', label_raw) if int(n) < 10000]
         return _format_res(label_raw, nums)
-    
-    # Priority 4: Pure number sequence (fallback)
-    pure_delims = r'(?:\s*[\-\,\|\/\&\+\_]\s*)' 
+
+    # ── Priority 4: Pure number sequence (fallback multi-number) ────────────
+    pure_delims = r'(?:\s*[\-\,\|\/\&\+\_]\s*)'
     pure_num_seq = f'(?:{num}(?:{pure_delims}{num})+)'
     r_m = re.search(r'(?<!\d)(' + pure_num_seq + r')(?!\d)', b_norm)
     if r_m:
@@ -410,15 +413,19 @@ def extract_ep_label_robust(fname: str) -> dict:
         nums = [int(n) for n in re.findall(r'\d+', label_raw) if int(n) < 10000]
         return _format_res(label_raw, nums)
 
-    # Priority 5: Leading zero-padded or plain number (single episode)
+    # ── Priority 5: Leading zero-padded or plain number at start of name ────
     lead = re.match(r'^0*(\d{1,5})(?:[^0-9]|$)', b_norm)
     if lead:
-        n_str = lead.group(1)
-        return {"label": n_str, "numbers": [int(n_str)], "is_range": False}
+        n_val = int(lead.group(1))
+        return {"label": str(n_val), "numbers": [n_val], "is_range": False}
 
-    # Priority 5: Single lone numbers
+    # ── Priority 6: Any lone number not looking like a year or bitrate ───────
     nums_all = re.findall(r'(?<!\d)(\d{1,5})(?!\d)', b_norm)
-    filtered = [n for n in nums_all if not (1900 <= int(n) <= 2100)]
+    filtered = [
+        n for n in nums_all
+        if not (1900 <= int(n) <= 2100)   # exclude years
+        and int(n) not in _BITRATES        # exclude audio bitrates
+    ]
     if filtered:
         return {"label": filtered[0], "numbers": [int(filtered[0])], "is_range": False}
 
