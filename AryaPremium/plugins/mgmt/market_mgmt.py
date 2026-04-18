@@ -1418,12 +1418,17 @@ async def _premium_bot_set(client, user_id, b_id, key, label):
 
     pretty_label = label.replace('_', ' ').title()
 
+    extra_note = ""
+    if key in ["welcome", "about", "quote", "quote_author"]:
+        extra_note = "Send <code>disable</code> to completely hide this section.\n"
+
     msg = await native_ask(
         client,
         user_id,
         f"<b>❪ SET: {utils.to_smallcap(pretty_label)} ❫</b>\n\n"
         f"Send the new {pretty_label} for your Store Bot.\n"
-        f"Send <code>/reset</code> to remove it.\n\n"
+        f"{extra_note}"
+        f"Send <code>/reset</code> to revert to default.\n\n"
         f"{note}",
         reply_markup=ReplyKeyboardMarkup([["❮ Cancel"]], resize_keyboard=True)
     )
@@ -1438,7 +1443,13 @@ async def _premium_bot_set(client, user_id, b_id, key, label):
     
     if getattr(msg, 'text', None) == "/reset":
         await db.db.premium_bots.update_one({"id": int(b_id)}, {"$unset": {f"config.{key}": ""}})
-        return await client.send_message(user_id, f"✅ {label} has been **Reset**.", reply_markup=ReplyKeyboardRemove())
+        tmp_rm = await client.send_message(user_id, "...", reply_markup=ReplyKeyboardRemove())
+        await tmp_rm.delete()
+        back_target = f"mk#bot_view_{b_id}"
+        if key in ["welcome", "about", "quote", "quote_author", "upi_redirect", "upi_name", "logo", "menu_media"]:
+            back_target = f"mk#p_wa_{b_id}"
+        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton(utils.to_smallcap("Back"), callback_data=back_target)]])
+        return await client.send_message(user_id, f"<i>✅ {label} has been Reset to default.</i>", reply_markup=back_kb)
         
     val = msg.text or msg.caption or ""
     if key in ["logo", "fetching_media"]:
@@ -1506,7 +1517,16 @@ async def _premium_bot_set(client, user_id, b_id, key, label):
             )
         
     await db.db.premium_bots.update_one({"id": int(b_id)}, {"$set": {f"config.{key}": val}})
-    await client.send_message(user_id, f"✅ **{label}** successfully updated!", reply_markup=ReplyKeyboardRemove())
+    
+    tmp_m = await client.send_message(user_id, "...", reply_markup=ReplyKeyboardRemove())
+    await tmp_m.delete()
+
+    back_target = f"mk#bot_view_{b_id}"
+    if key in ["welcome", "about", "quote", "quote_author", "upi_redirect", "upi_name", "logo", "menu_media"]:
+        back_target = f"mk#p_wa_{b_id}"
+    back_kb = InlineKeyboardMarkup([[InlineKeyboardButton(utils.to_smallcap("Back"), callback_data=back_target)]])
+
+    await client.send_message(user_id, f"<i>✅ {label} successfully updated!</i>", reply_markup=back_kb)
 
 
 async def _menu_media_add_flow(client, user_id: int, b_id: str):
