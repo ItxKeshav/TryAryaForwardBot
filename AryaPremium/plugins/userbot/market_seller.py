@@ -1177,26 +1177,27 @@ async def _process_callback(client, query):
         kb = [[InlineKeyboardButton("« " + _sc("BACK TO REQUESTS"), callback_data="mb#my_reqs_0")]]
         await _safe_edit(query.message, text=txt_d, markup=InlineKeyboardMarkup(kb))
         return
-        elif action == "settings":
-            kb = [
-                [InlineKeyboardButton("English", callback_data="mb#lang#en"),
-                 InlineKeyboardButton("हिंदी", callback_data="mb#lang#hi")],
-                [InlineKeyboardButton(f"❮ {_sc('BACK')}", callback_data="mb#main_back")]
-            ]
-            await _safe_edit(query.message, text=f"<b>⚙️ Settings</b>\n\nSelect your language:", markup=InlineKeyboardMarkup(kb))
 
-        elif action == "help":
-            await query.answer()
-            return await _show_help_menu(client, query, 0)
+    if cmd.startswith("main_") and 'action' in dir():
+        pass  # already handled above
+    elif cmd == "main_settings":
+        action = "settings"
+        kb = [
+            [InlineKeyboardButton("English", callback_data="mb#lang#en"),
+             InlineKeyboardButton("हिंदी", callback_data="mb#lang#hi")],
+            [InlineKeyboardButton(f"❮ {_sc('BACK')}", callback_data="mb#main_back")]
+        ]
+        await _safe_edit(query.message, text=f"<b>⚙️ Settings</b>\n\nSelect your language:", markup=InlineKeyboardMarkup(kb))
 
+    elif cmd == "main_help":
+        await query.answer()
+        return await _show_help_menu(client, query, 0)
 
-        elif action == "close":
-            await query.message.delete()
+    elif cmd == "main_close":
+        await query.message.delete()
 
-
-
-        elif action == "back":
-            await _edit_main_menu_in_place(client, query, query.from_user, lang)
+    elif cmd == "main_back":
+        await _edit_main_menu_in_place(client, query, query.from_user, lang)
 
     elif cmd == "return_main":
         await _edit_main_menu_in_place(client, query, query.from_user, lang)
