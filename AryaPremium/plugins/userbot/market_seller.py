@@ -313,13 +313,8 @@ def _menu_card_text(user, bt_cfg: dict, bot_name: str) -> str:
     blocks = []
     if welcome.strip():
         blocks.append(f'<blockquote expandable="true">{welcome}</blockquote>')
-        blocks.append("")
     if about.strip():
         blocks.append(f'<blockquote expandable="true">{about}</blockquote>')
-    
-    # Separator for the quote block
-    if about.strip() and quote.strip():
-        blocks.append("")
         
     if quote.strip():
         blocks.append(f'<blockquote expandable="true">{quote}</blockquote>')
