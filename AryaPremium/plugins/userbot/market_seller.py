@@ -717,7 +717,26 @@ async def _process_start(client, message):
         ))
         
     user = await db.get_user(user_id)
-    args = message.command
+    args = getattr(message, 'command', ["start"])
+
+    if not user.get('fsub_seen'):
+        await db.update_user(user_id, {"fsub_seen": True})
+        
+        fsub_text = (
+            f"<b>⟦ {to_mathbold('CHANNEL UPDATES')} ⟧</b>\n\n"
+            f"<blockquote expandable>"
+            f"<i>{_sc('Join our official channel to receive future updates, new story releases, and a complete guide on how to use this bot.')}</i>\n"
+            f"</blockquote>"
+        )
+        
+        pl = args[1][:30] if len(args) > 1 else "main"
+        kb = [
+            [InlineKeyboardButton("➦ " + to_mathbold("JOIN CHANNEL"), url="https://t.me/AryaPremiumTG")],
+            [InlineKeyboardButton("⟴ " + to_mathbold("CONTINUE TO BOT"), callback_data=f"mb#fs_cont#{pl}")]
+        ]
+        from pyrogram import enums
+        return await client.send_message(user_id, fsub_text, reply_markup=InlineKeyboardMarkup(kb), disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML)
+
 
     if 'lang' not in user:
         kb = [[InlineKeyboardButton("English", callback_data="mb#lang#en"),
@@ -1105,6 +1124,20 @@ async def _process_callback(client, query):
     lang = user.get('lang', 'en')
     data = query.data.split('#')
     cmd = data[1]
+
+    # optional channel join intercept processor
+    if cmd.startswith("fs_cont"):
+        payload = ""
+        if len(data) > 2:
+            payload = data[2]
+        try:
+            await query.message.delete()
+        except:
+            pass
+        msg = query.message
+        msg.from_user = query.from_user
+        msg.command = ["start", payload] if payload and payload != "main" else ["start"]
+        return await _process_start(client, msg)
 
     # ── About Arya ──
     if cmd.startswith("about_arya_"):
@@ -1582,20 +1615,21 @@ async def _process_callback(client, query):
             )
             
             kb = [
-                [InlineKeyboardButton(f"💳 {_sc('PAY VIA')} {_sc(method.upper())}", url=url)],
-                [InlineKeyboardButton(f"✅ {_sc('VERIFY PAYMENT')}", callback_data=f"mb#{method}_check#{s_id}")],
+                [InlineKeyboardButton(f"⟴ {to_mathbold('PAY VIA')} {to_mathbold(method.upper())}", url=url)],
+                [InlineKeyboardButton(f"✓ {to_mathbold('VERIFY PAYMENT')}", callback_data=f"mb#{method}_check#{s_id}")],
                 [InlineKeyboardButton(f"« ❮ {_sc('BACK')}", callback_data="mb#return_main")]
             ]
             check_txt = (
-                f"<b>🛍️ {_sc('CHECKOUT')}</b>\n"
+                f"<b>⟦ {to_mathbold('CHECKOUT')} ⟧</b>\n"
                 f"────────────────────\n"
-                f"<b>📦 {_sc('Item')} :</b> {story.get('story_name_en', 'Premium Story')}\n"
-                f"<b>💰 {_sc('Amount')} :</b> ₹{price}\n"
+                f"<b>▫️ {_sc('Item')} :</b> {story.get('story_name_en', 'Premium Story')}\n"
+                f"<b>▫️ {_sc('Amount')} :</b> ₹{price}\n"
                 f"────────────────────\n"
-                f"{_sc('You are paying for this premium story.')}\n"
-                f"{_sc('Instant verification & delivery.')}\n"
-                f"────────────────────\n"
-                f"<i>{_sc('Click below to pay. Once done, tap Verify.')}</i>"
+                f"<blockquote expandable>"
+                f"<i>{_sc('You are paying for this premium story.')}</i>\n"
+                f"<i>{_sc('Instant verification & delivery.')}</i>\n\n"
+                f"<i>{_sc('Click the payment button below to pay securely. Once done, tap Verify.')}</i>\n"
+                f"</blockquote>"
             )
             await query.message.edit_text(check_txt, reply_markup=InlineKeyboardMarkup(kb))
 
