@@ -539,16 +539,21 @@ async def _show_story_profile(client, user_id, story, lang):
     image = story.get('image')
     price = story.get('price', 0)
 
-    # Description intentionally hidden for now.
+    desc = story.get('description', '').strip()
     header_txt = (
-        f"<blockquote expandable>"
-        f"<b>♨️Story :</b> {to_mathbold(name)}\n"
-        f"<b>🔰Status :</b> <b>{status}</b>\n"
-        f"<b>🖥Platform :</b> <b>{platform}</b>\n"
-        f"<b>🧩Genre :</b> <b>{genre}</b>\n"
-        f"<b>🎬Episodes :</b> <b>{episodes}</b>"
-        f"</blockquote>"
+        f"<b>♨️ Story:</b> {to_mathbold(name)}\n"
+        f"<b>🔰 Status:</b> <b>{status}</b>\n"
+        f"<b>🖥 Platform:</b> <b>{platform}</b>\n"
+        f"<b>🧩 Genre:</b> <b>{genre}</b>\n"
+        f"<b>🎬 Episodes:</b> <b>{episodes}</b>\n\n"
     )
+    if desc and desc.lower() != "none":
+        header_txt += (
+            f"<b>Story Description</b>\n"
+            f"<blockquote expandable>"
+            f"-{to_mathbold(desc)}"
+            f"</blockquote>\n"
+        )
     txt = header_txt
         
     kb = [
