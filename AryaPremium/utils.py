@@ -75,6 +75,28 @@ async def _deliver_purchased_story(bot_id: str, user_id: int, story: dict):
     # Show the delivery choice screen to the user (DM vs Channel as inline buttons)
     await dispatch_delivery_choice(seller_cli, user_id, story)
 
+async def _safe_send_log(client, channel_id: int, text: str, photo_path: str = None):
+    try:
+        if photo_path:
+            await client.send_photo(channel_id, photo=photo_path, caption=text)
+        else:
+            await client.send_message(channel_id, text=text)
+    except Exception as e:
+        err_str = str(e).upper()
+        if "PEER_ID_INVALID" in err_str or "CHANNEL_INVALID" in err_str or "CHANNEL_PRIVATE" in err_str:
+            import logging; logging.getLogger(__name__).warning("Peer missing in cache, fetching dialogs to warm up...")
+            try:
+                # Fetch recent dialogs to populate Pyrogram's peer cache
+                async for _ in client.get_dialogs(limit=100): pass
+                if photo_path:
+                    await client.send_photo(channel_id, photo=photo_path, caption=text)
+                else:
+                    await client.send_message(channel_id, text=text)
+            except Exception as e2:
+                logging.getLogger(__name__).error(f"Retry failed for channel {channel_id}: {e2}")
+        else:
+            raise e
+
 async def log_payment(user_id: int, user_first_name: str, s_name: str, amount, method: str,
                       receipt_id: str = "", photo_path: str = None, username: str = "", pay_link: str = "", order_id: str = "", user_last_name: str = ""):
     from config import Config
@@ -117,9 +139,9 @@ async def log_payment(user_id: int, user_first_name: str, s_name: str, amount, m
             f"<b>❖ Time:</b> {time_str}"
         )
         if photo_path:
-            await db.mgmt_client.send_photo(int(Config.PAYMENT_LOGS_CHANNEL), photo=photo_path, caption=caption)
+            await _safe_send_log(db.mgmt_client, int(Config.PAYMENT_LOGS_CHANNEL), caption, photo_path=photo_path)
         else:
-            await db.mgmt_client.send_message(int(Config.PAYMENT_LOGS_CHANNEL), text=caption)
+            await _safe_send_log(db.mgmt_client, int(Config.PAYMENT_LOGS_CHANNEL), caption)
     except Exception as e:
         import logging; logging.getLogger(__name__).error(f"Payment log error: {e}")
 
@@ -148,7 +170,7 @@ async def log_delivery(bot_username: str, user_id: int, user_first_name: str, s_
             f"<b>Status:</b> {status}\n"
             f"<b>Date:</b> {time_str}"
         )
-        await db.mgmt_client.send_message(int(Config.DELIVERY_LOGS_CHANNEL), text=text)
+        await _safe_send_log(db.mgmt_client, int(Config.DELIVERY_LOGS_CHANNEL), text)
     except Exception as e:
         import logging; logging.getLogger(__name__).error(f"Delivery log error: {e}")
 
@@ -184,12 +206,7 @@ async def log_arya_event(event_type: str, user_id: int, user_info: dict, details
             f"<b>Time:</b> {time_str}"
         )
         channel_id = int(Config.ARYA_LOGS_CHANNEL)
-        # resolve_peer warms Pyrogram's internal InputPeer cache for channels
-        try:
-            await db.mgmt_client.resolve_peer(channel_id)
-        except Exception:
-            pass
-        await db.mgmt_client.send_message(channel_id, text=text)
+        await _safe_send_log(db.mgmt_client, channel_id, text)
     except Exception as e:
         import logging; logging.getLogger(__name__).error(f"Arya core log error: {e}")
 
