@@ -664,40 +664,41 @@ async def _show_story_details(client, msg_or_query, story, lang, bot_cfg: dict =
     upi_restricted = _is_upi_restricted()
     show_upi = upi_enabled and not upi_restricted
 
-    # The user wants this specific block in a quoteblock and collapsible (expandable)
-    # Removing ONLY the ⚡ emoji and fixing font (standard readable)
     rzp_benefit = (
         f"<blockquote expandable>"
-        f"Instant methods ensure immediate delivery.\n"
-        f"Pay via Razorpay for instant access — no waiting, no manual verification.\n"
-        f"Supports UPI, Debit/Credit Card, Net Banking, Wallets & more."
+        f"\ud835\udda8\ud835\uddc7\ud835\uddcc\ud835\uddcd\ud835\uddba\ud835\uddc7\ud835\uddcd \ud835\uddcf\ud835\uddbe\ud835\uddcb\ud835\uddc2\ud835\uddbf\ud835\uddc2\ud835\uddbc\ud835\uddba\ud835\uddcd\ud835\uddc2\ud835\uddc8\ud835\uddc7. \ud835\uddad\ud835\uddc8 \ud835\uddd0\ud835\uddba\ud835\uddc2\ud835\uddcd\ud835\uddc2\ud835\uddc7\ud835\uddc0 \u2014 \ud835\uddc7\ud835\uddc8 \ud835\uddc6\ud835\uddba\ud835\uddc7\ud835\uddce\ud835\uddba\ud835\uddc5 \ud835\uddbc\ud835\uddc1\ud835\uddbe\ud835\uddbc\ud835\uddc4\ud835\uddcc.\n"
+        f"\ud835\uddb2\ud835\uddce\ud835\uddc9\ud835\uddc9\ud835\uddc8\ud835\uddcb\ud835\uddcd\ud835\uddcc \ud835\uddae\ud835\uddd4\ud835\udddc, \ud835\uddd7\ud835\uddbe\ud835\uddbb\ud835\uddc2\ud835\uddcd/\ud835\uddd6\ud835\uddcb\ud835\uddbe\ud835\uddbd\ud835\uddc2\ud835\uddcd \ud835\uddd6\ud835\uddba\ud835\uddcb\ud835\uddbd, \ud835\uddad\ud835\uddbe\ud835\uddcd \ud835\udda1\ud835\uddba\ud835\uddc7\ud835\uddc4\ud835\uddc2\ud835\uddc7\ud835\uddc0, \ud835\uddb6\ud835\uddba\ud835\uddc5\ud835\uddc5\ud835\uddbe\ud835\uddcd\ud835\uddcc & \ud835\uddc6\ud835\uddc8\ud835\uddcb\ud835\uddbe."
         f"</blockquote>"
     )
 
     txt = (
-        f"<b>🛒 SHOPPING CART</b>\n"
-        f"────────────────────\n"
-        f"<b>📦 Product :</b> {name}\n"
-        f"<b>🏷️ Platform :</b> {platform}\n"
-        f"<b>🎬 Episodes :</b> ~{ep_count}\n"
-        f"────────────────────\n"
-        f"<b>💰 Total Amount : ₹{price}</b>\n"
-        f"────────────────────\n"
-        f"<i>Select your preferred payment method:</i>\n\n"
-        f"💡 {rzp_benefit}"
+        f"<b>\u27e6 \ud835\udde6\ud835\udde7\ud835\udde2\ud835\udde5\ud835\udde5 \ud835\udfee\u27e7</b>\n\n"
+        f"<b>\ud835\ude82\ud835\ude9d\ud835\ude8e\ud835\ude99 \ud835\udff7: \ud835\uddd6\ud835\uddc8\ud835\uddc7\ud835\uddbf\ud835\uddc2\ud835\uddcb\ud835\uddc6 \ud835\uddd8\ud835\uddc7\ud835\uddcd\ud835\uddcb\ud835\uddd2</b>\n"
+        f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
+        f"<b>{_sc('Item')} :</b> {name}\n"
+        f"<b>{_sc('Platform')} :</b> {platform}\n"
+        f"<b>{_sc('Episodes')} :</b> ~{ep_count}\n"
+        f"<b>{_sc('Amount')} :</b> \u20b9{price}\n"
+        f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
+        f"<b>\ud835\ude82\ud835\ude9d\ud835\ude8e\ud835\ude99 \ud835\udff8: \ud835\uddd6\ud835\uddc1\ud835\uddc8\ud835\uddc8\ud835\uddcc\ud835\uddbe \ud835\uddd4 \ud835\uddd4\ud835\uddba\ud835\uddd2\ud835\uddc6\ud835\uddbe\ud835\uddc7\ud835\uddcd \ud835\udde0\ud835\uddbe\ud835\uddcd\ud835\uddc1\ud835\uddc8\ud835\uddbd</b>\n"
+        f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
+        f"\u2022 <b>\ud835\udde5\ud835\uddd4\ud835\uddde\ud835\udde2\ud835\udde5\ud835\udde3\ud835\uddd4\ud835\uddec:</b> \ud835\uddac\ud835\uddba\ud835\uddc4\ud835\uddbe \ud835\uddc9\ud835\uddba\ud835\uddd2\ud835\uddc6\ud835\uddbe\ud835\uddc7\ud835\uddcd \u2192 \ud835\uddc2\ud835\uddc7\ud835\uddcc\ud835\uddcd\ud835\uddba\ud835\uddc7\ud835\uddcd \ud835\uddbc\ud835\uddc8\ud835\uddc7\ud835\uddbf\ud835\uddc2\ud835\uddcb\ud835\uddc6\ud835\uddba\ud835\uddcd\ud835\uddc2\ud835\uddc8\ud835\uddc7 & \ud835\uddbd\ud835\uddbe\ud835\uddc5\ud835\uddc2\ud835\uddcf\ud835\uddbe\ud835\uddcb\ud835\uddd2.\n"
+        f"\u2022 <b>UPI ({_sc('Manual')}):</b> \ud835\uddac\ud835\uddba\ud835\uddc4\ud835\uddbe \ud835\uddc9\ud835\uddba\ud835\uddd2\ud835\uddc6\ud835\uddbe\ud835\uddc7\ud835\uddcd \u2192 \ud835\uddce\ud835\uddc9\ud835\uddc5\ud835\uddc8\ud835\uddba\ud835\uddbd \ud835\uddcc\ud835\uddbc\ud835\uddcb\ud835\uddbe\ud835\uddbe\ud835\uddc7\ud835\uddcc\ud835\uddc1\ud835\uddc8\ud835\uddcd \u2192 \ud835\uddba\ud835\uddd0\ud835\uddba\ud835\uddc2\ud835\uddcd \ud835\uddba\ud835\uddbd\ud835\uddc6\ud835\uddc2\ud835\uddc7 \ud835\uddbc\ud835\uddc1\ud835\uddbe\ud835\uddbc\ud835\uddc4 (up to 5 min).\n\n"
+        f"{rzp_benefit}"
     )
 
     kb = [
-        [InlineKeyboardButton("RAZORPAY", callback_data=f"mb#pay#razorpay#{str(story['_id'])}")],
+        [InlineKeyboardButton(f"\ud835\udde5\ud835\uddd4\ud835\uddde\ud835\udde2\ud835\udde5\ud835\udde3\ud835\uddd4\ud835\uddec \u2192 {_sc('PAY NOW')}", callback_data=f"mb#pay#razorpay#{str(story['_id'])}")],
     ]
     if show_upi:
-        kb.append([InlineKeyboardButton(f"UPI (Manual)", callback_data=f"mb#pay#upi#{str(story['_id'])}")])
-    kb.append([InlineKeyboardButton("❮ BACK", callback_data="mb#return_main")])
+        kb.append([InlineKeyboardButton(f"UPI \u2192 {_sc('MANUAL PAYMENT')}", callback_data=f"mb#pay#upi#{str(story['_id'])}")])
+    kb.append([InlineKeyboardButton(f"\u00ab \u276e {_sc('BACK')}", callback_data="mb#return_main")])
 
     if is_msg:
         await msg_or_query.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb))
     else:
         await msg_or_query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -717,26 +718,7 @@ async def _process_start(client, message):
         ))
         
     user = await db.get_user(user_id)
-    args = getattr(message, 'command', ["start"])
-
-    if not user.get('fsub_seen'):
-        await db.update_user(user_id, {"fsub_seen": True})
-        
-        fsub_text = (
-            f"<b>⟦ {to_mathbold('CHANNEL UPDATES')} ⟧</b>\n\n"
-            f"<blockquote expandable>"
-            f"<i>{_sc('Join our official channel to receive future updates, new story releases, and a complete guide on how to use this bot.')}</i>\n"
-            f"</blockquote>"
-        )
-        
-        pl = args[1][:30] if len(args) > 1 else "main"
-        kb = [
-            [InlineKeyboardButton("➦ " + to_mathbold("JOIN CHANNEL"), url="https://t.me/AryaPremiumTG")],
-            [InlineKeyboardButton("⟴ " + to_mathbold("CONTINUE TO BOT"), callback_data=f"mb#fs_cont#{pl}")]
-        ]
-        from pyrogram import enums
-        return await client.send_message(user_id, fsub_text, reply_markup=InlineKeyboardMarkup(kb), disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML)
-
+    args = message.command
 
     if 'lang' not in user:
         kb = [[InlineKeyboardButton("English", callback_data="mb#lang#en"),
@@ -757,16 +739,32 @@ async def _process_start(client, message):
                 return await dispatch_delivery_choice(client, user_id, story)
             return await _show_story_profile(client, user_id, story, lang)
 
+    # ── Optional Channel Join Prompt (non-blocking, shown once per user) ──
+    INVITE_CHANNEL = "https://t.me/AryaPremiumTG"
+    already_shown = user.get("channel_prompt_shown", False)
+    if not already_shown:
+        await db.update_user(user_id, {"channel_prompt_shown": True})
+        join_txt = (
+            f"<b>\u27e6 {_sc('JOIN OUR CHANNEL')} \u27e7</b>\n\n"
+            f"<blockquote expandable>"
+            f"\ud835\udda0\ud835\uddc5\ud835\uddc5 \ud835\uddce\ud835\uddc9\ud835\uddbd\ud835\uddba\ud835\uddcd\ud835\uddbe\ud835\uddcc, \ud835\uddcb\ud835\uddbe\ud835\uddc5\ud835\uddbe\ud835\uddba\ud835\uddcc\ud835\uddbe \ud835\uddc7\ud835\uddc8\ud835\uddcd\ud835\uddc2\ud835\uddbf\ud835\uddc2\ud835\uddbc\ud835\uddba\ud835\uddcd\ud835\uddc2\ud835\uddc8\ud835\uddc7\ud835\uddcc & \ud835\uddc7\ud835\uddbe\ud835\uddd0 \ud835\uddcc\ud835\uddcd\ud835\uddc8\ud835\uddcb\ud835\uddc2\ud835\uddbe\ud835\uddcc \ud835\uddba\ud835\uddcb\ud835\uddbe \ud835\uddc9\ud835\uddc8\ud835\uddcc\ud835\uddcd\ud835\uddbe\ud835\uddbd \ud835\uddcd\ud835\uddc1\ud835\uddbe\ud835\uddcb\ud835\uddbe.\n"
+            f"\ud835\uddd8\ud835\uddc8\ud835\uddc0\ud835\uddc0\ud835\uddc2 \ud835\uddc0\ud835\uddce\ud835\uddc2\ud835\uddbd\ud835\uddbe\ud835\uddcc \ud835\uddc8\ud835\uddc7 \ud835\uddc1\ud835\uddc8\ud835\uddd0 \ud835\uddcd\ud835\uddc8 \ud835\uddce\ud835\uddcc\ud835\uddbe \ud835\uddcd\ud835\uddc1\ud835\uddbe \ud835\uddbb\ud835\uddc8\ud835\uddcd \ud835\uddba\ud835\uddcb\ud835\uddbe \ud835\uddc9\ud835\uddce\ud835\uddbb\ud835\uddc5\ud835\uddc2\ud835\uddcc\ud835\uddc1\ud835\uddbe\ud835\uddbd \ud835\uddcd\ud835\uddc1\ud835\uddbe\ud835\uddcb\ud835\uddbe.\n"
+            f"\ud835\uddd9\ud835\uddce\ud835\uddcd\ud835\uddce\ud835\uddcb\ud835\uddbe \ud835\uddce\ud835\uddc9\ud835\uddbd\ud835\uddba\ud835\uddcd\ud835\uddbe\ud835\uddcc & \ud835\uddcc\ud835\uddce\ud835\uddc9\ud835\uddc9\ud835\uddc8\ud835\uddcb\ud835\uddcd \ud835\uddd0\ud835\uddc2\ud835\uddc5\ud835\uddc5 \ud835\uddba\ud835\uddc5\ud835\uddcc\ud835\uddc8 \ud835\uddbb\ud835\uddbe \ud835\uddbc\ud835\uddc8\ud835\uddc6\ud835\uddc6\ud835\uddce\ud835\uddc7\ud835\uddc2\ud835\uddbc\ud835\uddba\ud835\uddcd\ud835\uddbe\ud835\uddbd \ud835\uddcd\ud835\uddc1\ud835\uddbe\ud835\uddcb\ud835\uddbe. \ud835\uddd1\ud835\uddc8\ud835\uddc2\ud835\uddc7\ud835\uddc2\ud835\uddc7\ud835\uddc0 \ud835\uddc2\ud835\uddcc \ud835\uddc8\ud835\uddc9\ud835\uddcd\ud835\uddc2\ud835\uddc8\ud835\uddc7\ud835\uddba\ud835\uddc5."
+            f"</blockquote>"
+        )
+        join_kb = [
+            [InlineKeyboardButton(f"\u2713 {_sc('JOIN CHANNEL')}", url=INVITE_CHANNEL)],
+            [InlineKeyboardButton(f"\u276e {_sc('SKIP \u2192 CONTINUE TO BOT')}", callback_data="mb#skip_channel_prompt")]
+        ]
+        return await message.reply_text(join_txt, reply_markup=InlineKeyboardMarkup(join_kb))
+
     # Standard Main Menu
-    msg_txt = None
-        
-    wait_msg = await message.reply_text("<b>› › ⏳ " + _sc("WAIT A SECOND...") + "</b>", parse_mode=enums.ParseMode.HTML)
+    wait_msg = await message.reply_text("<b>\u203a \u203a \u23f3 " + _sc("WAIT A SECOND...") + "</b>", parse_mode=enums.ParseMode.HTML)
     await asyncio.sleep(0.4)
-    await wait_msg.edit_text("<b>› › ⌛ " + _sc("WAIT A SECOND...") + "</b>", parse_mode=enums.ParseMode.HTML)
+    await wait_msg.edit_text("<b>\u203a \u203a \u23f2 " + _sc("WAIT A SECOND...") + "</b>", parse_mode=enums.ParseMode.HTML)
     await asyncio.sleep(0.4)
     await wait_msg.delete()
 
-    # Always use the centralized menu sender (handles MEDIA_EMPTY and optional URL buttons)
     await _send_main_menu(client, user_id, message.from_user, lang, reply_to_message_id=message.id)
 
     
@@ -1125,19 +1123,12 @@ async def _process_callback(client, query):
     data = query.data.split('#')
     cmd = data[1]
 
-    # optional channel join intercept processor
-    if cmd.startswith("fs_cont"):
-        payload = ""
-        if len(data) > 2:
-            payload = data[2]
-        try:
-            await query.message.delete()
-        except:
-            pass
-        msg = query.message
-        msg.from_user = query.from_user
-        msg.command = ["start", payload] if payload and payload != "main" else ["start"]
-        return await _process_start(client, msg)
+    # ── Skip Channel Prompt ──
+    if cmd == "skip_channel_prompt":
+        await query.answer()
+        try: await query.message.delete()
+        except: pass
+        return await _send_main_menu(client, user_id, query.from_user, lang)
 
     # ── About Arya ──
     if cmd.startswith("about_arya_"):
@@ -1615,21 +1606,20 @@ async def _process_callback(client, query):
             )
             
             kb = [
-                [InlineKeyboardButton(f"⟴ {to_mathbold('PAY VIA')} {to_mathbold(method.upper())}", url=url)],
-                [InlineKeyboardButton(f"✓ {to_mathbold('VERIFY PAYMENT')}", callback_data=f"mb#{method}_check#{s_id}")],
+                [InlineKeyboardButton(f"💳 {_sc('PAY VIA')} {_sc(method.upper())}", url=url)],
+                [InlineKeyboardButton(f"✅ {_sc('VERIFY PAYMENT')}", callback_data=f"mb#{method}_check#{s_id}")],
                 [InlineKeyboardButton(f"« ❮ {_sc('BACK')}", callback_data="mb#return_main")]
             ]
             check_txt = (
-                f"<b>⟦ {to_mathbold('CHECKOUT')} ⟧</b>\n"
+                f"<b>🛍️ {_sc('CHECKOUT')}</b>\n"
                 f"────────────────────\n"
-                f"<b>▫️ {_sc('Item')} :</b> {story.get('story_name_en', 'Premium Story')}\n"
-                f"<b>▫️ {_sc('Amount')} :</b> ₹{price}\n"
+                f"<b>📦 {_sc('Item')} :</b> {story.get('story_name_en', 'Premium Story')}\n"
+                f"<b>💰 {_sc('Amount')} :</b> ₹{price}\n"
                 f"────────────────────\n"
-                f"<blockquote expandable>"
-                f"<i>{_sc('You are paying for this premium story.')}</i>\n"
-                f"<i>{_sc('Instant verification & delivery.')}</i>\n\n"
-                f"<i>{_sc('Click the payment button below to pay securely. Once done, tap Verify.')}</i>\n"
-                f"</blockquote>"
+                f"{_sc('You are paying for this premium story.')}\n"
+                f"{_sc('Instant verification & delivery.')}\n"
+                f"────────────────────\n"
+                f"<i>{_sc('Click below to pay. Once done, tap Verify.')}</i>"
             )
             await query.message.edit_text(check_txt, reply_markup=InlineKeyboardMarkup(kb))
 
