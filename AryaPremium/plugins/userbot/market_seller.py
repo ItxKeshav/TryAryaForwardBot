@@ -1056,6 +1056,33 @@ async def _process_text(client, message):
     lang = user.get('lang', 'en')
     txt = message.text.strip()
 
+    # Intercept direct section commands
+    cmd_text = txt.lower()
+    if cmd_text in ["/marketplace", "/mystories", "/stories", "/arya", "/help", "/settings", "/profile"]:
+        if cmd_text in ["/mystories", "/stories"]:
+            return await _process_my_stories(client, message)
+            
+        m = await message.reply_text("<i>⏳ Loading...</i>")
+        
+        class MockQuery:
+            def __init__(self, msg, user, data):
+                self.message = msg
+                self.from_user = user
+                self.data = data
+            async def answer(self, text="", show_alert=False):
+                pass
+                
+        mapping = {
+            "/marketplace": "mb#main_marketplace",
+            "/arya": "mb#about_arya_0",
+            "/help": "mb#main_help",
+            "/settings": "mb#main_settings",
+            "/profile": "mb#main_profile"
+        }
+        
+        if cmd_text in mapping:
+            return await _process_callback(client, MockQuery(m, message.from_user, mapping[cmd_text]))
+
     # Back to main menu
     if "𝗕𝗮𝗰𝗸 𝘁𝗼 𝗠𝗲𝗻𝘂" in txt or "BACK TO MAIN MENU" in txt:
         m = await message.reply_text("<i>⏳ Loading...</i>", reply_markup=ReplyKeyboardRemove())
