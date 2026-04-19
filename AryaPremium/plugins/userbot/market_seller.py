@@ -481,7 +481,8 @@ pocket fm, kuku fm, headphone और अन्य से प्रीमिय�
     if about.strip(): b1_content.append(about.strip())
     
     if b1_content:
-        blocks.append(f'<blockquote expandable="true">{"\\n".join(b1_content)}</blockquote>')
+        joined_b1 = "\n".join(b1_content)
+        blocks.append(f'<blockquote expandable="true">{joined_b1}</blockquote>')
         
     # Block 2: Quote + Author
     b2_content = []
@@ -490,9 +491,10 @@ pocket fm, kuku fm, headphone और अन्य से प्रीमिय�
     
     if b2_content:
         # User wants them grouped. 
-        blocks.append(f'<blockquote expandable="true">{"\\n".join(b2_content)}</blockquote>')
+        joined_b2 = "\n".join(b2_content)
+        blocks.append(f'<blockquote expandable="true">{joined_b2}</blockquote>')
         
-    return "\\n\\n".join(blocks)
+    return "\n\n".join(blocks)
 
 
 
