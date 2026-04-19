@@ -699,7 +699,7 @@ async def _run_job(job_id: str, user_id: int):
             except Exception: pass
 
         try:
-            dest_chats = [to_chat] + ([to_chat_2] if to_chat_2 else [])
+            dest_chats = [from_chat, to_chat] + ([to_chat_2] if to_chat_2 else [])
             for _chat in dest_chats:
                 await safe_resolve_peer(client, _chat, bot=BOT_INSTANCE)
         except Exception:
@@ -900,6 +900,15 @@ async def _run_job(job_id: str, user_id: int):
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
+                    err_fetch = str(e).upper()
+                    if "CHANNEL_INVALID" in err_fetch or "PEER_ID_INVALID" in err_fetch:
+                        logger.error(f"[Job {job_id}] FATAL Peer error in batch: {e}. Trying to heal...")
+                        try: await safe_resolve_peer(client, from_chat, bot=BOT_INSTANCE)
+                        except: pass
+                        await asyncio.sleep(5)
+                        # Do NOT advance cursor. Try again.
+                        continue
+                        
                     logger.warning(f"[Job {job_id}] Batch fetch error: {e}")
                     batch_cursor += BATCH_CHUNK
                     await _update_job(job_id, batch_cursor=batch_cursor)
@@ -1154,7 +1163,10 @@ async def _run_job(job_id: str, user_id: int):
                         except FloodWait as fw:
                             await asyncio.sleep(fw.value + 1)
                             continue
-                        except Exception:
+                        except Exception as e:
+                            err_str = str(e).upper()
+                            if "CHANNEL_INVALID" in err_str or "PEER_ID_INVALID" in err_str:
+                                raise e
                             break
                         if not isinstance(msgs, list):
                             msgs = [msgs]
@@ -1224,6 +1236,13 @@ async def _run_job(job_id: str, user_id: int):
                             pass
                     await asyncio.sleep(15)
                 else:
+                    if "CHANNEL_INVALID" in err_up or "PEER_ID_INVALID" in err_up:
+                        logger.error(f"[Job {job_id}] FATAL Peer error in live fetch: {err_fetch}. Trying to heal peer...")
+                        try: await safe_resolve_peer(client, from_chat, bot=BOT_INSTANCE)
+                        except: pass
+                        await asyncio.sleep(5)
+                        continue
+
                     logger.warning(f"[Job {job_id}] Fetch error: {err_fetch}")
                     await asyncio.sleep(15)
                 continue
