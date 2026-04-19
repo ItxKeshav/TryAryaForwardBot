@@ -12,6 +12,17 @@ def to_smallcap(text: str) -> str:
         "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡxʏᴢᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡxʏᴢ"
     ))
 
+def translate_to_hindi(text: str) -> str:
+    """Translates text to Hindi using deep-translator."""
+    try:
+        from deep_translator import GoogleTranslator
+        translated = GoogleTranslator(source='en', target='hi').translate(text)
+        return translated if translated else text
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Translation error: {e}")
+        return text
+
 def _ask_key(bot: Client, user_id: int):
     return (getattr(getattr(bot, "me", None), "id", 0), int(user_id))
 

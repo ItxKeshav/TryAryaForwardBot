@@ -15,13 +15,13 @@ from pyrogram import Client, filters, enums
 from pyrogram.errors import MessageNotModified
 from pyrogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup,
-    ReplyKeyboardMarkup, ReplyKeyboardRemove
+    ReplyKeyboardMarkup, ReplyKeyboardRemove,
+    CallbackQuery
 )
 from database import db
 from config import Config
 import utils
 from utils import native_ask
-from pyrogram.types import CallbackQuery
 def _is_cancel(msg):
     if hasattr(msg, "data") and msg.data == "ask_cancel":
         return True
@@ -588,6 +588,7 @@ async def market_callback(client, query):
             upi_state = "ON" if cfg.get("upi_enabled", True) else "OFF"
 
             kb = [
+                [InlineKeyboardButton("📢 " + utils.to_smallcap('Broadcast Message'), callback_data=f"mk#bot_broadcast_{b_id}")],
                 [InlineKeyboardButton(utils.to_smallcap('Welcome & About'), callback_data=f"mk#p_wa_{b_id}")],
                 [InlineKeyboardButton(utils.to_smallcap('Delivery Report Msg'), callback_data=f"mk#pset_{b_id}_delivery_report")],
                 [InlineKeyboardButton(utils.to_smallcap('Custom Caption'), callback_data=f"mk#pset_{b_id}_caption")],
@@ -606,6 +607,10 @@ async def market_callback(client, query):
                 "<i>All settings below are identical to Delivery bot options.</i>",
                 reply_markup=InlineKeyboardMarkup(kb)
             )
+
+        elif cmd.startswith("bot_broadcast_"):
+            b_id = data[2]
+            asyncio.create_task(_bot_broadcast_flow(client, user_id, b_id))
 
         elif cmd.startswith("bot_confirm_rm_"):
             b_id = data[2] if len(data) > 2 else cmd.split("_")[3]
@@ -1154,16 +1159,19 @@ async def _add_story_flow(client, user_id):
         sj["source"] = source_chat
 
         # Meta Data
-        msg_name_en = await native_ask(client, user_id, "<b>❪ STEP 5: STORY NAME (ENGLISH) ❫</b>\n\nEnter clean English name:", reply_markup=cancel_kb)
+        # Meta Data
+        msg_name_en = await native_ask(client, user_id, "<b>❪ STEP 5: STORY NAME ❫</b>\n\nEnter the story name (English):\n<i>(Hindi name will be automatically translated)</i>", reply_markup=cancel_kb)
         if getattr(msg_name_en, 'text', None) and "Cᴀɴᴄᴇʟ" in msg_name_en.text:
             return await client.send_message(user_id, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
-        sj['story_name_en'] = (msg_name_en.text or "").strip()
+        
+        name_en = (msg_name_en.text or "").strip()
+        sj['story_name_en'] = name_en
+        
+        waiting_msg = await client.send_message(user_id, "⏳ <i>Automatically translating name to Hindi...</i>")
+        sj['story_name_hi'] = utils.translate_to_hindi(name_en)
+        await waiting_msg.delete()
 
-        msg_name_hi = await native_ask(client, user_id, "<b>❪ STEP 6: STORY NAME (HINDI) ❫</b>\n\nEnter Hindi/localized name:", reply_markup=cancel_kb)
-        if getattr(msg_name_hi, 'text', None) and "Cᴀɴᴄᴇʟ" in msg_name_hi.text:
-            return await client.send_message(user_id, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
-        sj['story_name_hi'] = (msg_name_hi.text or "").strip() or sj["story_name_en"]
-        msg_img = await native_ask(client, user_id, "<b>❪ STEP 6.1: STORY IMAGE ❫</b>\n\nSend the cover image for this story:", reply_markup=cancel_kb)
+        msg_img = await native_ask(client, user_id, f"<b>❪ STEP 6: STORY IMAGE ❫</b>\n\n<b>EN:</b> {name_en}\n<b>HI:</b> {sj['story_name_hi']}\n\nSend the cover image for this story:", reply_markup=cancel_kb)
         if getattr(msg_img, 'text', None) and "Cᴀɴᴄᴇʟ" in msg_img.text:
             return await client.send_message(user_id, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
         if getattr(msg_img, 'photo', None):
@@ -1183,16 +1191,22 @@ async def _add_story_flow(client, user_id):
         msg_desc = await native_ask(
             client,
             user_id,
-            "<b>❪ STEP 6.2: STORY DESCRIPTION ❫</b>\n\n"
+            "<b>❪ STEP 7: STORY DESCRIPTION ❫</b>\n\n"
             "<blockquote expandable='true'>"
-            "Enter the description/synopsis of the story.\n\n"
-            "Tip: You can send a long paragraph; it will be shown in expandable quote style in buyer preview."
+            "Enter the description/synopsis of the story (English).\n\n"
+            "Tip: This will be automatically translated to Hindi."
             "</blockquote>",
             reply_markup=cancel_kb
         )
         if getattr(msg_desc, 'text', None) and "Cᴀɴᴄᴇʟ" in msg_desc.text:
             return await client.send_message(user_id, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
-        sj['description'] = (msg_desc.text or "None").strip()
+        
+        desc_en = (msg_desc.text or "None").strip()
+        sj['description'] = desc_en
+        
+        waiting_msg = await client.send_message(user_id, "⏳ <i>Automatically translating description...</i>")
+        sj['description_hi'] = utils.translate_to_hindi(desc_en)
+        await waiting_msg.delete()
 
         msg_eps = await native_ask(client, user_id, "<b>❪ STEP 6.3: EPISODES ❫</b>\n\nHow many episodes? e.g. '595 / 595' or '100+':", reply_markup=cancel_kb)
         if getattr(msg_eps, 'text', None) and "Cᴀɴᴄᴇʟ" in msg_eps.text:
@@ -1390,8 +1404,8 @@ async def _edit_story_flow(client, user_id, s_id, action):
                     await client.send_message(user_id, f"✅ **Story {label} Updated!** (No broadcast sent)", reply_markup=ReplyKeyboardRemove())
                 return
         elif action == "name":
-            await db.db.premium_stories.update_one({"_id": s_id_obj}, {"$set": {"story_name_en": msg.text, "story_name_hi": msg.text}})
-        elif action == "eps":
+            name_hi = utils.translate_to_hindi(msg.text)
+            await db.db.premium_stories.update_one({"_id": s_id_obj}, {"$set": {"story_name_en": msg.text, "story_name_hi": name_hi}})
             parts = msg.text.strip().split("-")
             sid, eid = int(parts[0]), int(parts[1])
             await db.db.premium_stories.update_one({"_id": s_id_obj}, {"$set": {"start_id": sid, "end_id": eid}})
@@ -1410,8 +1424,8 @@ async def _edit_story_flow(client, user_id, s_id, action):
             else:
                 return await client.send_message(user_id, "❌ Valid Photo required.", reply_markup=ReplyKeyboardRemove())
         elif action == "desc":
-            await db.db.premium_stories.update_one({"_id": s_id_obj}, {"$set": {"description": msg.text}})
-        elif action == "status":
+            desc_hi = utils.translate_to_hindi(msg.text)
+            await db.db.premium_stories.update_one({"_id": s_id_obj}, {"$set": {"description": msg.text, "description_hi": desc_hi}})
             await db.db.premium_stories.update_one({"_id": s_id_obj}, {"$set": {"status": msg.text}})
         elif action == "genre":
             await db.db.premium_stories.update_one({"_id": s_id_obj}, {"$set": {"genre": msg.text}})
@@ -1892,12 +1906,22 @@ async def _menu_media_bulk_add_flow(client, user_id: int, b_id: str):
 
     count = 0
     while True:
-        msg = await native_ask(client, user_id, None, timeout=600)
+        # Wait for next input without sending a new text message every time
+        # We use native_ask with a special check or just a small status message
+        msg = await native_ask(
+            client, 
+            user_id, 
+            f"<b>📥 Bulk Adding... (#{count})</b>\n\nSend the next item or click 'Done' below.", 
+            reply_markup=done_kb,
+            timeout=600
+        )
         if not msg:
             break
         
-        if isinstance(msg, CallbackQuery) and msg.data == "ask_cancel":
-            break
+        if isinstance(msg, CallbackQuery):
+            if msg.data == "ask_cancel":
+                break
+            continue
             
         if getattr(msg, "text", None) and (msg.text.lower() == "/start" or "done" in msg.text.lower()):
             break
@@ -1955,3 +1979,112 @@ async def _menu_media_bulk_add_flow(client, user_id: int, b_id: str):
     await client.send_message(user_id, f"<b>🏁 Bulk Add Finished!</b>\n\nTotal media items added: <b>{count}</b>", reply_markup=ReplyKeyboardRemove())
 
 
+
+
+async def _bot_broadcast_flow(client, user_id: int, b_id: str):
+    from plugins.userbot.market_seller import market_clients
+    from pyrogram.errors import UserIsBlocked, FloodWait, PeerIdInvalid, InputUserDeactivated
+    import time
+    from pyrogram.types import ReplyKeyboardMarkup, ReplyKeyboardRemove
+    
+    bt = await db.db.premium_bots.find_one({"id": int(b_id)})
+    if not bt:
+        return await client.send_message(user_id, "❌ Bot not found in Database.")
+    
+    seller_cli = market_clients.get(str(b_id))
+    if not seller_cli:
+        return await client.send_message(user_id, "❌ Bot is not active or not started. Please ensure the delivery bot is running.")
+
+    prompt_kb = ReplyKeyboardMarkup([[utils.to_smallcap("Back")], [utils.to_smallcap("Cancel Transaction")]], resize_keyboard=True)
+    
+    try:
+        ans1 = await native_ask(client, user_id, 
+            f"<b>📢 BROADCAST SYSTEM — {bt.get('bot_username', 'Bot')}</b>\n\n"
+            f"Please send the message you want to broadcast.\n"
+            f"It can be <b>Text, Photo, Video, Document, or even a Forwarded Post</b>.\n\n"
+            f"<i>Send anything now, or click Cancel below.</i>",
+            reply_markup=prompt_kb
+        )
+        
+        if _is_cancel(ans1):
+            return await client.send_message(user_id, "<i>❌ Broadcast Cancelled.</i>", reply_markup=ReplyKeyboardRemove())
+
+        # Start Implementation
+        status_msg = await client.send_message(user_id, "<b>⏳ Initializing Broadcast...</b>", reply_markup=ReplyKeyboardRemove())
+        
+        # Determine Users: Users who have started THIS bot (bot_ids contains b_id)
+        # We need to handle the case where b_id is passed as a string but stored as int/vice versa
+        try: target_bot_id = int(b_id)
+        except: target_bot_id = b_id
+
+        users_cursor = db.db.users.find({"bot_ids": target_bot_id})
+        total_users = await db.db.users.count_documents({"bot_ids": target_bot_id})
+        
+        if total_users == 0:
+            return await status_msg.edit_text("❌ No users found for this bot.\n\nNote: User tracking for broadcasts started just now. Please wait for users to interact with the bot first.")
+
+        sent_count = 0
+        delivered = 0
+        failed = 0
+        blocked = 0
+        
+        start_time = time.time()
+        
+        # Iterate users
+        async for user_doc in users_cursor:
+            target_id = user_doc['id']
+            try:
+                # Use copy_message to send exactly what the admin sent
+                await ans1.copy(target_id)
+                delivered += 1
+            except FloodWait as e:
+                await asyncio.sleep(e.value)
+                # Retry once
+                try: 
+                    await ans1.copy(target_id)
+                    delivered += 1
+                except: failed += 1
+            except (UserIsBlocked, PeerIdInvalid, InputUserDeactivated):
+                blocked += 1
+            except Exception as e:
+                failed += 1
+            
+            sent_count += 1
+            
+            # Periodic update every 15 users
+            if sent_count % 15 == 0 or sent_count == total_users:
+                elapsed = time.time() - start_time
+                speed = sent_count / elapsed if elapsed > 0 else 1
+                rem_users = total_users - sent_count
+                eta_s = rem_users / speed if speed > 0 else 0
+                
+                prog_txt = (
+                    f"<b>📢 BROADCASTING IN PROGRESS...</b>\n\n"
+                    f"<b>👤 Progress:</b> {sent_count}/{total_users}\n"
+                    f"<b>✅ Success:</b> {delivered}\n"
+                    f"<b>🚫 Blocked:</b> {blocked}\n"
+                    f"<b>❌ Failed:</b> {failed}\n\n"
+                    f"<b>⏱️ Speed:</b> {speed:.1f} users/sec\n"
+                    f"<b>⏳ ETA:</b> {int(eta_s // 60)}m {int(eta_s % 60)}s"
+                )
+                try: await status_msg.edit_text(prog_txt)
+                except: pass
+        
+        final_txt = (
+            f"<b>🏁 BROADCAST COMPLETED!</b>\n\n"
+            f"<b>📊 Final Stats:</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"<b>👤 Total Targeted:</b> {total_users}\n"
+            f"<b>✅ Delivered:</b> {delivered}\n"
+            f"<b>🚫 Blocked/Inactive:</b> {blocked}\n"
+            f"<b>❌ Other Failures:</b> {failed}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"<b>⏱️ Total Time:</b> {int((time.time() - start_time) // 60)}m {int((time.time() - start_time) % 60)}s"
+        )
+        await status_msg.edit_text(final_txt)
+
+    except asyncio.TimeoutError:
+        await client.send_message(user_id, "⏳ Broadcast session timed out.", reply_markup=ReplyKeyboardRemove())
+    except Exception as e:
+        logger.error(f"Broadcast Flow Error: {e}")
+        await client.send_message(user_id, f"❌ Broadcast failed: {e}", reply_markup=ReplyKeyboardRemove())

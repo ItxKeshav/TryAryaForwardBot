@@ -212,7 +212,214 @@ T = {
         "no_stories": "No stories currently available.",
         "pay_upi": "Pay via UPI",
         "back": "❮ Back",
-        "qr_msg": "<b>💳 Complete Payment</b>\n\n• Scan the QR code above.\n• Amount: ₹{price}\n\n<b>After paying, send the successful payment screenshot here.</b>",
+        "qr_msg": "<b>💳 Complete Payment</b>
+
+• Scan the QR code above.
+• Amount: ₹{price}
+
+<b>After paying, send the successful payment screenshot here.</b>",
+        "wait_ver": "⏳ Your payment is being verified, please wait (approx 5 minutes)...",
+        "notify": "🔔 Notify Admin",
+        "prof_title": "╔═⟦ 𝗣𝗥𝗢𝗙𝗜𝗟𝗘 ⟧═╗",
+        "prof_name": "ɴᴀᴍᴇ",
+        "prof_uname": "ᴜꜱᴇʀɴᴀᴍᴇ",
+        "prof_id": "ᴛɢ ɪᴅ",
+        "prof_bought": "ᴘᴜʀᴄʜᴀꜱᴇꜱ",
+        "prof_lang": "ʟᴀɴɢᴜᴀɢᴇ",
+        "prof_join": "ᴊᴏɪɴᴇᴅ",
+        "my_reqs": "📝 MY REQUESTS",
+        "set_lang": "⚙️ Settings",
+        "set_prompt": "<b>⚙️ Settings</b>
+
+Select your language:",
+        "req_main_title": "📝 My Story Requests",
+        "req_click": "Click on any request to view its status:",
+        "req_empty": "You haven't made any story requests yet.",
+        "back_prof": "« BACK TO PROFILE",
+        "back_reqs": "« BACK TO REQUESTS",
+        "req_details": "📝 STORY REQUEST DETAILS",
+        "req_name": "Name",
+        "req_plat": "Platform",
+        "req_type": "Type",
+        "req_date": "Date",
+        "req_status": "Status",
+        "already_owned": "✅ You already own this story. Sending delivery options...",
+        "wait_a_sec": "WAIT A SECOND...",
+        "cant_find_btn": "🔍 CAN'T FIND? REQUEST NOW!",
+        "req_search_prompt": "<b>🔍 SEARCH / REQUEST STORY</b>
+
+Type the <b>Story Name</b> you want to search or request:",
+        "req_cancel": "Process Cancelled.",
+        "req_step1": "<b>Step 1/3:</b>
+Please enter the <b>Story Name</b> you want to request:",
+        "req_step2": "<b>Step 2/3:</b>
+Choose the <b>Platform</b> (e.g. Ullu, AltBalaji):",
+        "req_step3": "<b>Step 3/3:</b>
+How would you like it? (e.g. Only Episodes, Full Movie, etc.):",
+        "req_success": "✅ <b>Request Submitted!</b>
+
+Our team will search for this story and update you soon. Check status in <b>Profile -> My Requests</b>."
+    },
+    "hi": {
+        "welcome": "स्वागत है",
+        "store": "स्टोर",
+        "intro": "प्रीमियम कलेक्शन ब्राउज़ करें। Marketplace पर टैप करें।",
+        "tc_accept": "✅ मुझे शर्तें मंजूर हैं",
+        "tc_reject": "❌ मैं अस्वीकार करता हूँ",
+        "no_stories": "वर्तमान में कोई स्टोरी उपलब्ध नहीं है।",
+        "pay_upi": "UPI से पेमेंट करें",
+        "back": "❮ वापस",
+        "qr_msg": "<b>💳 पेमेंट पूरा करें</b>
+
+• ऊपर QR स्कैन करें।
+• राशि: ₹{price}
+
+<b>पेमेंट के बाद स्क्रीनशॉट यहाँ भेजें।</b>",
+        "wait_ver": "⏳ आपके भुगतान का सत्यापन हो रहा है...",
+        "notify": "🔔 एडमिन को सूचित करें",
+        "prof_title": "╔═⟦ आपकी प्रोफाइल ⟧═╗",
+        "prof_name": "नाम",
+        "prof_uname": "यूज़रनेम",
+        "prof_id": "आईडी",
+        "prof_bought": "खरीदी गई स्टोरीज",
+        "prof_lang": "भाषा",
+        "prof_join": "जुड़े हुए",
+        "my_reqs": "📝 मेरे अनुरोध (My Requests)",
+        "set_lang": "⚙️ सेटिंग्स",
+        "set_prompt": "<b>⚙️ सेटिंग्स</b>
+
+अपनी पसंदीदा भाषा चुनें:",
+        "req_main_title": "📝 मेरे स्टोरी अनुरोध",
+        "req_click": "किसी भी अनुरोध पर क्लिक करके उसका स्टेटस देखें:",
+        "req_empty": "आपने अभी तक कोई स्टोरी अनुरोध नहीं किया है।",
+        "back_prof": "« प्रोफाइल पर वापस",
+        "back_reqs": "« अनुरोधों पर वापस",
+        "req_details": "📝 स्टोरी अनुरोध विवरण",
+        "req_name": "कहानी का नाम",
+        "req_plat": "प्लेटफॉर्म",
+        "req_type": "प्रकार (Type)",
+        "req_date": "तारीख",
+        "req_status": "स्टेटस",
+        "already_owned": "✅ आप पहले ही इस स्टोरी को खरीद चुके हैं। डिलीवरी विकल्प भेजे जा रहे हैं...",
+        "wait_a_sec": "कृपया प्रतीक्षा करें...",
+        "cant_find_btn": "🔍 कहानी नहीं मिल रही? अनुरोध करें!",
+        "req_search_prompt": "<b>🔍 स्टोरी खोजें / अनुरोध करें</b>
+
+उस <b>कहानी का नाम</b> लिखें जिसे आप खोजना या अनुरोध करना चाहते हैं:",
+        "req_cancel": "प्रक्रिया रद्द कर दी गई।",
+        "req_step1": "<b>स्टेप 1/3:</b>
+कृपया उस <b>कहानी का नाम</b> लिखें जिसका आप अनुरोध करना चाहते हैं:",
+        "req_step2": "<b>स्टेप 2/3:</b>
+<b>प्लेटफॉर्म</b> चुनें (जैसे: Ullu, AltBalaji):",
+        "req_step3": "<b>स्टेप 3/3:</b>
+आपको यह कैसे चाहिए? (जैसे: केवल एपिसोड, पूरी फिल्म, आदि):",
+        "req_success": "✅ <b>अनुरोध जमा हो गया!</b>
+
+हमारी टीम इस कहानी को खोजेगी और जल्द ही आपको अपडेट करेगी। स्टेटस देखने के लिए <b>प्रोफाइल -> मेरे अनुरोध</b> पर जाएं।"
+    }
+}
+
+<b>After paying, send the successful payment screenshot here.</b>",
+        "wait_ver": "⏳ Your payment is being verified, please wait (approx 5 minutes)...",
+        "notify": "🔔 Notify Admin",
+        "prof_title": "╔═⟦ 𝗣𝗥𝗢𝗙𝗜𝗟𝗘 ⟧═╗",
+        "prof_name": "ɴᴀᴍᴇ",
+        "prof_uname": "ᴜꜱᴇʀɴᴀᴍᴇ",
+        "prof_id": "ᴛɢ ɪᴅ",
+        "prof_bought": "ᴘᴜʀᴄʜᴀꜱᴇꜱ",
+        "prof_lang": "ʟᴀɴɢᴜᴀɢᴇ",
+        "prof_join": "ᴊᴏɪɴᴇᴅ",
+        "my_reqs": "📝 MY REQUESTS",
+        "set_lang": "⚙️ Settings",
+        "set_prompt": "<b>⚙️ Settings</b>
+
+Select your language:",
+        "req_main_title": "📝 My Story Requests",
+        "req_click": "Click on any request to view its status:",
+        "req_empty": "You haven't made any story requests yet.",
+        "back_prof": "« BACK TO PROFILE",
+        "back_reqs": "« BACK TO REQUESTS",
+        "req_details": "📝 STORY REQUEST DETAILS",
+        "req_name": "Name",
+        "req_plat": "Platform",
+        "req_type": "Type",
+        "req_date": "Date",
+        "req_status": "Status",
+        "already_owned": "✅ You already own this story. Sending delivery options...",
+        "wait_a_sec": "WAIT A SECOND...",
+        "cant_find_btn": "🔍 CAN'T FIND? REQUEST NOW!",
+        "req_search_prompt": "<b>🔍 SEARCH / REQUEST STORY</b>
+
+Type the <b>Story Name</b> you want to search or request:",
+        "req_cancel": "Process Cancelled.",
+        "req_step1": "<b>Step 1/3:</b>
+Please enter the <b>Story Name</b> you want to request:",
+        "req_step2": "<b>Step 2/3:</b>
+Choose the <b>Platform</b> (e.g. Ullu, AltBalaji):",
+        "req_step3": "<b>Step 3/3:</b>
+How would you like it? (e.g. Only Episodes, Full Movie, etc.):",
+        "req_success": "✅ <b>Request Submitted!</b>
+
+Our team will search for this story and update you soon. Check status in <b>Profile -> My Requests</b>."
+    },
+    "hi": {
+        "welcome": "स्वागत है",
+        "store": "स्टोर",
+        "intro": "प्रीमियम कलेक्शन ब्राउज़ करें। Marketplace पर टैप करें।",
+        "tc_accept": "✅ मुझे शर्तें मंजूर हैं",
+        "tc_reject": "❌ मैं अस्वीकार करता हूँ",
+        "no_stories": "वर्तमान में कोई स्टोरी उपलब्ध नहीं है।",
+        "pay_upi": "UPI से पेमेंट करें",
+        "back": "❮ वापस",
+        "qr_msg": "<b>💳 पेमेंट पूरा करें</b>
+
+• ऊपर QR स्कैन करें।
+• राशि: ₹{price}
+
+<b>पेमेंट के बाद स्क्रीनशॉट यहाँ भेजें।</b>",
+        "wait_ver": "⏳ आपके भुगतान का सत्यापन हो रहा है...",
+        "notify": "🔔 एडमिन को सूचित करें",
+        "prof_title": "╔═⟦ आपकी प्रोफाइल ⟧═╗",
+        "prof_name": "नाम",
+        "prof_uname": "यूज़रनेम",
+        "prof_id": "आईडी",
+        "prof_bought": "खरीदी गई स्टोरीज",
+        "prof_lang": "भाषा",
+        "prof_join": "जुड़े हुए",
+        "my_reqs": "📝 मेरे अनुरोध (My Requests)",
+        "set_lang": "⚙️ सेटिंग्स",
+        "set_prompt": "<b>⚙️ सेटिंग्स</b>
+
+अपनी पसंदीदा भाषा चुनें:",
+        "req_main_title": "📝 मेरे स्टोरी अनुरोध",
+        "req_click": "किसी भी अनुरोध पर क्लिक करके उसका स्टेटस देखें:",
+        "req_empty": "आपने अभी तक कोई स्टोरी अनुरोध नहीं किया है।",
+        "back_prof": "« प्रोफाइल पर वापस",
+        "back_reqs": "« अनुरोधों पर वापस",
+        "req_details": "📝 स्टोरी अनुरोध विवरण",
+        "req_name": "कहानी का नाम",
+        "req_plat": "प्लेटफॉर्म",
+        "req_type": "प्रकार (Type)",
+        "req_date": "तारीख",
+        "req_status": "स्टेटस",
+        "already_owned": "✅ आप पहले ही इस स्टोरी को खरीद चुके हैं। डिलीवरी विकल्प भेजे जा रहे हैं...",
+        "wait_a_sec": "कृपया प्रतीक्षा करें...",
+        "cant_find_btn": "🔍 कहानी नहीं मिल रही? अनुरोध करें!",
+        "req_search_prompt": "<b>🔍 स्टोरी खोजें / अनुरोध करें</b>
+
+उस <b>कहानी का नाम</b> लिखें जिसे आप खोजना या अनुरोध करना चाहते हैं:",
+        "req_cancel": "प्रक्रिया रद्द कर दी गई।",
+        "req_step1": "<b>स्टेप 1/3:</b>
+कृपया उस <b>कहानी का नाम</b> लिखें जिसका आप अनुरोध करना चाहते हैं:",
+        "req_step2": "<b>स्टेप 2/3:</b>
+<b>प्लेटफॉर्म</b> चुनें (जैसे: Ullu, AltBalaji):",
+        "req_step3": "<b>स्टेप 3/3:</b>
+आपको यह कैसे चाहिए? (जैसे: केवल एपिसोड, पूरी फिल्म, आदि):",
+        "req_success": "✅ <b>अनुरोध जमा हो गया!</b>
+
+हमारी टीम इस कहानी को खोजेगी और जल्द ही आपको अपडेट करेगी। स्टेटस देखने के लिए <b>प्रोफाइल -> मेरे अनुरोध</b> पर जाएं।"
+    }
+}\n\n<b>After paying, send the successful payment screenshot here.</b>",
         "wait_ver": "⏳ Your payment is being verified, please wait (approx 5 minutes)...",
         "notify": "🔔 Notify Admin"
     },
@@ -303,71 +510,109 @@ def _get_premium_menu_markup(bt_cfg: dict, lang: str):
 
 
 def _menu_card_text(user, bt_cfg: dict, bot_name: str, lang: str = 'en') -> str:
-    # 1. Clickable First Name (Escape for HTML safety)
+    from utils import translate_to_hindi
     u_mention = f'<a href="tg://user?id={user.id}">{html.escape((user.first_name or "User").strip())}</a>'
     
+    # --- DEFAULTS ---
+    DEFAULT_WELCOME_EN = """›› ʜᴇʏ, {name} | {bot_name}
+ʙʀᴏᴡꜱᴇ ᴘʀᴇᴍɪᴜᴍ ꜱᴛᴏʀɪᴇꜱ ꜰʀᴏᴍ pocket fm, kuku fm, headphone & more."""
+    DEFAULT_ABOUT_EN = """ᴛᴀᴘ marketplace ᴛᴏ ᴇxᴘʟᴏʀᴇ ꜱᴛᴏʀɪᴇꜱ ʙʏ platform."""
+    DEFAULT_QUOTE_EN = """ǫᴜᴀʟɪᴛʏ ꜱᴛᴏʀɪᴇꜱ • ɪɴꜱᴛᴀɴᴛ ᴅᴇʟɪᴠᴇʀʏ • ᴀᴜᴛᴏᴍᴀᴛᴇᴅ"""
+    DEFAULT_AUTHOR_EN = """— ᴀʀʏᴀ ᴘʀᴇᴍɪᴜᴍ"""
+    
+    DEFAULT_WELCOME_HI = """›› ʜᴇʏ, {name} | {bot_name}
+pocket fm, kuku fm, headphone और अन्य से प्रीमियम कहानियाँ ब्राउज़ करें।"""
+    DEFAULT_ABOUT_HI = """प्लेटफ़ॉर्म के अनुसार कहानियों को देखने के लिए marketplace पर टैप करें।"""
+    DEFAULT_QUOTE_HI = """गुणवत्ता वाली कहानियाँ • तत्काल वितरण • स्वचालित"""
+    DEFAULT_AUTHOR_HI = """— आर्या प्रीमियम"""
+
     # --- 1. Welcome Section ---
-    welcome = bt_cfg.get("welcome")
-    if welcome:
-        if welcome.lower() == "disable":
-            welcome = ""
-        else:
-            welcome = welcome.replace("{user}", u_mention).replace("{name}", u_mention).replace("{first_name}", u_mention)
+    text_en = bt_cfg.get("welcome")
+    if text_en and text_en.lower() == "disable":
+        welcome = ""
     else:
+        if not text_en:
+            text_en = DEFAULT_WELCOME_EN
+        
         if lang == 'hi':
-            welcome = f"<b>{u_mention}, आर्या प्रीमियम स्टोर में आपका स्वागत है!</b>"
+            if text_en == DEFAULT_WELCOME_EN:
+                welcome = DEFAULT_WELCOME_HI
+            else:
+                welcome = translate_to_hindi(text_en)
         else:
-            welcome = f"<b>Welcome to Arya Premium Store, {u_mention}!</b>"
-    
+            welcome = text_en
+        
+        welcome = welcome.replace("{name}", u_mention).replace("{bot_name}", bot_name).replace("{user}", u_mention).replace("{first_name}", u_mention)
+
     # --- 2. About Section ---
-    about = bt_cfg.get("about")
-    if not about:
-        if lang == 'hi':
-            about = "हम आपको प्रीमियम कहानियां सबसे बेहतरीन क्वालिटी और तुरंत डिलीवरी के साथ प्रदान करते हैं।"
-        else:
-            about = "We provide you with premium stories with the best quality and instant delivery."
-        
-    # --- 3. Quote Section ---
-    quote = bt_cfg.get("quote")
-    if quote and quote.lower() == "disable":
-        quote = ""
-    elif not quote:
-        if lang == 'hi':
-            quote = "❝ अगर आप मुझे मुख्य भूमिका में रखकर कोई कहानी लिखेंगे... तो वह निश्चित रूप से एक त्रासदी होगी। ❞"
-        else:
-            quote = "❝ IF YOU WERE TO WRITE A STORY WITH ME IN THE LEAD ROLE... IT WOULD CERTAINLY BE A TRAGEDY. ❞"
-        
-    # --- 4. Author Section ---
-    author = bt_cfg.get("quote_author")
-    if author and author.lower() == "disable":
-        author = ""
-    elif not author:
-        if lang == 'hi':
-            author = "<b>— केन कानेकी</b>"
-        else:
-            author = "<b>— KEN KENEKI</b>"
+    text_en = bt_cfg.get("about")
+    if text_en and text_en.lower() == "disable":
+        about = ""
     else:
-        author = f"<b>— {author}</b>"
-    
-    # Assembly into Quatoblocks
-    # We use expandable="true" for maximum parser compatibility.
+        if not text_en:
+            text_en = DEFAULT_ABOUT_EN
+        
+        if lang == 'hi':
+            if text_en == DEFAULT_ABOUT_EN:
+                about = DEFAULT_ABOUT_HI
+            else:
+                about = translate_to_hindi(text_en)
+        else:
+            about = text_en
+
+    # --- 3. Quote Section ---
+    text_en = bt_cfg.get("quote")
+    if text_en and text_en.lower() == "disable":
+        quote = ""
+    else:
+        if not text_en:
+            text_en = DEFAULT_QUOTE_EN
+        
+        if lang == 'hi':
+            if text_en == DEFAULT_QUOTE_EN:
+                quote = DEFAULT_QUOTE_HI
+            else:
+                quote = translate_to_hindi(text_en)
+        else:
+            quote = text_en
+
+    # --- 4. Author Section ---
+    text_en = bt_cfg.get("quote_author")
+    if text_en and text_en.lower() == "disable":
+        author = ""
+    else:
+        if not text_en:
+            text_en = DEFAULT_AUTHOR_EN
+        
+        if lang == 'hi':
+            if text_en == DEFAULT_AUTHOR_EN:
+                author = DEFAULT_AUTHOR_HI
+            else:
+                author = translate_to_hindi(text_en)
+        else:
+            author = text_en
+        
     blocks = []
-    if welcome.strip():
-        blocks.append(f'<blockquote expandable="true">{welcome}</blockquote>')
-    if about.strip():
-        blocks.append(f'<blockquote expandable="true">{about}</blockquote>')
+    
+    # Block 1: Welcome + About
+    b1_content = []
+    if welcome.strip(): b1_content.append(welcome.strip())
+    if about.strip(): b1_content.append(about.strip())
+    
+    if b1_content:
+        blocks.append(f'<blockquote expandable="true">{"\\n".join(b1_content)}</blockquote>')
         
-    # Separator for the quote block
-    if about.strip() and quote.strip():
-        blocks.append("")
+    # Block 2: Quote + Author
+    b2_content = []
+    if quote.strip(): b2_content.append(quote.strip())
+    if author.strip(): b2_content.append(f"<b>{author.strip()}</b>")
+    
+    if b2_content:
+        # User wants them grouped. 
+        blocks.append(f'<blockquote expandable="true">{"\\n".join(b2_content)}</blockquote>')
         
-    if quote.strip():
-        blocks.append(f'<blockquote expandable="true">{quote}</blockquote>')
-    if author.strip():
-        # Author usually follows quote immediately
-        blocks.append(f'<blockquote expandable="true">{author}</blockquote>')
-        
-    return "\n".join(blocks)
+    return "\\n\\n".join(blocks)
+
 
 
 
@@ -593,7 +838,7 @@ async def _show_story_profile(client, user_id, story, lang):
         back_btn = f"❮ {_sc('BACK')}"
         loading_txt = _sc("LOADING PROFILE...")
 
-    desc = story.get('description', '').strip()
+    desc = story.get(f'description_{lang}', story.get('description', '')).strip()
     header_txt = (
         f"<b>♨️ Story:</b> {to_mathbold(name)}\n"
         f"<b>🔰 {status_lbl}:</b> <b>{status}</b>\n"
@@ -769,6 +1014,9 @@ async def _process_start(client, message):
         ))
         
     user = await db.get_user(user_id)
+    # Track which delivery bots this user has started
+    await db.db.users.update_one({"id": int(user_id)}, {"$addToSet": {"bot_ids": client.me.id}}, upsert=True)
+    
     args = message.command
 
     if 'lang' not in user:
@@ -827,7 +1075,7 @@ async def _process_start(client, message):
         if story:
             has_paid = await db.has_purchase(user_id, story_id)
             if has_paid:
-                msg = "✅ You already own this story. Sending delivery options..." if lang == 'en' else "✅ आप पहले ही इस स्टोरी को खरीद चुके हैं। डिलीवरी विकल्प भेजे जा रहे हैं..."
+                msg = t["already_owned"]
                 await message.reply_text(msg)
                 return await dispatch_delivery_choice(client, user_id, story)
             return await _show_story_profile(client, user_id, story, lang)
@@ -851,7 +1099,15 @@ async def _process_my_stories(client, message):
 
     PAGE_SIZE = 5
     page = 0
-    total = len(purchases)
+    # Deduplicate for UI
+    unique_p = []
+    seen = set()
+    for p in purchases:
+        p_id = str(p)
+        if p_id not in seen:
+            unique_p.append(p)
+            seen.add(p_id)
+    purchases = unique_p
     total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
     page_purchases = purchases[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
 
@@ -860,16 +1116,13 @@ async def _process_my_stories(client, message):
         try:
             st = await db.db.premium_stories.find_one({"_id": ObjectId(pid)})
             if st:
-                # Optimized title: Show both Hindi and English if they differ
                 en_name = st.get('story_name_en', 'Story')
                 hi_name = st.get('story_name_hi', en_name)
-                
-                if lang == 'hi':
-                    s_name = f"📖 {hi_name}" if hi_name == en_name else f"📖 {hi_name} ({en_name})"
-                else:
-                    s_name = f"📖 {en_name}"
-                    
+                # Display only the relevant language name
+                s_name = f"📖 {hi_name if lang == 'hi' else en_name}"
                 kb.append([InlineKeyboardButton(s_name, callback_data=f"mb#purchased_view_{pid}")])
+        except Exception: pass
+
         except Exception:
             pass
 
@@ -953,7 +1206,8 @@ async def _process_text(client, message):
 
         has_paid = await db.has_purchase(user_id, str(story['_id']))
         if has_paid:
-            await message.reply_text("✅ You already own this story. Sending delivery options...", reply_markup=ReplyKeyboardRemove())
+            t=T[lang]
+        await message.reply_text(t["already_owned"], reply_markup=ReplyKeyboardRemove())
             return await dispatch_delivery_choice(client, user_id, story)
 
         return await _show_story_profile(client, user_id, story, lang)
@@ -973,16 +1227,21 @@ async def _process_text(client, message):
         for idx, s in enumerate(stories, start=1):
             s_name = s.get(f'story_name_{lang}', s.get('story_name_en'))
             kb.append([f"{idx}. {s_name} [ ₹ {s.get('price', 0)} ]"])
-        kb.append(["🔍 " + "SEARCH"])
-        kb.append(["CAN'T FIND? REQUEST NOW!"])
-        kb.append(["« " + "𝗕𝗮𝗰𝗸 𝘁𝗼 𝗠𝗲𝗻𝘂"])
+        kb.append(["🔍 " + ("SEARCH" if lang=='en' else "खोजें")])
+        kb.append([T[lang]["cant_find_btn"]])
+        kb.append(["« " + ("𝗕𝗮𝗰𝗸 𝘁𝗼 𝗠𝗲𝗻𝘂" if lang=='en' else "वापस मेनू")])
 
+        t = T[lang]
+        title = "AVAILABLE STORIES" if lang == 'en' else "उपलब्ध स्टोरिज"
         desc = (
             f"All available stories and their prices are shown in the menu below. "
             f"Please tap or click on any story name from the keyboard menu below to view details and purchase it:"
+        ) if lang == 'en' else (
+            f"सभी उपलब्ध कहानियाँ और उनकी कीमतें नीचे मेनू में दिखाई गई हैं। "
+            f"विवरण देखने और इसे खरीदने के लिए कृपया नीचे दिए गए कीबोर्ड मेनू से किसी भी कहानी के नाम पर टैप या क्लिक करें:"
         )
         await message.reply_text(
-            f"<b>⟦ {_sc('AVAILABLE STORIES')} — {to_mathbold(txt)} ⟧</b>\n\n"
+            f"<b>⟦ {title} — {to_mathbold(txt)} ⟧</b>\n\n"
             f"<blockquote expandable>"
             f"<i>{desc}</i>\n"
             f"</blockquote>",
@@ -991,7 +1250,7 @@ async def _process_text(client, message):
         return
         
     # ── REQUEST STORY trigger ──
-    if txt == "CAN'T FIND? REQUEST NOW!":
+    if txt == T[lang]["cant_find_btn"]:
         try:
             from utils import native_ask, log_arya_event
             from datetime import datetime, timezone
@@ -1045,7 +1304,7 @@ async def _process_text(client, message):
         return
 
     # ── SEARCH trigger ──
-    if txt == "🔍 " + "SEARCH":
+    if txt == "🔍 " + ("SEARCH" if lang=='en' else "खोजें"):
         await message.reply_text(
             f"<b>🔍 SEARCH</b>\n\n<i>Type a few words of the story name to search:</i>",
             reply_markup=ReplyKeyboardMarkup([["« " + "CANCEL"]], resize_keyboard=True)
@@ -1256,17 +1515,22 @@ async def _process_callback(client, query):
 
         if action == "marketplace":
             platforms = await db.db.premium_stories.distinct('platform', {"bot_id": client.me.id})
+            t = T[lang]
             kb = []
             for i in range(0, len(platforms), 2):
                 row = platforms[i:i+2]
                 kb.append(row)
             if "Other" not in platforms:
                 kb.append(["Other"])
-            kb.append(["« " + "𝗕𝗮𝗰𝗸 𝘁𝗼 𝗠𝗲𝗻𝘂"])
+            kb.append(["« " + ("𝗕𝗮𝗰𝗸 𝘁𝗼 𝗠𝗲𝗻𝘂" if lang=='en' else "वापस मेनू")])
+            
+            p_title = "🎧 Platform Selection" if lang == 'en' else "🎧 प्लेटफॉर्म चयन"
+            p_desc = "Choose a platform from the keyboard below:" if lang == 'en' else "नीचे दिए गए कीबोर्ड से एक प्लेटफॉर्म चुनें:"
+            
             await query.message.delete()
             await client.send_message(
                 user_id,
-                f"<b>🎧 Platform Selection</b>\n\nChoose a platform from the keyboard below:",
+                f"<b>{p_title}</b>\n\n{p_desc}",
                 reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
             )
 
@@ -1275,36 +1539,43 @@ async def _process_callback(client, query):
             joined = user.get('joined_date', 'N/A')
             if isinstance(joined, datetime):
                 joined = joined.strftime('%d %b %Y')
-            purchases = user.get('purchases', [])
+            
+            # Deduplicate purchases for count
+            raw_p = user.get('purchases', [])
+            purchases = list(set(str(p) for p in raw_p))
+            
             uname = f"@{u.username}" if u.username else "N/A"
             lang_label = "English" if lang == 'en' else "हिंदी"
             name = f"{u.first_name or ''} {u.last_name or ''}".strip() or "Unknown"
+            
+            t = T[lang]
             txt_p = (
-                "<b>╔═⟦ 𝗣𝗥𝗢𝗙𝗜𝗟𝗘 ⟧═╗</b>\n\n"
-                f"<b>⧉ ɴᴀᴍᴇ        ⟶</b> {name}\n"
-                f"<b>⧉ ᴜꜱᴇʀɴᴀᴍᴇ    ⟶</b> {uname}\n"
-                f"<b>⧉ ᴛɢ ɪᴅ       ⟶</b> <code>{u.id}</code>\n\n"
+                f"<b>{t['prof_title']}</b>\n\n"
+                f"<b>⧉ {t['prof_name']}        ⟶</b> {name}\n"
+                f"<b>⧉ {t['prof_uname']}    ⟶</b> {uname}\n"
+                f"<b>⧉ {t['prof_id']}       ⟶</b> <code>{u.id}</code>\n\n"
                 "<b>╠══════════════════╣</b>\n\n"
-                f"<b>⧉ ᴘᴜʀᴄʜᴀꜱᴇꜱ   ⟶</b> {len(purchases)}\n"
-                f"<b>⧉ ʟᴀɴɢᴜᴀɢᴇ    ⟶</b> {lang_label}\n"
-                f"<b>⧉ ᴊᴏɪɴᴇᴅ      ⟶</b> {joined}\n\n"
+                f"<b>⧉ {t['prof_bought']}   ⟶</b> {len(purchases)}\n"
+                f"<b>⧉ {t['prof_lang']}    ⟶</b> {lang_label}\n"
+                f"<b>⧉ {t['prof_join']}      ⟶</b> {joined}\n\n"
                 "<b>╚══════════════════╝</b>"
             )
             kb = [
-                [InlineKeyboardButton("📝 " + _sc("MY REQUESTS"), callback_data="mb#my_reqs_0")],
-                [InlineKeyboardButton(f"{_sc('LANGUAGE')}", callback_data="mb#main_settings")],
-                [InlineKeyboardButton(f"{_sc('BACK')}", callback_data="mb#main_back")]
+                [InlineKeyboardButton(t['my_reqs'], callback_data="mb#my_reqs_0")],
+                [InlineKeyboardButton("⚙️ " + t['set_lang'], callback_data="mb#main_settings")],
+                [InlineKeyboardButton("❮ " + t['back'], callback_data="mb#main_back")]
             ]
             await _safe_edit(query.message, text=txt_p, markup=InlineKeyboardMarkup(kb))
             return
 
         elif action == "settings":
+            t = T[lang]
             kb = [
                 [InlineKeyboardButton("English", callback_data="mb#lang#en"),
                  InlineKeyboardButton("हिंदी", callback_data="mb#lang#hi")],
-                [InlineKeyboardButton(f"❮ {_sc('BACK')}", callback_data="mb#main_back")]
+                [InlineKeyboardButton("❮ " + t['back'], callback_data="mb#main_back")]
             ]
-            await _safe_edit(query.message, text=f"<b>⚙️ Settings</b>\n\nSelect your language:", markup=InlineKeyboardMarkup(kb))
+            await _safe_edit(query.message, text=t['set_prompt'], markup=InlineKeyboardMarkup(kb))
 
         elif action == "help":
             return await _show_help_menu(client, query, 0)
@@ -1318,25 +1589,31 @@ async def _process_callback(client, query):
     elif cmd.startswith("my_reqs_"):
         page = int(cmd.replace("my_reqs_", ""))
         reqs = await db.db.premium_requests.find({"user_id": user_id, "bot_id": client.me.id}).sort("created_at", -1).to_list(length=None)
+        t = T[lang]
         if not reqs:
-            return await _safe_answer(query, "You haven't made any story requests yet.", show_alert=True)
+            return await _safe_answer(query, t['req_empty'], show_alert=True)
         items_per_page = 10
         total_pages = max(1, (len(reqs) + items_per_page - 1) // items_per_page)
-        if page < 0: page = 0
-        if page >= total_pages: page = total_pages - 1
+        page = max(0, min(page, total_pages - 1))
         subset = reqs[page*items_per_page : (page+1)*items_per_page]
-        txt_req = f"<b>📝 My Story Requests (Page {page+1}/{total_pages})</b>\n\nClick on any request to view its status:"
+        txt_req = f"<b>{t['req_main_title']} (Page {page+1}/{total_pages})</b>\n\n{t['req_click']}"
         kb = []
         for r in subset:
             sname = r.get('story_name', 'Unknown')
             if len(sname) > 25: sname = sname[:22] + "..."
-            status_emoji = {"Sent": "📮", "Pending": "⏳", "Searching": "🔍", "Posting": "📤", "Posted": "✅", "Completed": "🎉"}.get(r.get('status', 'Sent'), "📌")
-            kb.append([InlineKeyboardButton(f"{status_emoji} {sname}", callback_data=f"mb#my_req_{str(r['_id'])}")])
+            status = r.get('status', 'Sent')
+            if lang == 'hi':
+                status_hi = {"Sent": "भेजा गया", "Pending": "लंबित", "Searching": "ढूंढ रहे हैं", "Posting": "अपलोड हो रहा है", "Posted": "अपलोड हो गया", "Completed": "पूरा हुआ"}.get(status, status)
+                label = f"{sname} ({status_hi})"
+            else:
+                label = f"{sname} ({status})"
+            status_emoji = {"Sent": "📮", "Pending": "⏳", "Searching": "🔍", "Posting": "📤", "Posted": "✅", "Completed": "🎉"}.get(status, "📌")
+            kb.append([InlineKeyboardButton(f"{status_emoji} {label}", callback_data=f"mb#my_req_{str(r['_id'])}")])
         nav = []
-        if page > 0: nav.append(InlineKeyboardButton("❬ Prev", callback_data=f"mb#my_reqs_{page-1}"))
-        if page < total_pages - 1: nav.append(InlineKeyboardButton("Next ❭", callback_data=f"mb#my_reqs_{page+1}"))
+        if page > 0: nav.append(InlineKeyboardButton("❬ Prev" if lang=='en' else "❬ पीछे", callback_data=f"mb#my_reqs_{page-1}"))
+        if page < total_pages - 1: nav.append(InlineKeyboardButton("Next ❭" if lang=='en' else "आगे ❭", callback_data=f"mb#my_reqs_{page+1}"))
         if nav: kb.append(nav)
-        kb.append([InlineKeyboardButton("« " + _sc("BACK TO PROFILE"), callback_data="mb#main_profile")])
+        kb.append([InlineKeyboardButton(t['back_prof'], callback_data="mb#main_profile")])
         await _safe_edit(query.message, text=txt_req, markup=InlineKeyboardMarkup(kb))
         return
 
@@ -1387,7 +1664,15 @@ async def _process_callback(client, query):
         valid_stories_cursor = db.db.premium_stories.find({"_id": {"$in": p_oids}})
         valid_stories = await valid_stories_cursor.to_list(length=1000)
         valid_ids_set = {str(s['_id']) for s in valid_stories}
-        purchases = [p for p in raw_purchases if str(p) in valid_ids_set]
+        
+        # DEDUPLICATION: Ensure one entry per unique story ID
+        purchases = []
+        seen = set()
+        for p in raw_purchases:
+            pid_str = str(p)
+            if pid_str in valid_ids_set and pid_str not in seen:
+                purchases.append(p)
+                seen.add(pid_str)
         purchases.reverse()
 
         PAGE_SIZE = 5
@@ -1406,12 +1691,10 @@ async def _process_callback(client, query):
             try:
                 st = next((s for s in valid_stories if str(s['_id']) == str(pid)), None)
                 if st:
-                    en_name = st.get('story_name_en', 'Story')
-                    hi_name = st.get('story_name_hi', en_name)
-                    if lang == 'hi':
-                        s_name = f"📖 {hi_name}" if hi_name == en_name else f"📖 {hi_name} ({en_name})"
-                    else:
-                        s_name = f"📖 {en_name}"
+                    name_en = st.get('story_name_en', 'Story')
+                    name_hi = st.get('story_name_hi', name_en)
+                    # CLEAN DISPLAY: Only show the selected language version
+                    s_name = f"📖 {name_hi if lang == 'hi' else name_en}"
                     kb.append([InlineKeyboardButton(s_name, callback_data=f"mb#purchased_view_{pid}")])
             except Exception: pass
 
@@ -1525,8 +1808,12 @@ async def _process_callback(client, query):
     # ── Language ──
     elif cmd == "lang":
         new_lang = data[2]
+        await query.answer("✓ Updates applied!", show_alert=False)
+        m = await client.send_message(user_id, "<b>› › Yup, Bro updating... ⏳</b>")
+        await asyncio.sleep(2)
         await db.update_user(user_id, {"lang": new_lang})
-        await query.answer("Language Updated!")
+        try: await m.delete()
+        except: pass
         await _edit_main_menu_in_place(client, query, query.from_user, new_lang)
 
     # ── Story preview Continue button ──
@@ -1643,19 +1930,11 @@ async def _process_callback(client, query):
         story = await db.db.premium_stories.find_one({"_id": ObjectId(s_id)})
         if story:
             purchase = await db.db.premium_purchases.find_one({"user_id": int(user_id), "story_id": ObjectId(s_id)})
-            method_info = "Verified Purchase"
-            if purchase:
-                src = str(purchase.get("source", "manual")).lower()
-                amount_paid = purchase.get("amount", story.get('price', 0))
-                if src == "razorpay": method_info = f"💳 Razorpay (₹{amount_paid})"
-                elif src == "easebuzz": method_info = f"💸 Easebuzz (₹{amount_paid})"
-                elif src == "upi": method_info = f"🏦 Manual UPI (₹{amount_paid})"
-                else: method_info = f"🛒 {src.capitalize()} (₹{amount_paid})"
             
             s_name = story.get(f'story_name_{lang}', story.get('story_name_en'))
             ep_count = abs(story.get('end_id', 0) - story.get('start_id', 0)) + 1 if story.get('end_id') else "?"
 
-            # Clean payment label — no emojis
+            # Clean payment label
             payment_label = "Verified"
             if purchase:
                 src = str(purchase.get("source", "manual")).lower()
@@ -1667,22 +1946,40 @@ async def _process_callback(client, query):
                     "manual_upi": f"Manual UPI (₹{amount_paid})",
                 }.get(src, f"{src.capitalize()} (₹{amount_paid})")
 
-            txt_req = (
-                "<b>⟦ 𝗦𝗧𝗢𝗥𝗬 ⟧</b>\n\n"
-                f"<b>{s_name}</b>\n\n"
-                "──────────────\n"
-                f"<b>ᴘʟᴀᴛꜰᴏʀᴍ ⟶</b> {story.get('platform', 'Other')}\n"
-                f"<b>ᴇᴘɪꜱᴏᴅᴇꜱ ⟶</b> {story.get('episodes', 'N/A')}\n"
-                f"<b>ꜰɪʟᴇꜱ    ⟶</b> {ep_count}\n"
-                f"<b>ꜱᴛᴀᴛᴜꜱ   ⟶</b> ᴏᴡɴᴇᴅ\n"
-                f"<b>ᴘᴀʏᴍᴇɴᴛ  ⟶</b> {payment_label}\n"
-                "──────────────\n"
-                "𝖳𝖺𝗉 𝖻𝖾𝗅𝗈𝗐 𝗍𝗈 𝗋𝖾𝖼𝖾𝗂𝗏𝖾 𝗒𝗈𝗎𝗋 𝖿𝗂𝗅𝖾𝗌."
-            )
-            kb = [
-                [InlineKeyboardButton(_bs("GET DELIVERY"), callback_data=f"mb#access_{s_id}")],
-                [InlineKeyboardButton(_bs("Back to My Stories"), callback_data="mb#my_buys")]
-            ]
+            if lang == 'hi':
+                txt_req = (
+                    "<b>⟦ स्टोरी विवरण ⟧</b>\n\n"
+                    f"<b>{s_name}</b>\n\n"
+                    "──────────────\n"
+                    f"<b>प्लेटफॉर्म  ⟶</b> {story.get('platform', 'अन्य')}\n"
+                    f"<b>एपिसोड्स   ⟶</b> {story.get('episodes', 'N/A')}\n"
+                    f"<b>फाइलें     ⟶</b> {ep_count}\n"
+                    f"<b>स्थिति     ⟶</b> आपकी अपनी (Owned)\n"
+                    f"<b>पेमेंट      ⟶</b> {payment_label}\n"
+                    "──────────────\n"
+                    "अपनी फाइलें प्राप्त करने के लिए नीचे टैप करें।"
+                )
+                kb = [
+                    [InlineKeyboardButton("डिलीवरी प्राप्त करें", callback_data=f"mb#access_{s_id}")],
+                    [InlineKeyboardButton("« मेरी स्टोरीज पर वापस", callback_data="mb#my_buys")]
+                ]
+            else:
+                txt_req = (
+                    "<b>⟦ 𝗦𝗧𝗢𝗥𝗬 𝗠𝗘𝗧𝗔 ⟧</b>\n\n"
+                    f"<b>{s_name}</b>\n\n"
+                    "──────────────\n"
+                    f"<b>ᴘʟᴀᴛꜰᴏʀᴍ ⟶</b> {story.get('platform', 'Other')}\n"
+                    f"<b>ᴇᴘɪꜱᴏᴅᴇꜱ ⟶</b> {story.get('episodes', 'N/A')}\n"
+                    f"<b>ꜰɪʟᴇꜱ    ⟶</b> {ep_count}\n"
+                    f"<b>ꜱᴛᴀᴛᴜꜱ   ⟶</b> ᴏᴡɴᴇᴅ\n"
+                    f"<b>ᴘᴀʏᴍᴇɴᴛ  ⟶</b> {payment_label}\n"
+                    "──────────────\n"
+                    "𝖳𝖺𝗉 𝖻𝖾𝗅𝗈𝗐 𝗍𝗈 𝗋𝖾𝖼𝖾𝗂𝗏𝖾 𝗒𝗈𝗎𝗋 𝖿𝗂𝗅𝖾𝗌."
+                )
+                kb = [
+                    [InlineKeyboardButton(_bs("GET DELIVERY"), callback_data=f"mb#access_{s_id}")],
+                    [InlineKeyboardButton(_bs("Back to My Stories"), callback_data="mb#my_buys")]
+                ]
             await _safe_edit(query.message, text=txt_req, markup=InlineKeyboardMarkup(kb))
             
     # ── Access purchased story directly ──
@@ -2647,3 +2944,4 @@ async def _process_chat_member(client, update):
             await client.revoke_chat_invite_link(update.chat.id, update.invite_link.invite_link)
         except Exception:
             pass
+

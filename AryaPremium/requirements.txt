@@ -6,3 +6,4 @@ python-dotenv
 aiohttp
 qrcode[pil]
 pillow
+deep-translator
