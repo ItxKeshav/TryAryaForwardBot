@@ -2673,6 +2673,8 @@ async def _do_dm_delivery(client, user_id, story, status_msg=None):
 # Channel Link Delivery
 # ─────────────────────────────────────────────────────────────────
 async def _do_channel_delivery(client, user_id, story, status_msg=None):
+    user = await db.get_user(user_id)
+    lang = user.get('lang', 'en')
     story_id_str = str(story['_id'])
     try:
         bt = await db.db.premium_bots.find_one({"id": client.me.id})
