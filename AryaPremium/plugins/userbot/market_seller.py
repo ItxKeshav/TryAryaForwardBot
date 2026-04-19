@@ -573,19 +573,37 @@ async def _show_story_profile(client, user_id, story, lang):
     genre = story.get('genre', 'Unknown')
     episodes = story.get('episodes', 'Unknown')
     image = story.get('image')
-    price = story.get('price', 0)
+
+    if lang == 'hi':
+        status_lbl = "स्टेटस"
+        plat_lbl = "प्लेटफॉर्म"
+        genre_lbl = "जौनर"
+        ep_lbl = "एपिसोड्स"
+        desc_lbl = "कहानी का विवरण"
+        confirm_btn = "✅ आगे बढ़ें"
+        back_btn = "❮ वापस"
+        loading_txt = "प्रोफाइल लोड हो रही है..."
+    else:
+        status_lbl = "Status"
+        plat_lbl = "Platform"
+        genre_lbl = "Genre"
+        ep_lbl = "Episodes"
+        desc_lbl = "Story Description"
+        confirm_btn = f"✅ {_sc('CONFIRM')}"
+        back_btn = f"❮ {_sc('BACK')}"
+        loading_txt = _sc("LOADING PROFILE...")
 
     desc = story.get('description', '').strip()
     header_txt = (
         f"<b>♨️ Story:</b> {to_mathbold(name)}\n"
-        f"<b>🔰 Status:</b> <b>{status}</b>\n"
-        f"<b>🖥 Platform:</b> <b>{platform}</b>\n"
-        f"<b>🧩 Genre:</b> <b>{genre}</b>\n"
-        f"<b>🎬 Episodes:</b> <b>{episodes}</b>\n\n"
+        f"<b>🔰 {status_lbl}:</b> <b>{status}</b>\n"
+        f"<b>🖥 {plat_lbl}:</b> <b>{platform}</b>\n"
+        f"<b>🧩 {genre_lbl}:</b> <b>{genre}</b>\n"
+        f"<b>🎬 {ep_lbl}:</b> <b>{episodes}</b>\n\n"
     )
     if desc and desc.lower() != "none":
         header_txt += (
-            f"<b>Story Description</b>\n"
+            f"<b>{desc_lbl}</b>\n"
             f"<blockquote expandable>"
             f"-{to_mathbold(desc)}"
             f"</blockquote>\n"
@@ -593,42 +611,24 @@ async def _show_story_profile(client, user_id, story, lang):
     txt = header_txt
         
     kb = [
-        [InlineKeyboardButton(f"✅ {_sc('CONFIRM')}", callback_data=f"mb#show_tc#{str(story['_id'])}")],
-        [InlineKeyboardButton(f"❮ {_sc('BACK')}", callback_data="mb#return_main")]
+        [InlineKeyboardButton(confirm_btn, callback_data=f"mb#show_tc#{str(story['_id'])}")],
+        [InlineKeyboardButton(back_btn, callback_data="mb#return_main")]
     ]
     markup = InlineKeyboardMarkup(kb)
     
     from pyrogram import enums
-
-    # Need to send a message but remove the reply keyboard first (from marketplace)
-    tmp = await client.send_message(user_id, "<b>› › ⏳ " + _sc("LOADING PROFILE...") + "</b>", reply_markup=ReplyKeyboardRemove(), parse_mode=enums.ParseMode.HTML)
+    tmp = await client.send_message(user_id, f"<b>› › ⏳ {loading_txt}</b>", reply_markup=ReplyKeyboardRemove(), parse_mode=enums.ParseMode.HTML)
     
     try:
         if image:
             try:
-                await client.send_photo(
-                    user_id,
-                    photo=image,
-                    caption=txt,
-                    reply_markup=markup,
-                    parse_mode=enums.ParseMode.HTML,
-                )
+                await client.send_photo(user_id, photo=image, caption=txt, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
                 await tmp.delete()
                 return
-            except Exception:
-                pass
-        await client.send_message(
-            user_id,
-            txt,
-            reply_markup=markup,
-            disable_web_page_preview=True,
-            parse_mode=enums.ParseMode.HTML
-        )
+            except Exception: pass
+        await client.send_message(user_id, txt, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
         await tmp.delete()
-    except Exception as e:
-        logger.error(f"Error in show_story_profile: {e}")
-        try: await tmp.delete()
-        except: pass
+    except Exception: pass
 
 async def _show_tc(client, user_id, story_id, lang='en'):
     if lang == 'hi':
@@ -704,63 +704,55 @@ async def _show_story_details(client, msg_or_query, story, lang, bot_cfg: dict =
     is_msg = isinstance(msg_or_query, Message)
     bot_cfg = bot_cfg or {}
 
-    name = story.get(f'story_name_{lang}', story.get('story_name_en'))
-    price = story.get('price', 0)
-
-    upi_enabled = bot_cfg.get('upi_enabled', True)
-    upi_restricted = _is_upi_restricted()
-    show_upi = upi_enabled and not upi_restricted
-
+    name = story.get(f'story_name_{lang}', story.get('story_name_en', 'Unknown'))
+    price = story.get('price', 1)
+    
     if lang == 'hi':
-        checkout_title = "🛍️ चेकआउट"
-        item_label = "📦 स्टोरी :"
-        amount_label = "💰 राशि :"
-        desc_title = "भविष्य के अपडेट और गाइड"
-        desc_content = (
-            "इस प्रीमियम कहानी को खरीदने के बाद आपको इसके भविष्य के सभी अपडेट्स मिलते रहेंगे। "
-            "साथ ही, आपको बॉट का उपयोग करने और कहानियों को आसानी से एक्सेस करने का एक विस्तृत गाइड भी मिलेगा।"
-        )
-        instruction = "भुगतान करने के लिए नीचे क्लिक करें। पूरा होने के बाद, वेरीफाई पर टैप करें।"
-        pay_now_btn = "𝗥𝗮𝘇𝗼𝗿𝗽𝗮𝘆 → अभी भुगतान करें"
-        upi_manual_btn = "𝗨𝗣𝗜 → मैन्युअल भुगतान"
-        back_btn = "« ❮ वापस"
+        title = "⟦ चेकआउट ⟧"
+        item_lbl = "आइटम"
+        price_lbl = "कीमत"
+        desc = "आप इस प्रीमियम कहानी को खरीदने जा रहे हैं। पेमेंट के बाद आपको तुरंत एक्सेस मिल जाएगा।"
+        pay_gateway_btn = "पेमेंट गेटवे से भुगतान (Razorpay)"
+        pay_upi_btn = "यूपीआई (Manual UPI)"
+        unavailable_upi = "यूपीआई भुगतान अभी बंद है।"
+        back_btn = "❮ वापस"
     else:
-        checkout_title = "🛍️ 𝗖𝗛𝗘𝗖𝗞𝗢𝗨𝗧"
-        item_label = "📦 𝗜𝘁𝗲𝗺 :"
-        amount_label = "💰 𝗔𝗺𝗼𝘂𝗻𝘁 :"
-        desc_title = "Future Updates & Guide"
-        desc_content = (
-            "You are paying for this premium story. You will receive all future updates for this story automatically. "
-            "A complete guide on how to use the bot and access your stories will also be provided after purchase."
-        )
-        instruction = "Click below to pay. Once done, tap verify."
-        pay_now_btn = "𝗥𝗮𝘇𝗼𝗿𝗽𝗮𝘆 → 𝗣𝗔𝗬 𝗡𝗢𝗪"
-        upi_manual_btn = "𝗨𝗣𝗜 → 𝗠𝗔𝗡𝗨𝗔𝗟 𝗣𝗔𝗬𝗠𝗘𝗡𝗧"
-        back_btn = "« ❮ 𝗕𝗔𝗖𝗞"
+        title = "⟦ 𝗠𝗔𝗥𝗞𝗘𝗧𝗣𝗟𝗔𝗖𝗘 ⟧"
+        item_lbl = "Item"
+        price_lbl = "Price"
+        desc = "𝖠𝗀𝗋𝖾𝖾𝖽 𝖺𝗇𝖽 𝖼𝗈𝗇𝖿𝗂𝗋𝗆𝖾𝖽. 𝖯𝗅𝖾𝖺𝗌𝖾 𝗉𝗋𝗈𝖼𝖾𝖾𝖽 𝗐𝗂𝗍𝗁 𝗍𝗁𝖾 𝗉𝖺𝗒𝗆𝖾𝗇𝗍 𝗍𝗈 𝗎𝗇𝗅𝗈𝖼𝗄 𝗒𝗈𝗎𝗋 𝗌𝗍𝗈𝗋𝗒 𝗂𝗇𝗌𝗍𝖺𝗇𝗍𝗅𝗒."
+        pay_gateway_btn = f"💳 {_sc('PAY VIA RAZORPAY')}"
+        pay_upi_btn = f"🏦 {_sc('PAY VIA MANUAL UPI')}"
+        unavailable_upi = "UPI Currently Unavailable"
+        back_btn = f"❮ {_sc('BACK')}"
 
     txt = (
-        f"<b>{checkout_title}</b>\n"
-        f"────────────────────\n"
-        f"<b>{item_label}</b> {name}\n"
-        f"<b>{amount_label}</b> ₹{price}\n"
-        f"────────────────────\n"
-        f"<b>{desc_title}</b>\n"
-        f"<blockquote expandable>{desc_content}</blockquote>\n"
-        f"────────────────────\n"
-        f"<i>{instruction}</i>"
+        f"<b>{title}</b>\n\n"
+        f"<b>{item_lbl} :</b> <code>{name}</code>\n"
+        f"<b>{price_lbl} :</b> <code>₹{price}</code>\n\n"
+        f"{desc}"
     )
 
-    kb = [
-        [InlineKeyboardButton(pay_now_btn, callback_data=f"mb#pay#razorpay#{str(story['_id'])}")],
-    ]
-    if show_upi:
-        kb.append([InlineKeyboardButton(upi_manual_btn, callback_data=f"mb#pay#upi#{str(story['_id'])}")])
+    kb = []
+    # Razorpay row
+    kb.append([InlineKeyboardButton(pay_gateway_btn, callback_data=f"mb#pay#razorpay#{str(story['_id'])}")])
+    
+    # UPI row
+    from .market_seller import _is_upi_restricted
+    upi_enabled = bot_cfg.get('upi_enabled', True)
+    upi_restricted = _is_upi_restricted()
+    if upi_enabled and not upi_restricted:
+        kb.append([InlineKeyboardButton(pay_upi_btn, callback_data=f"mb#pay#upi#{str(story['_id'])}")])
+    else:
+        kb.append([InlineKeyboardButton(f"🚫 {unavailable_upi}", callback_data="mb#noop")])
+        
     kb.append([InlineKeyboardButton(back_btn, callback_data="mb#return_main")])
+    markup = InlineKeyboardMarkup(kb)
 
     if is_msg:
-        await msg_or_query.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+        await msg_or_query.reply_text(txt, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
     else:
-        await msg_or_query.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+        await _safe_edit(msg_or_query.message, text=txt, markup=markup)
 
 async def _process_start(client, message):
     user_id = message.from_user.id
@@ -868,42 +860,62 @@ async def _process_my_stories(client, message):
         try:
             st = await db.db.premium_stories.find_one({"_id": ObjectId(pid)})
             if st:
-                s_name = st.get(f'story_name_{lang}', st.get('story_name_en'))
+                # Optimized title: Show both Hindi and English if they differ
+                en_name = st.get('story_name_en', 'Story')
+                hi_name = st.get('story_name_hi', en_name)
+                
+                if lang == 'hi':
+                    s_name = f"📖 {hi_name}" if hi_name == en_name else f"📖 {hi_name} ({en_name})"
+                else:
+                    s_name = f"📖 {en_name}"
+                    
                 kb.append([InlineKeyboardButton(s_name, callback_data=f"mb#purchased_view_{pid}")])
         except Exception:
             pass
 
+    if lang == 'hi':
+        title = "⟦ मेरी स्टोरीज ⟧"
+        total_txt = "कुल स्टोरी ⟶"
+        desc = "आपके अकाउंट में मौजूद सभी स्टोरीज नीचे दी गई हैं। किसी भी स्टोरी को देखने या दोबारा एक्सेस करने के लिए उसे चुनें।"
+        next_btn = "आगे ❭"
+        prev_btn = "❬ पीछे"
+        back_btn = "« वापस मेनू"
+        empty_txt = "कोई खरीद नहीं मिली। स्टोर देखें।"
+        market_btn = "स्टोर खोलें"
+    else:
+        title = "⟦ 𝗠𝗬 𝗦𝗧𝗢𝗥𝗜𝗘𝗦 ⟧"
+        total_txt = "ᴛᴏᴛᴀʟ ⟶"
+        desc = "𝖠𝗅𝗅 𝗌𝗍𝗈𝗋𝗂𝖾𝗌 𝗅𝗂𝗌𝗍𝖾𝖽 𝖻𝖾𝗅𝗈𝗐 𝖺𝗋𝖾 𝖺𝗅𝗋𝖾𝖺𝖽𝗒 𝗈𝗇 𝗒𝗈𝗎𝗋 𝖺𝖼𝖼𝗈𝗎𝗇𝗍. 𝖲𝖾𝗅𝖾𝖼𝗍 𝖺𝗇𝗒 𝗌𝗍𝗈𝗋𝗒 𝗍𝗈 𝗏𝗂𝖾𝗐 𝖽𝖾𝗍𝖺𝗂𝗅𝗌."
+        next_btn = "𝗡𝗲𝘅𝘁 ❭"
+        prev_btn = "❬ 𝗣𝗿𝗲𝘃"
+        back_btn = "Back to Menu"
+        empty_txt = "ɴᴏ ᴘᴜʀᴄʜᴀꜱᴇꜱ ꜰᴏᴜɴᴅ."
+        market_btn = "OPEN MARKETPLACE"
+
     if total_pages > 1:
         nav = []
         nav.append(InlineKeyboardButton(f"ᴘᴀɢᴇ 1/{total_pages}", callback_data="mb#noop"))
-        nav.append(InlineKeyboardButton("𝗡𝗲𝘅𝘁 ❭", callback_data="mb#my_buys_page_1"))
+        nav.append(InlineKeyboardButton(next_btn, callback_data="mb#my_buys_page_1"))
         kb.append(nav)
 
-    kb.append([InlineKeyboardButton(_bs("Back to Menu"), callback_data="mb#main_back")])
+    kb.append([InlineKeyboardButton(back_btn, callback_data="mb#main_back")])
 
     if total > 0:
         txt_b = (
-            "<b>⟦ 𝗠𝗬 𝗦𝗧𝗢𝗥𝗜𝗘𝗦 ⟧</b>\n\n"
-            f"<b>ᴛᴏᴛᴀʟ ⟶</b> {total}\n\n"
-            "𝖠𝗅𝗅 𝗌𝗍𝗈𝗋𝗂𝖾𝗌 𝗅𝗂𝗌𝗍𝖾𝖽 𝖻𝖾𝗅𝗈𝗐 𝖺𝗋𝖾 𝖺𝗅𝗋𝖾𝖺𝖽𝗒\n"
-            "𝗈𝗇 𝗒𝗈𝗎𝗋 𝖺𝖼𝖼𝗈𝗎𝗇𝗍. 𝖲𝖾𝗅𝖾𝖼𝗍 𝖺𝗇𝗒 𝗌𝗍𝗈𝗋𝗒 𝗍𝗈 𝗏𝗂𝖾𝗐\n"
-            "𝖽𝖾𝗍𝖺𝗂𝗅𝗌 𝗈𝗋 𝖺𝖼𝖼𝖾𝗌𝗌 𝗂𝗍 𝖺𝗀𝖺𝗂𝗇."
+            f"<b>{title}</b>\n\n"
+            f"<b>{total_txt}</b> {total}\n\n"
+            f"{desc}"
         )
     else:
         txt_b = (
-            "<b>⟦ 𝗠𝗬 𝗦𝗧𝗢𝗥𝗜𝗘𝗦 ⟧</b>\n\n"
-            "<b>ᴛᴏᴛᴀʟ ⟶</b> 0\n\n"
-            "ɴᴏ ᴘᴜʀᴄʜᴀꜱᴇꜱ ꜰᴏᴜɴᴅ.\n"
-            "ᴠɪꜱɪᴛ ᴛʜᴇ ᴍᴀʀᴋᴇᴛᴘʟᴀᴄᴇ ᴛᴏ ᴇxᴘʟᴏʀᴇ."
+            f"<b>{title}</b>\n\n"
+            f"<b>{total_txt}</b> 0\n\n"
+            f"{empty_txt}"
         )
-        kb.insert(0, [InlineKeyboardButton(_bs("OPEN MARKETPLACE"), callback_data="mb#main_marketplace")])
+        kb.insert(0, [InlineKeyboardButton(market_btn, callback_data="mb#main_marketplace")])
 
     await client.send_message(user_id, txt_b, reply_markup=InlineKeyboardMarkup(kb))
 
-
-# ─────────────────────────────────────────────────────────────────
-# Text Handler (only for Reply Keyboard marketplace flow)
-# ─────────────────────────────────────────────────────────────────
 async def _process_text(client, message):
     user_id = message.from_user.id
     user = await db.get_user(user_id)
@@ -1365,6 +1377,66 @@ async def _process_callback(client, query):
     # -- My Buys (My Stories) --
     elif cmd == "my_buys" or cmd.startswith("my_buys_page_"):
         await query.answer()
+        raw_purchases = user.get('purchases', [])
+        from bson.objectid import ObjectId
+        p_oids = []
+        for p in raw_purchases:
+            try: p_oids.append(ObjectId(p))
+            except: pass
+        
+        valid_stories_cursor = db.db.premium_stories.find({"_id": {"$in": p_oids}})
+        valid_stories = await valid_stories_cursor.to_list(length=1000)
+        valid_ids_set = {str(s['_id']) for s in valid_stories}
+        purchases = [p for p in raw_purchases if str(p) in valid_ids_set]
+        purchases.reverse()
+
+        PAGE_SIZE = 5
+        page = 0
+        if cmd.startswith("my_buys_page_"):
+            try: page = int(cmd.replace("my_buys_page_", ""))
+            except: page = 0
+
+        total = len(purchases)
+        total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+        page = max(0, min(page, total_pages - 1))
+        page_purchases = purchases[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+
+        kb = []
+        for pid in page_purchases:
+            try:
+                st = next((s for s in valid_stories if str(s['_id']) == str(pid)), None)
+                if st:
+                    en_name = st.get('story_name_en', 'Story')
+                    hi_name = st.get('story_name_hi', en_name)
+                    if lang == 'hi':
+                        s_name = f"📖 {hi_name}" if hi_name == en_name else f"📖 {hi_name} ({en_name})"
+                    else:
+                        s_name = f"📖 {en_name}"
+                    kb.append([InlineKeyboardButton(s_name, callback_data=f"mb#purchased_view_{pid}")])
+            except Exception: pass
+
+        if lang == 'hi':
+            title, total_txt, desc = "⟦ मेरी स्टोरीज ⟧", "कुल स्टोरी ⟶", "आपके अकाउंट में मौजूद सभी स्टोरीज नीचे दी गई हैं।"
+            next_btn, prev_btn, back_btn = "आगे ❭", "❬ पीछे", "« वापस मेनू"
+            empty_txt, market_btn_l = "कोई खरीद नहीं मिली।", "स्टोर खोलें"
+        else:
+            title, total_txt, desc = "⟦ 𝗠𝗬 𝗦𝗧𝗢𝗥𝗜𝗘𝗦 ⟧", "ᴛᴏᴛᴀʟ ⟶", "𝖠𝗅𝗅 𝗌𝗍𝗈𝗋𝗂𝖾𝗌 𝗅𝗂𝗌𝗍𝖾𝖽 𝖻𝖾𝗅𝗈𝗐 𝖺𝗋𝖾 𝖺𝗅𝗋𝖾𝖺𝖽𝗒 𝗈𝗇 𝗒𝗈𝗎𝗋 𝖺𝖼𝖼𝗈𝗎𝗇ᴛ."
+            next_btn, prev_btn, back_btn = "𝗡𝗲𝘅𝘁 ❭", "❬ 𝗣𝗿𝗲𝘃", _sc("BACK")
+            empty_txt, market_btn_l = "ɴᴏ ᴘᴜʀᴄʜᴀꜱᴇꜱ ꜰᴏᴜɴᴅ.", _sc("OPEN MARKETPLACE")
+
+        if total_pages > 1:
+            nav = []
+            if page > 0: nav.append(InlineKeyboardButton(prev_btn, callback_data=f"mb#my_buys_page_{page - 1}"))
+            nav.append(InlineKeyboardButton(f"ᴘᴀɢᴇ {page + 1}/{total_pages}", callback_data="mb#noop"))
+            if page < total_pages - 1: nav.append(InlineKeyboardButton(next_btn, callback_data=f"mb#my_buys_page_{page + 1}"))
+            kb.append(nav)
+        kb.append([InlineKeyboardButton(back_btn, callback_data="mb#main_back")])
+
+        txt_b = f"<b>{title}</b>\n\n<b>{total_txt}</b> {total}\n\n{desc}" if total > 0 else f"<b>{title}</b>\n\n<b>{total_txt}</b> 0\n\n{empty_txt}"
+        if total == 0: kb.insert(0, [InlineKeyboardButton(market_btn_l, callback_data="mb#main_marketplace")])
+        await _safe_edit(query.message, text=txt_b, markup=InlineKeyboardMarkup(kb))
+
+
         # 1. Get raw purchases
         raw_purchases = user.get('purchases', [])
         from bson.objectid import ObjectId
@@ -1764,23 +1836,41 @@ async def _process_callback(client, query):
             )
 
             p_name = (bt_cfg.get("upi_name") or "Merchant").strip()
-            txt = (
-                f"<b>⟦ 𝗖𝗢𝗠𝗣𝗟𝗘𝗧𝗘 𝗣𝗔𝗬𝗠𝗘𝗡𝗧 ⟧</b>\n\n"
-                f"<b>𝚂𝚝𝚎𝚙 𝟷: Pay ₹{s_price}</b>\n\n"
-                f"<blockquote>• Scan the QR code or pay using the details below:</blockquote>\n"
-                f"<blockquote><b>UPI ID:</b> <code>{upi_id}</code>\n"
-                f"<b>Name:</b> <code>{p_name}</code>\n"
-                f"<b>Amount:</b> <code>₹{s_price}</code></blockquote>\n\n"
-                f"• Make sure the amount is entered correctly.\n\n"
-                f"<b>𝚂𝚝𝚎𝚙 𝟸: Verify Payment</b>\n\n"
-                f"• After payment, click <b>PAYMENT DONE</b> to upload your screenshot.\n"
-                f"────────────────────"
-            )
-
-            kb = [
-                [InlineKeyboardButton(f"☑️ {_sc('PAYMENT DONE')}", callback_data=f"mb#upi_done#{s_id}")],
-                [InlineKeyboardButton(f"« ❮ {_sc('BACK')}", callback_data=f"mb#pay_back#{s_id}")]
-            ]
+            
+            if lang == 'hi':
+                txt = (
+                    f"<b>⟦ {_sc('पेमेंट पूरा करें')} ⟧</b>\n\n"
+                    f"<b>स्टेप 𝟷: ₹{s_price} का भुगतान करें</b>\n\n"
+                    f"<blockquote>• QR कोड स्कैन करें या नीचे दिए गए विवरण का उपयोग करें:</blockquote>\n"
+                    f"<blockquote><b>UPI ID:</b> <code>{upi_id}</code>\n"
+                    f"<b>नाम:</b> <code>{p_name}</code>\n"
+                    f"<b>राशि:</b> <code>₹{s_price}</code></blockquote>\n\n"
+                    f"• सुनिश्चित करें कि राशि सही भरी गई है।\n\n"
+                    f"<b>स्टेप य: भुगतान का सत्यापन</b>\n\n"
+                    f"• भुगतान के बाद, अपना स्क्रीनशॉट अपलोड करने के लिए <b>पेमेंट हो गया</b> पर क्लिक करें।\n"
+                    f"────────────────────"
+                )
+                kb = [
+                    [InlineKeyboardButton("☑️ पेमेंट हो गया", callback_data=f"mb#upi_done#{s_id}")],
+                    [InlineKeyboardButton("« ❮ वापस", callback_data=f"mb#pay_back#{s_id}")]
+                ]
+            else:
+                txt = (
+                    f"<b>⟦ {_sc('COMPLETE PAYMENT')} ⟧</b>\n\n"
+                    f"<b>𝚂𝚝𝚎𝚙 𝟷: Pay ₹{s_price}</b>\n\n"
+                    f"<blockquote>• Scan the QR code or pay using the details below:</blockquote>\n"
+                    f"<blockquote><b>UPI ID:</b> <code>{upi_id}</code>\n"
+                    f"<b>Name:</b> <code>{p_name}</code>\n"
+                    f"<b>Amount:</b> <code>₹{s_price}</code></blockquote>\n\n"
+                    f"• Make sure the amount is entered correctly.\n\n"
+                    f"<b>𝚂𝚝𝚎𝚙 𝟸: Verify Payment</b>\n\n"
+                    f"• After payment, click <b>PAYMENT DONE</b> to upload your screenshot.\n"
+                    f"────────────────────"
+                )
+                kb = [
+                    [InlineKeyboardButton(f"☑️ {_sc('PAYMENT DONE')}", callback_data=f"mb#upi_done#{s_id}")],
+                    [InlineKeyboardButton(f"« ❮ {_sc('BACK')}", callback_data=f"mb#pay_back#{s_id}")]
+                ]
             
             await query.message.delete()
             try:
@@ -1792,7 +1882,7 @@ async def _process_callback(client, query):
                     await client.send_photo(user_id, photo=qr_url, caption=txt, reply_markup=InlineKeyboardMarkup(kb))
             except Exception as e:
                 logger.warning(f"UPI payment screen send failed: {e}")
-                kb2 = [[InlineKeyboardButton(f"☑️ {_sc('PAYMENT DONE')}", callback_data=f"mb#upi_done#{s_id}")]]
+                kb2 = [[InlineKeyboardButton(f"☑️ {'पेमेंट हो गया' if lang=='hi' else _sc('PAYMENT DONE')}", callback_data=f"mb#upi_done#{s_id}")]]
                 await client.send_message(user_id, txt, reply_markup=InlineKeyboardMarkup(kb2))
 
     elif cmd == "pay_back":
@@ -1828,16 +1918,20 @@ async def _process_callback(client, query):
             {"user_id": user_id, "bot_id": client.me.id, "story_id": ObjectId(s_id)},
             {"$set": {"status": "waiting_screenshot", "updated_at": datetime.utcnow()}}
         )
-        await query.answer()
-        await client.send_message(
-            user_id,
-            f"<b>☑️ {_sc('PAYMENT SUBMITTED')}</b>\n\n"
-            "<blockquote expandable>"
-            f"<i>{_sc('Our system needs to verify your payment.')}</i>\n"
-            f"<i>{_sc('Please upload the successful payment screenshot here now.')}</i>\n"
-            f"<i>{_sc('Ensure the Transaction ID / UTR is clearly visible.')}</i>\n"
-            "</blockquote>"
-        )
+        if lang == 'hi':
+            await query.answer("कृपया अपना स्क्रीनशॉट भेजें।", show_alert=True)
+            await query.message.reply_text(
+                "<b>📸 पेमेंट स्क्रीनशॉट भेजें</b>\n\n"
+                "सत्यापन शुरू करने के लिए कृपया अपने सफल भुगतान का स्क्रीनशॉट यहाँ भेजें।",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« वापस", callback_data=f"mb#pay#upi#{s_id}")]])
+            )
+        else:
+            await query.answer(_sc("Please send your screenshot."), show_alert=True)
+            await query.message.reply_text(
+                f"<b>📸 {_sc('SEND PAYMENT SCREENSHOT')}</b>\n\n"
+                f"{_sc('Please send your successful payment screenshot here to begin verification.')}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(f"« {_sc('BACK')}", callback_data=f"mb#pay#upi#{s_id}")]])
+            )
 
     elif cmd.endswith("_check") and cmd.split("_")[0] in ("razorpay", "easebuzz"):
         s_id = data[2] if len(data) > 2 else None
@@ -2489,20 +2583,39 @@ async def _do_channel_delivery(client, user_id, story, status_msg=None):
             msg = await client.send_message(user_id, txt, disable_web_page_preview=True)
             _schedule_auto_delete(msg, 86400)
         else:
-            txt = (
-                f"<b>Your 1-Time Access Link is Ready!</b>\n\n"
-                f"<b>{s_name}</b>\n\n"
-                f"{invite_link.invite_link}\n\n"
-                "<blockquote>"
-                f"<i>This link works for exactly 1 person only. Once used, it expires.\n"
-                f"Future access to this story will be via DM delivery only by using /mystories.</i>\n"
-                "</blockquote>"
-                "<blockquote>"
-                f"<i>⚠️ This message will auto-delete in 24 hours. "
-                f"Once you join, the link will be revoked automatically to ensure privacy.</i>\n"
-                "</blockquote>"
-            )
-            kb_link = [[InlineKeyboardButton(f"« ❮ {_sc('MAIN MENU')}", callback_data="mb#main_back")]]
+            # Result message
+            if lang == 'hi':
+                txt = (
+                    f"<b>आपका 1-टाइम एक्सेस लिंक तैयार है!</b>\n\n"
+                    f"<b>{s_name_h}</b>\n\n"
+                    f"{invite_link.invite_link}\n\n"
+                    "<blockquote>"
+                    f"<i>यह लिंक केवल 1 व्यक्ति के लिए है। एक बार उपयोग करने पर, यह एक्सपायर हो जाएगा।\n"
+                    f"भविष्य में इस स्टोरी को /mystories का उपयोग करके सीधे DM में प्राप्त किया जा सकता है।</i>\n"
+                    "</blockquote>"
+                    "<blockquote>"
+                    f"<i>⚠️ यह मैसेज 24 घंटे में अपने आप डिलीट हो जाएगा। "
+                    f"जैसे ही आप ज्वाइन करेंगे, प्राइवेसी के लिए लिंक को तुरंत रद्द कर दिया जाएगा।</i>\n"
+                    "</blockquote>"
+                )
+                back_btn_txt = "« ❮ मुख्य मेनू"
+            else:
+                txt = (
+                    f"<b>Your 1-Time Access Link is Ready!</b>\n\n"
+                    f"<b>{s_name_h}</b>\n\n"
+                    f"{invite_link.invite_link}\n\n"
+                    "<blockquote>"
+                    f"<i>This link works for exactly 1 person only. Once used, it expires.\n"
+                    f"Future access to this story will be via DM delivery only by using /mystories.</i>\n"
+                    "</blockquote>"
+                    "<blockquote>"
+                    f"<i>⚠️ This message will auto-delete in 24 hours. "
+                    f"Once you join, the link will be revoked automatically to ensure privacy.</i>\n"
+                    "</blockquote>"
+                )
+                back_btn_txt = f"« ❮ {_sc('MAIN MENU')}"
+
+            kb_link = [[InlineKeyboardButton(back_btn_txt, callback_data="mb#main_back")]]
             msg = await client.send_message(user_id, txt, disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(kb_link))
             _schedule_auto_delete(msg, 86400)
 
