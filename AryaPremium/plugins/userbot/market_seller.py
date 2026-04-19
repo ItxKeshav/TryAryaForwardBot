@@ -240,8 +240,8 @@ def _get_main_menu(lang='en'):
                 InlineKeyboardButton("ʏ", callback_data="mb#about_arya_0"),
                 InlineKeyboardButton("ᴀ", callback_data="mb#about_arya_0")
             ],
-            [InlineKeyboardButton(f"• {_bs('MARKETPLACE')} •", callback_data="mb#main_marketplace"),
-             InlineKeyboardButton("• \ud835\udde0\ud835\uddf2\ud835\uddff\u0940 \ud835\udde6\u094d\ud835\ude01\u094b\ud835\uddff\u093f\ud835\ude06 •", callback_data="mb#my_buys")],
+            [InlineKeyboardButton("• मार्केटप्लेस •", callback_data="mb#main_marketplace"),
+             InlineKeyboardButton("• मेरी स्टोरीज •", callback_data="mb#my_buys")],
             [InlineKeyboardButton("प्रोफाइल", callback_data="mb#main_profile"),
              InlineKeyboardButton("सेटिंग्स", callback_data="mb#main_settings")],
             [InlineKeyboardButton("मदद / जानकारी", callback_data="mb#main_help")],
@@ -288,9 +288,11 @@ def _get_premium_menu_markup(bt_cfg: dict, lang: str):
     if updates_url or support_url:
         r = []
         if updates_url:
-            r.append(InlineKeyboardButton(_sc("UPDATES"), url=updates_url))
+            label = "अपडेट्स" if lang == 'hi' else _sc("UPDATES")
+            r.append(InlineKeyboardButton(label, url=updates_url))
         if support_url:
-            r.append(InlineKeyboardButton(_sc("SUPPORT"), url=support_url))
+            label = "सपोर्ट" if lang == 'hi' else _sc("SUPPORT")
+            r.append(InlineKeyboardButton(label, url=support_url))
         if r:
             rows.append(r)
     base = _get_main_menu(lang).inline_keyboard
@@ -300,7 +302,7 @@ def _get_premium_menu_markup(bt_cfg: dict, lang: str):
     return InlineKeyboardMarkup(base)
 
 
-def _menu_card_text(user, bt_cfg: dict, bot_name: str) -> str:
+def _menu_card_text(user, bt_cfg: dict, bot_name: str, lang: str = 'en') -> str:
     # 1. Clickable First Name (Escape for HTML safety)
     u_mention = f'<a href="tg://user?id={user.id}">{html.escape((user.first_name or "User").strip())}</a>'
     
@@ -312,26 +314,38 @@ def _menu_card_text(user, bt_cfg: dict, bot_name: str) -> str:
         else:
             welcome = welcome.replace("{user}", u_mention).replace("{name}", u_mention).replace("{first_name}", u_mention)
     else:
-        welcome = ""
+        if lang == 'hi':
+            welcome = f"<b>{u_mention}, आर्या प्रीमियम स्टोर में आपका स्वागत है!</b>"
+        else:
+            welcome = f"<b>Welcome to Arya Premium Store, {u_mention}!</b>"
     
     # --- 2. About Section ---
     about = bt_cfg.get("about")
     if not about:
-        about = ""
+        if lang == 'hi':
+            about = "हम आपको प्रीमियम कहानियां सबसे बेहतरीन क्वालिटी और तुरंत डिलीवरी के साथ प्रदान करते हैं।"
+        else:
+            about = "We provide you with premium stories with the best quality and instant delivery."
         
     # --- 3. Quote Section ---
     quote = bt_cfg.get("quote")
     if quote and quote.lower() == "disable":
         quote = ""
     elif not quote:
-        quote = "❝ IF YOU WERE TO WRITE A STORY WITH ME IN THE LEAD ROLE... IT WOULD CERTAINLY BE A TRAGEDY. ❞"
+        if lang == 'hi':
+            quote = "❝ अगर आप मुझे मुख्य भूमिका में रखकर कोई कहानी लिखेंगे... तो वह निश्चित रूप से एक त्रासदी होगी। ❞"
+        else:
+            quote = "❝ IF YOU WERE TO WRITE A STORY WITH ME IN THE LEAD ROLE... IT WOULD CERTAINLY BE A TRAGEDY. ❞"
         
     # --- 4. Author Section ---
     author = bt_cfg.get("quote_author")
     if author and author.lower() == "disable":
         author = ""
     elif not author:
-        author = "<b>— KEN KENEKI</b>"
+        if lang == 'hi':
+            author = "<b>— केन कानेकी</b>"
+        else:
+            author = "<b>— KEN KENEKI</b>"
     else:
         author = f"<b>— {author}</b>"
     
@@ -365,7 +379,7 @@ async def _edit_main_menu_in_place(client, query, user, lang: str):
     bt = await db.db.premium_bots.find_one({"id": client.me.id})
     bt_cfg = bt.get("config", {}) if bt else {}
     bot_name = client.me.first_name
-    msg_txt = _menu_card_text(user, bt_cfg, bot_name)
+    msg_txt = _menu_card_text(user, bt_cfg, bot_name, lang)
     markup = _get_premium_menu_markup(bt_cfg, lang)
 
     # Media rotation on navigation
@@ -418,7 +432,7 @@ async def _send_main_menu(client, user_id: int, user, lang: str, reply_to_messag
     bt = await db.db.premium_bots.find_one({"id": client.me.id})
     bt_cfg = bt.get("config", {}) if bt else {}
     bot_name = client.me.first_name
-    msg_txt = _menu_card_text(user, bt_cfg, bot_name)
+    msg_txt = _menu_card_text(user, bt_cfg, bot_name, lang)
     markup = _get_premium_menu_markup(bt_cfg, lang)
 
     # Menu media rotation: supports Photo / GIF / Video.
