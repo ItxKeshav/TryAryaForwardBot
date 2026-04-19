@@ -400,9 +400,9 @@ def _menu_card_text(user, bt_cfg: dict, bot_name: str, lang: str = 'en') -> str:
         import re
         return re.sub(r'\s+', '', val) == re.sub(r'\s+', '', default_val)
 
-    DEFAULT_WELCOME_EN = """›› ʜᴇʏ, {name} | {bot_name}
-ʙʀᴏᴡꜱᴇ ᴘʀᴇᴍɪᴜᴍ ꜱᴛᴏʀɪᴇꜱ ꜰʀᴏᴍ pocket fm, kuku fm, headphone & more."""
-    DEFAULT_ABOUT_EN = """ᴛᴀᴘ marketplace ᴛᴏ ᴇxᴘʟᴏʀᴇ ꜱᴛᴏʀɪᴇꜱ ʙʏ platform."""
+    DEFAULT_WELCOME_EN = """›› ʜᴇʏ, {name} | {bot_name}"""
+    DEFAULT_ABOUT_EN = """ʙʀᴏᴡꜱᴇ ᴘʀᴇᴍɪᴜᴍ ꜱᴛᴏʀɪᴇꜱ ꜰʀᴏᴍ pocket fm, kuku fm, headphone & more.
+ᴛᴀᴘ marketplace ᴛᴏ ᴇxᴘʟᴏʀᴇ ꜱᴛᴏʀɪᴇꜱ ʙʏ platform."""
     DEFAULT_QUOTE_EN = """ǫᴜᴀʟɪᴛʏ ꜱᴛᴏʀɪᴇꜱ • ɪɴꜱᴛᴀɴᴛ ᴅᴇʟɪᴠᴇʀʏ • ᴀᴜᴛᴏᴍᴀᴛᴇᴅ"""
     DEFAULT_AUTHOR_EN = """— ᴀʀʏᴀ ᴘʀᴇᴍɪᴜᴍ"""
     
