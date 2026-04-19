@@ -395,6 +395,11 @@ def _menu_card_text(user, bt_cfg: dict, bot_name: str, lang: str = 'en') -> str:
     u_mention = f'<a href="tg://user?id={user.id}">{html.escape((user.first_name or "User").strip())}</a>'
     
     # --- DEFAULTS ---
+    def _is_def(val, default_val):
+        if not val or not default_val: return False
+        import re
+        return re.sub(r'\s+', '', val) == re.sub(r'\s+', '', default_val)
+
     DEFAULT_WELCOME_EN = """›› ʜᴇʏ, {name} | {bot_name}
 ʙʀᴏᴡꜱᴇ ᴘʀᴇᴍɪᴜᴍ ꜱᴛᴏʀɪᴇꜱ ꜰʀᴏᴍ pocket fm, kuku fm, headphone & more."""
     DEFAULT_ABOUT_EN = """ᴛᴀᴘ marketplace ᴛᴏ ᴇxᴘʟᴏʀᴇ ꜱᴛᴏʀɪᴇꜱ ʙʏ platform."""
@@ -415,7 +420,7 @@ def _menu_card_text(user, bt_cfg: dict, bot_name: str, lang: str = 'en') -> str:
             text_en = DEFAULT_WELCOME_EN
         
         if lang == 'hi':
-            if text_en == DEFAULT_WELCOME_EN:
+            if _is_def(text_en, DEFAULT_WELCOME_EN):
                 welcome = DEFAULT_WELCOME_HI
             else:
                 welcome = translate_to_hindi(text_en)
@@ -433,7 +438,7 @@ def _menu_card_text(user, bt_cfg: dict, bot_name: str, lang: str = 'en') -> str:
             text_en = DEFAULT_ABOUT_EN
         
         if lang == 'hi':
-            if text_en == DEFAULT_ABOUT_EN:
+            if _is_def(text_en, DEFAULT_ABOUT_EN):
                 about = DEFAULT_ABOUT_HI
             else:
                 about = translate_to_hindi(text_en)
@@ -449,7 +454,7 @@ def _menu_card_text(user, bt_cfg: dict, bot_name: str, lang: str = 'en') -> str:
             text_en = DEFAULT_QUOTE_EN
         
         if lang == 'hi':
-            if text_en == DEFAULT_QUOTE_EN:
+            if _is_def(text_en, DEFAULT_QUOTE_EN):
                 quote = DEFAULT_QUOTE_HI
             else:
                 quote = translate_to_hindi(text_en)
@@ -465,7 +470,7 @@ def _menu_card_text(user, bt_cfg: dict, bot_name: str, lang: str = 'en') -> str:
             text_en = DEFAULT_AUTHOR_EN
         
         if lang == 'hi':
-            if text_en == DEFAULT_AUTHOR_EN:
+            if _is_def(text_en, DEFAULT_AUTHOR_EN):
                 author = DEFAULT_AUTHOR_HI
             else:
                 author = translate_to_hindi(text_en)
