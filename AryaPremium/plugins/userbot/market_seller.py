@@ -1090,7 +1090,7 @@ async def _process_text(client, message):
         has_paid = await db.has_purchase(user_id, str(story['_id']))
         if has_paid:
             t=T[lang]
-        await message.reply_text(t["already_owned"], reply_markup=ReplyKeyboardRemove())
+            await message.reply_text(t["already_owned"], reply_markup=ReplyKeyboardRemove())
             return await dispatch_delivery_choice(client, user_id, story)
 
         return await _show_story_profile(client, user_id, story, lang)
