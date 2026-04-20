@@ -727,11 +727,26 @@ async def _show_story_profile(client, user_id, story, lang):
     del_lbl = "डिलीवरी" if lang == "hi" else "Delivery"
     del_val = del_hi if lang == "hi" else del_en
     
+    price = int(story.get('price', 0))
+    if price > 0:
+        if price <= 50: mrp = 149
+        elif price <= 100: mrp = 299
+        elif price <= 200: mrp = 599
+        elif price <= 300: mrp = 899
+        else: mrp = int(price * 2.5)
+        calc_off = int(((mrp - price) / mrp) * 100)
+        p_lbl = "कीमत" if lang == "hi" else "Price"
+        # Shopping app style: M.R.P: ̶₹̶̶1̶̶4̶̶9̶ Deal Price: ₹49
+        price_line = f"<b>🏷 {p_lbl}:</b> <s>₹{mrp}</s>  <b>₹{price}</b> <i>({calc_off}% OFF)</i>\n"
+    else:
+        price_line = ""
+    
     header_txt = (
         f"<b>♨️ Story:</b> {to_mathbold(name)}\n"
         f"<b>🔰 {status_lbl}:</b> <b>{status}</b>\n"
         f"<b>🖥 {plat_lbl}:</b> <b>{platform}</b>\n"
         f"<b>🧩 {genre_lbl}:</b> <b>{genre}</b>\n"
+        f"{price_line}"
         f"<b>🎬 {ep_lbl}:</b> <b>{episodes}</b>\n"
         f"<b>📥 {del_lbl}:</b> <i>{del_val}</i>\n\n"
     )
@@ -1090,6 +1105,31 @@ async def _process_text(client, message):
         
         if cmd_text in mapping:
             return await _process_callback(client, MockQuery(m, message.from_user, mapping[cmd_text]))
+
+    # Handle DM Part Selection
+    pending_s_id = user.get("dm_story_id_pending")
+    if pending_s_id and ("files " in txt.lower() or "फ़ाइलें " in txt.lower() or "full delivery" in txt.lower() or "सभी फ़ाइलें" in txt.lower() or "cancel" in txt.lower() or "रद्द" in txt.lower()):
+        await db.db.users.update_one({"id": user_id}, {"$unset": {"dm_story_id_pending": 1}})
+        
+        if "cancel" in txt.lower() or "रद्द" in txt.lower():
+            return await message.reply_text("<i>❌ Delivery Selection Cancelled.</i>", reply_markup=ReplyKeyboardRemove())
+        
+        from bson.objectid import ObjectId
+        story = await db.db.premium_stories.find_one({"_id": ObjectId(pending_s_id)})
+        if story:
+            start_id = story.get("start_id")
+            end_id = story.get("end_id")
+            c_start, c_end = start_id, end_id
+            
+            import re
+            match = re.search(r"(\d+)\s*-\s*(\d+)", txt)
+            if match:
+                fs, fe = int(match.group(1)), int(match.group(2))
+                c_start = start_id + fs - 1
+                c_end = min(start_id + fe - 1, end_id)
+                
+            m = await message.reply_text(f"<i>⏳ Initializing DM Delivery (Files {fs if match else 1}-{fe if match else 'All'})... Preparing your files.</i>", reply_markup=ReplyKeyboardRemove())
+            return asyncio.create_task(_do_dm_delivery(client, user_id, story, m, c_start, c_end))
 
     # Back to main menu
     if "𝗕𝗮𝗰𝗸 𝘁𝗼 𝗠𝗲𝗻𝘂" in txt or "BACK TO MAIN MENU" in txt:
@@ -2273,7 +2313,8 @@ async def _process_callback(client, query):
         end_id = story.get('end_id')
         total_files = (end_id - start_id) + 1 if (start_id and end_id and end_id >= start_id) else 1
 
-        if total_files > 40 and len(data) == 3:
+        parts_data = len(data) > 3
+        if not parts_data and total_files > 40:
             if total_files > 300: chunk = 100
             elif total_files > 100: chunk = 50
             else: chunk = 30
@@ -2281,32 +2322,39 @@ async def _process_callback(client, query):
             kb = []
             row = []
             for i in range(0, total_files, chunk):
-                c_start = start_id + i
-                c_end = min(start_id + i + chunk - 1, end_id)
                 f_start = i + 1
                 f_end = min(i + chunk, total_files)
-                lbl = f"Files {f_start} - {f_end}"
-                row.append(InlineKeyboardButton(lbl, callback_data=f"mb#deliver_dm#{s_id}#{c_start}#{c_end}"))
+                lbl = f"Files {f_start} - {f_end}" if lang != "hi" else f"फ़ाइलें {f_start} - {f_end}"
+                row.append(lbl)
                 if len(row) == 2:
                     kb.append(row)
                     row = []
             if row:
                 kb.append(row)
                 
-            kb.append([InlineKeyboardButton("Full Delivery (All Files)", callback_data=f"mb#deliver_dm#{s_id}#{start_id}#{end_id}")])
+            full_btn = "Full Delivery (All Files)" if lang != "hi" else "Full Delivery (सभी फ़ाइलें)"
+            cancel_btn = "Cancel" if lang != "hi" else "रद्द करें"
+            kb.append([full_btn])
+            kb.append([cancel_btn])
+            
+            await db.db.users.update_one({"id": user_id}, {"$set": {"dm_story_id_pending": s_id}})
+            
             await query.answer()
+            try: await query.message.delete()
+            except: pass
+            
             if lang == "hi":
-                p_text = "<b>फ़ाइलें चुनें:</b>\n\nआप कौन से भाग प्राप्त करना चाहते हैं? (यह ऑटो-डिलीट होने पर दोबारा खोजने में मदद करता है)"
+                p_text = "<b>फ़ाइलें चुनें:</b>\n\nआप कौन से भाग प्राप्त करना चाहते हैं? नीचे दिए गए मेन्यू बटन का उपयोग करें।"
             else:
-                p_text = "<b>Select Files:</b>\n\nWhich part would you like to receive? (This helps if your files auto-deleted earlier)"
-            return await query.message.edit_text(p_text, reply_markup=InlineKeyboardMarkup(kb))
+                p_text = "<b>Select Files:</b>\n\nWhich part would you like to receive? Please use the keyboard options below."
+            return await client.send_message(user_id, p_text, reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
             
         c_start = int(data[3]) if len(data) > 3 else start_id
         c_end = int(data[4]) if len(data) > 4 else end_id
 
         await query.answer()
         await query.message.edit_text(
-            "<i>⏳ Initializing DM Delivery... Preparing your files.</i>",
+            f"<i>⏳ Initializing DM Delivery... Preparing your files.</i>",
             reply_markup=None
         )
         asyncio.create_task(_do_dm_delivery(client, user_id, story, query.message, c_start, c_end))
