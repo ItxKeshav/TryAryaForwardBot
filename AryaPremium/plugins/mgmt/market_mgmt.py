@@ -294,7 +294,6 @@ async def market_callback(client, query):
             try: await query.message.delete()
             except: pass
             if "query" in locals() and query: await query.answer()
-            import asyncio
             asyncio.create_task(_reject_request_flow(client, user_id, req_id))
 
         elif cmd == "back":
