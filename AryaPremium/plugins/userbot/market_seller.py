@@ -854,21 +854,32 @@ async def _show_story_details(client, msg_or_query, story, lang, bot_cfg: dict =
     bot_cfg = bot_cfg or {}
 
     name = story.get(f'story_name_{lang}', story.get('story_name_en', 'Unknown'))
-    price = story.get('price', 1)
+    price = int(story.get('price', 1))
+    
+    if price > 0:
+        if price <= 50: mrp = 149
+        elif price <= 100: mrp = 299
+        elif price <= 200: mrp = 599
+        elif price <= 300: mrp = 899
+        else: mrp = int(price * 2.5)
+        calc_off = int(((mrp - price) / mrp) * 100)
+        p_str = f"<s>₹{mrp}</s> <b>₹{price}</b> <i>({calc_off}% OFF)</i>"
+    else:
+        p_str = f"<b>₹{price}</b>"
     
     if lang == 'hi':
-        title = "⟦ चेकआउट ⟧"
+        title = "⟦ सुरक्षित चेकआउट ⟧"
         item_lbl = "आइटम"
-        price_lbl = "कीमत"
+        price_lbl = "कुल कीमत"
         desc = "आप इस प्रीमियम कहानी को खरीदने जा रहे हैं। पेमेंट के बाद आपको तुरंत एक्सेस मिल जाएगा।"
         pay_gateway_btn = "पेमेंट गेटवे से भुगतान (Razorpay)"
         pay_upi_btn = "यूपीआई (Manual UPI)"
         unavailable_upi = "यूपीआई भुगतान अभी बंद है।"
         back_btn = "❮ वापस"
     else:
-        title = "⟦ 𝗠𝗔𝗥𝗞𝗘𝗧𝗣𝗟𝗔𝗖𝗘 ⟧"
+        title = "⟦ 𝗦𝗘𝗖𝗨𝗥𝗘 𝗖𝗛𝗘𝗖𝗞𝗢𝗨𝗧 ⟧"
         item_lbl = "Item"
-        price_lbl = "Price"
+        price_lbl = "Total Price"
         desc = "𝖠𝗀𝗋𝖾𝖾𝖽 𝖺𝗇𝖽 𝖼𝗈𝗇𝖿𝗂𝗋𝗆𝖾𝖽. 𝖯𝗅𝖾𝖺𝗌𝖾 𝗉𝗋𝗈𝖼𝖾𝖾𝖽 𝗐𝗂𝗍𝗁 𝗍𝗁𝖾 𝗉𝖺𝗒𝗆𝖾𝗇𝗍 𝗍𝗈 𝗎𝗇𝗅𝗈𝖼𝗄 𝗒𝗈𝗎𝗋 𝗌𝗍𝗈𝗋𝗒 𝗂𝗇𝗌𝗍𝖺𝗇𝗍𝗅𝗒."
         pay_gateway_btn = f"💳 {_sc('PAY VIA RAZORPAY')}"
         pay_upi_btn = f"🏦 {_sc('PAY VIA MANUAL UPI')}"
@@ -878,7 +889,7 @@ async def _show_story_details(client, msg_or_query, story, lang, bot_cfg: dict =
     txt = (
         f"<b>{title}</b>\n\n"
         f"<b>{item_lbl} :</b> <code>{name}</code>\n"
-        f"<b>{price_lbl} :</b> <code>₹{price}</code>\n\n"
+        f"<b>{price_lbl} :</b> {p_str}\n\n"
         f"{desc}"
     )
 
