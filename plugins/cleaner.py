@@ -39,7 +39,7 @@ _cl_paused: dict[str, asyncio.Event] = {}
 _cl_waiter: dict[int, asyncio.Future] = {}
 _cl_bot_ref: dict[str, object] = {}   # job_id -> bot instance for notifications
 _cl_cancel_users: set = set()          # user IDs that pressed Cancel mid-flow
-MAX_CONCURRENT = 1
+MAX_CONCURRENT = 3           # Run up to 3 Cleaner jobs simultaneously
 _cl_semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 IST_OFFSET = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
@@ -254,7 +254,7 @@ async def _process_audio_ffmpeg(input_path, output_path, cover_path, meta: dict)
         cmd += ["-map", "0:a:0"]
 
     cmd += ["-c:a", "libmp3lame", "-b:a", "192k", "-q:a", "0"]
-    cmd += ["-threads", "1", "-max_muxing_queue_size", "1024"]
+    cmd += ["-max_muxing_queue_size", "1024"]  # removed -threads 1 to allow auto CPU usage
     cmd += ["-map_metadata", "-1"]
 
     for k, v in meta.items():
@@ -401,6 +401,8 @@ async def _cl_run_job(job_id: str, bot=None):
             gen = job.get("genre", "")
             cov_fid = job.get("cover_file_id", "")
             curr_num = job.get("starting_number", 1) + done
+            # Restore curr_num from DB if available (prevents duplicate names on resume)
+            curr_num = job.get("curr_num_checkpoint", curr_num)
 
             # ── Download cover image using the MAIN BOT (file_id is scoped to main bot token) ──
             # NEVER use the clone client here — file_ids are bot-specific.
@@ -779,11 +781,9 @@ async def _cl_run_job(job_id: str, bot=None):
                     done += 1
                     fail_count = 0   # reset per successfully processed file
                     msg_id += 1      # Advance to next message safely
-                    await _cl_update_job(job_id, {"files_done": done})
+                    curr_num_for_save = curr_num  # already incremented above
+                    await _cl_update_job(job_id, {"files_done": done, "curr_num_checkpoint": curr_num_for_save})
                     logger.info(f"[Cleaner {job_id}] Done {done}: {clean_title}")
-                    # Brief cooldown after each file — lets the event loop run other tasks
-                    # and prevents sustained 100% CPU while the download of the next file starts.
-                    await asyncio.sleep(1.5)
 
                 except FloodWait as fw:
                     await asyncio.sleep(fw.value + 2)

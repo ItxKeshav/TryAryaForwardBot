@@ -343,7 +343,10 @@ def extract_ep_label_robust(fname: str) -> dict:
 
     # ── 3. Normalize "N _TO_ M" / "N to M" / "N से M" → "N-M" ──────────────
     # Handles: 480_TO_482 · 540 to 558 · Saaya_158_to_190 · 480 से 490
-    b_norm = re.sub(r'(?i)[\s_]+(?:to|से)[\s_]+', '-', b_norm)
+    # IMPORTANT: only collapse 'से' when it is between two digit sequences,
+    # to avoid eating Hindi story/character names that contain 'से'.
+    b_norm = re.sub(r'(?i)([\s_]+to[\s_]+)', '-', b_norm)          # handle 'to' broadly
+    b_norm = re.sub(r'(\d+)[\s_]+से[\s_]+(\d+)', r'\1-\2', b_norm) # 'से' only between digits
     # Also handle underscore-separated numbers like 480_482 → 480-482
     b_norm = re.sub(r'(\d+)_+(\d+)', r'\1-\2', b_norm)
 
@@ -370,7 +373,8 @@ def extract_ep_label_robust(fname: str) -> dict:
 
     # ── Priority 1: Greedy Range (N-M, N to M, N_TO_M, etc.) ────────────────
     # Must come FIRST to prevent single-number fallback from stealing one end.
-    range_sep = r'(?:[\s\-_,\.]+|to|से)+'
+    range_sep = r'(?:[\s\-_,\.]+|to)+'
+    # Note: 'से' is NOT in range_sep here — it was already normalised above only when digit-bounded.
     greedy_range = re.search(
         r'(?<!\d)(' + num + r'(?:' + range_sep + num + r')+)(?!\d)',
         b_norm, re.IGNORECASE
