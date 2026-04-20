@@ -1243,16 +1243,24 @@ async def _run_job(job_id: str, user_id: int):
                     try:
                         client = await _lj_ensure_client_alive(client)
                     except Exception as heal_e:
-                        logger.error(f"[Job {job_id}] Client heal failed: {heal_e}")
-                        # Report explicitly to admin if everything breaks
-                        try:
-                            from config import Config
-                            for _owner in Config.BOT_OWNER_ID:
-                                await BOT_INSTANCE.send_message(_owner,
-                                    f"🚨 <b>Fatal Crash in Live Job {job_id}</b>\n"
-                                    f"<code>{heal_e}</code>")
-                        except:
-                            pass
+                        heal_str = str(heal_e)
+                        if "LIVEJOB_RECONNECT_FAILED" in heal_str:
+                            # Transient: VPS/network hiccup — the outer exception handler will auto-resume.
+                            # Do NOT alert owners — this is noise, not a crash.
+                            logger.warning(f"[Job {job_id}] Reconnect failed (transient) — will auto-resume after sleep.")
+                            # Raise to outer handler so it triggers the proper 30s auto-restart
+                            raise
+                        else:
+                            # Genuine client error worth notifying about
+                            logger.error(f"[Job {job_id}] Client heal failed with unexpected error: {heal_e}")
+                            try:
+                                from config import Config
+                                for _owner in Config.BOT_OWNER_ID:
+                                    await BOT_INSTANCE.send_message(_owner,
+                                        f"🚨 <b>Live Job {job_id} — Heal Failed</b>\n"
+                                        f"<code>{heal_e}</code>")
+                            except:
+                                pass
                     await asyncio.sleep(15)
                 else:
                     if "CHANNEL_INVALID" in err_up or "PEER_ID_INVALID" in err_up:
@@ -1468,7 +1476,11 @@ async def _run_job(job_id: str, user_id: int):
         elif any(kw in err_upper for kw in _TRANSIENT_KEYS) or isinstance(e, FloodWait):
             # Transient network/connection/flood issue — DO NOT mark as error.
             # Auto-resume after waiting the required time.
-            slp = 30
+            if "LIVEJOB_RECONNECT_FAILED" in err_upper:
+                # VPS/network fully dropped — give it 90s to stabilize before retrying
+                slp = 90
+            else:
+                slp = 30
             if isinstance(e, FloodWait):
                 slp = e.value + 5
             elif "FLOOD_WAIT" in err_upper:
