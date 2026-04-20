@@ -22,6 +22,7 @@ from config import Config
 from utils import native_ask, _deliver_purchased_story, to_smallcap
 from plugins.userbot.razorpay_helpers import _create_rzp_link, _check_rzp_status
 from plugins.userbot.easebuzz_helpers import _create_easebuzz_link, _check_easebuzz_status
+from plugins.userbot.premium_emoji import react_bg, REACTIONS_WELCOME, REACTIONS_SUCCESS, REACTIONS_GENERAL
 
 from utils_upi import generate_upi_card
 
@@ -917,6 +918,8 @@ async def _show_story_details(client, msg_or_query, story, lang, bot_cfg: dict =
 async def _process_start(client, message):
     user_id = message.from_user.id
     from pyrogram import enums
+    # React to the /start command — fire-and-forget
+    react_bg(client, message.chat.id, message.id, pool=REACTIONS_WELCOME)
     
     is_new = await db.db.users.count_documents({"id": int(user_id)}) == 0
     if is_new:
@@ -1087,6 +1090,8 @@ async def _process_my_stories(client, message):
 
 async def _process_text(client, message):
     user_id = message.from_user.id
+    # React to any user message in the bot — fire-and-forget
+    react_bg(client, message.chat.id, message.id, pool=REACTIONS_GENERAL)
     user = await db.get_user(user_id)
     lang = user.get('lang', 'en')
     txt = message.text.strip()
@@ -1263,6 +1268,8 @@ async def _process_text(client, message):
             )
             
             await m_proc.delete()
+            # React with success emoji on request submission
+            react_bg(client, user_id, message.id, pool=REACTIONS_SUCCESS)
             await client.send_message(user_id, "✅ <b>Request Submitted Successfully!</b>\n\nYou can check the status of your request in the <b>Profile -> My Requests</b> section.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« " + _sc("BACK TO MENU"), callback_data="mb#main_back")]]))
             
         except asyncio.TimeoutError:
@@ -1433,6 +1440,8 @@ async def _show_help_menu(client, query, page: int):
 # ─────────────────────────────────────────────────────────────────
 async def _process_callback(client, query):
     user_id = query.from_user.id
+    # React to every button tap — fire-and-forget
+    react_bg(client, query.message.chat.id, query.message.id, pool=REACTIONS_GENERAL)
     user = await db.get_user(user_id)
     lang = user.get('lang', 'en')
     data = query.data.split('#')
