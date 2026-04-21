@@ -2354,8 +2354,14 @@ async def _process_callback(client, query):
             ]
             # Since url is not strictly saved, we might have lost it.
             # actually we didn't save the short url in db in the first replacement chunk. Let's fix that below if needed, but for now just show a simple back button.
+            savage_msg = (
+                f"<b>❌ 𝗣𝗮𝘆𝗺𝗲𝗻𝘁 𝗡𝗼𝘁 𝗙𝗼𝘂𝗻𝗱!</b>\n"
+                f"<b>Status:</b> <code>{status}</code>\n\n"
+                f"<i>Trying to sneak past without paying? Not happening! 😏</i>\n\n"
+                f"If you actually paid and money was deducted, don't panic. Just take a breath, wait a minute, and verify again."
+            )
             await m.edit_text(
-                f"<b>❌ Payment Not Found</b>\nStatus: <code>{status}</code>\nIf you have paid, please wait a minute and verify again.",
+                savage_msg,
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Verify Again", callback_data=f"mb#{method}_check#{s_id}")], [InlineKeyboardButton("« Back", callback_data=f"mb#show_tc#{s_id}")]])
             )
 
