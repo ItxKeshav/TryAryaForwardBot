@@ -44,8 +44,8 @@ _cl_semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 IST_OFFSET = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 import concurrent.futures as _cf_cl
-# Single-worker executor: ensures only 1 FFmpeg runs at a time from cleaner.
-_CL_FFMPEG_EXECUTOR = _cf_cl.ThreadPoolExecutor(max_workers=1, thread_name_prefix="cl_ffmpeg")
+# ThreadPoolExecutor for FFmpeg: allow concurrent FFmpeg processes up to MAX_CONCURRENT
+_CL_FFMPEG_EXECUTOR = _cf_cl.ThreadPoolExecutor(max_workers=MAX_CONCURRENT, thread_name_prefix="cl_ffmpeg")
 CL_FFMPEG_NICE      = 15   # OS-level nice priority for cleaner ffmpeg processes
 CL_FFMPEG_CPU_LIMIT = 60   # max % CPU per ffmpeg process when cpulimit is installed
 
@@ -213,7 +213,8 @@ def _make_cl_run(cmd):
 
     def _sync_run():
         try:
-            kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=7200)
+            # 1 hour max for FFmpeg to prevent silent thread pool exhaustion
+            kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3600)
             if _plat.system() != "Windows":
                 def _preexec():
                     os.nice(CL_FFMPEG_NICE)
@@ -231,6 +232,8 @@ def _make_cl_run(cmd):
 
             result = subprocess.run(cmd_run, **kwargs)
             return result.returncode, result.stderr.decode('utf-8', errors='replace')
+        except subprocess.TimeoutExpired:
+            return -1, "FFmpeg timed out after 1 hour"
         except Exception as e:
             return -1, str(e)
 
@@ -510,7 +513,14 @@ async def _cl_run_job(job_id: str, bot=None):
                     await _cl_update_job(job_id, {"current_msg_id": msg_id})
 
                 try:
-                    msg = await client.get_messages(from_ch, msg_id)
+                    try:
+                        msg = await asyncio.wait_for(
+                            client.get_messages(from_ch, msg_id),
+                            timeout=60
+                        )
+                    except asyncio.TimeoutError:
+                        raise Exception("get_messages timed out after 60s")
+
                     # Skip empty messages or non-audio content
                     if not msg or msg.empty:
                         msg_id += 1
@@ -698,83 +708,74 @@ async def _cl_run_job(job_id: str, bot=None):
 
                     for attempt in range(5):
                         try:
-                            if replace_mode and replace_msg_id:
-                                # ── Replace/Edit existing message ─────────────────
-                                edit_msg_id = replace_msg_id + done
-                                # Upload to 'me' first to get a file_id, then edit
-                                if use_ffmpeg or is_audio or is_audio_doc:
-                                    from pyrogram.types import InputMediaAudio
-                                    _ghost = await upload_client.send_audio(
-                                        chat_id="me", audio=out_path,
-                                        title=clean_title, performer=art,
-                                        file_name=clean_file, thumb=thumb)
-                                    _media = InputMediaAudio(
-                                        media=_ghost.audio.file_id,
-                                        caption=upload_caption,
-                                        title=clean_title, performer=art, thumb=thumb)
-                                    await upload_client.edit_message_media(
-                                        chat_id=dest_ch, message_id=edit_msg_id, media=_media)
-                                    try: await _ghost.delete()
-                                    except: pass
-                                elif is_video:
-                                    from pyrogram.types import InputMediaVideo
-                                    _ghost = await upload_client.send_video(
-                                        chat_id="me", video=out_path,
-                                        file_name=clean_file, thumb=thumb)
-                                    _vobj  = _ghost.video or (_ghost.document if _ghost.document else None)
-                                    _media = InputMediaVideo(
-                                        media=_vobj.file_id,
-                                        caption=upload_caption, thumb=thumb)
-                                    await upload_client.edit_message_media(
-                                        chat_id=dest_ch, message_id=edit_msg_id, media=_media)
-                                    try: await _ghost.delete()
-                                    except: pass
-                                elif is_photo:
-                                    from pyrogram.types import InputMediaPhoto
-                                    _ghost = await upload_client.send_photo(
-                                        chat_id="me", photo=out_path)
-                                    _media = InputMediaPhoto(
-                                        media=_ghost.photo.file_id,
-                                        caption=upload_caption)
-                                    await upload_client.edit_message_media(
-                                        chat_id=dest_ch, message_id=edit_msg_id, media=_media)
-                                    try: await _ghost.delete()
-                                    except: pass
+                            # ── WRAP ALL UPLOAD/EDIT CALLS IN 1-HOUR TIMEOUT ──
+                            async def _do_upload():
+                                if replace_mode and replace_msg_id:
+                                    edit_msg_id = replace_msg_id + done
+                                    if use_ffmpeg or is_audio or is_audio_doc:
+                                        from pyrogram.types import InputMediaAudio
+                                        _ghost = await upload_client.send_audio(
+                                            chat_id="me", audio=out_path,
+                                            title=clean_title, performer=art,
+                                            file_name=clean_file, thumb=thumb)
+                                        _media = InputMediaAudio(
+                                            media=_ghost.audio.file_id, caption=upload_caption,
+                                            title=clean_title, performer=art, thumb=thumb)
+                                        await upload_client.edit_message_media(
+                                            chat_id=dest_ch, message_id=edit_msg_id, media=_media)
+                                        try: await _ghost.delete()
+                                        except: pass
+                                    elif is_video:
+                                        from pyrogram.types import InputMediaVideo
+                                        _ghost = await upload_client.send_video(
+                                            chat_id="me", video=out_path,
+                                            file_name=clean_file, thumb=thumb)
+                                        _vobj  = _ghost.video or (_ghost.document if _ghost.document else None)
+                                        _media = InputMediaVideo(
+                                            media=_vobj.file_id, caption=upload_caption, thumb=thumb)
+                                        await upload_client.edit_message_media(
+                                            chat_id=dest_ch, message_id=edit_msg_id, media=_media)
+                                        try: await _ghost.delete()
+                                        except: pass
+                                    elif is_photo:
+                                        from pyrogram.types import InputMediaPhoto
+                                        _ghost = await upload_client.send_photo(chat_id="me", photo=out_path)
+                                        _media = InputMediaPhoto(media=_ghost.photo.file_id, caption=upload_caption)
+                                        await upload_client.edit_message_media(
+                                            chat_id=dest_ch, message_id=edit_msg_id, media=_media)
+                                        try: await _ghost.delete()
+                                        except: pass
+                                    else:
+                                        from pyrogram.types import InputMediaDocument
+                                        _ghost = await upload_client.send_document(
+                                            chat_id="me", document=out_path, file_name=clean_file)
+                                        _media = InputMediaDocument(media=_ghost.document.file_id, caption=upload_caption)
+                                        await upload_client.edit_message_media(
+                                            chat_id=dest_ch, message_id=edit_msg_id, media=_media)
+                                        try: await _ghost.delete()
+                                        except: pass
                                 else:
-                                    from pyrogram.types import InputMediaDocument
-                                    _ghost = await upload_client.send_document(
-                                        chat_id="me", document=out_path, file_name=clean_file)
-                                    _media = InputMediaDocument(
-                                        media=_ghost.document.file_id,
-                                        caption=upload_caption)
-                                    await upload_client.edit_message_media(
-                                        chat_id=dest_ch, message_id=edit_msg_id, media=_media)
-                                    try: await _ghost.delete()
-                                    except: pass
-                            else:
-                                # ── Normal upload ───────────────────────────────
-                                # use_ffmpeg is now True for everything except photos,
-                                # so is_video / is_audio_doc files are also .mp3 now.
-                                if use_ffmpeg:
-                                    await upload_client.send_audio(
-                                        chat_id=dest_ch, audio=out_path,
-                                        caption=upload_caption,
-                                        title=clean_title, performer=art,
-                                        file_name=clean_file, thumb=thumb)
-                                elif is_video:
-                                    await upload_client.send_video(
-                                        chat_id=dest_ch, video=out_path,
-                                        caption=upload_caption,
-                                        file_name=clean_file, thumb=thumb)
-                                elif is_photo:
-                                    await upload_client.send_photo(
-                                        chat_id=dest_ch, photo=out_path,
-                                        caption=upload_caption)
-                                else:
-                                    await upload_client.send_document(
-                                        chat_id=dest_ch, document=out_path,
-                                        caption=upload_caption,
-                                        file_name=clean_file, thumb=thumb)
+                                    if use_ffmpeg:
+                                        await upload_client.send_audio(
+                                            chat_id=dest_ch, audio=out_path, caption=upload_caption,
+                                            title=clean_title, performer=art,
+                                            file_name=clean_file, thumb=thumb)
+                                    elif is_video:
+                                        await upload_client.send_video(
+                                            chat_id=dest_ch, video=out_path, caption=upload_caption,
+                                            file_name=clean_file, thumb=thumb)
+                                    elif is_photo:
+                                        await upload_client.send_photo(
+                                            chat_id=dest_ch, photo=out_path, caption=upload_caption)
+                                    else:
+                                        await upload_client.send_document(
+                                            chat_id=dest_ch, document=out_path, caption=upload_caption,
+                                            file_name=clean_file, thumb=thumb)
+
+                            try:
+                                await asyncio.wait_for(_do_upload(), timeout=3600)
+                            except asyncio.TimeoutError:
+                                raise Exception("Upload/Edit timed out after 1 hour. Telegram socket may have dropped.")
                             uploaded = True
                             await db.update_global_stats(total_files_uploaded=1, total_data_usage_bytes=out_size)
                             break
