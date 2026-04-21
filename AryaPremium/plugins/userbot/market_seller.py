@@ -850,10 +850,12 @@ def _is_upi_restricted() -> bool:
 
 
 async def _show_story_details(client, msg_or_query, story, lang, bot_cfg: dict = None):
-    from pyrogram.types import Message
+    from pyrogram.types import Message, CallbackQuery
+    from pyrogram import enums
     is_msg = isinstance(msg_or_query, Message)
+    user_id = msg_or_query.chat.id if is_msg else msg_or_query.from_user.id
+    
     bot_cfg = bot_cfg or {}
-
     name = story.get(f'story_name_{lang}', story.get('story_name_en', 'Unknown'))
     price = int(story.get('price', 1))
     
@@ -864,7 +866,7 @@ async def _show_story_details(client, msg_or_query, story, lang, bot_cfg: dict =
         elif price <= 300: mrp = 899
         else: mrp = int(price * 2.5)
         calc_off = int(((mrp - price) / mrp) * 100)
-        p_str = f"<s>₹{mrp}</s> <b>₹{price}</b> <i>({calc_off}% OFF)</i>"
+        p_str = f"<s>₹{mrp}</s>  <b>₹{price}</b> <i>({calc_off}% OFF)</i>"
     else:
         p_str = f"<b>₹{price}</b>"
     
@@ -872,17 +874,23 @@ async def _show_story_details(client, msg_or_query, story, lang, bot_cfg: dict =
         title = "⟦ सुरक्षित चेकआउट ⟧"
         item_lbl = "आइटम"
         price_lbl = "कुल कीमत"
-        desc = "आप इस प्रीमियम कहानी को खरीदने जा रहे हैं। पेमेंट के बाद आपको तुरंत एक्सेस मिल जाएगा।"
-        pay_gateway_btn = "पेमेंट गेटवे से भुगतान (Razorpay)"
-        pay_upi_btn = "यूपीआई (Manual UPI)"
+        rzp_title = "✅ ऑटोमैटिक पेमेंट (Razorpay)"
+        rzp_desc = "• <b>फायदे:</b> तत्काल एक्सेस (No waiting), 24/7 सुलभ।\n• <b>पेमेंट मोड:</b> UPI, डेबिट कार्ड, वॉलेट, नेट बैंकिंग।\n• <b>वेरिफिकेशन:</b> पेमेंट सफल होते ही अपने आप।"
+        upi_title = "⏳ मैनुअल पेमेंट (Manual UPI)"
+        upi_desc = "• <b>प्रोसेस:</b> पे करें -> स्क्रीनशॉट भेजें -> एडमिन चेक करेगा।\n• <b>पेमेंट मोड:</b> केवल UPI ऐप्स (PhonePe, GPay, etc.)।\n• <b>वेरिफिकेशन:</b> इसमें 5-10 मिनट का समय लग सकता है।"
+        pay_gateway_btn = "💳 पेमेंट गेटवे से भुगतान (Razorpay) ⚡️"
+        pay_upi_btn = "🏦 मैनुअल यूपीआई (Manual UPI)"
         unavailable_upi = "यूपीआई भुगतान अभी बंद है।"
         back_btn = "❮ वापस"
     else:
         title = "⟦ 𝗦𝗘𝗖𝗨𝗥𝗘 𝗖𝗛𝗘𝗖𝗞𝗢𝗨𝗧 ⟧"
         item_lbl = "Item"
         price_lbl = "Total Price"
-        desc = "𝖠𝗀𝗋𝖾𝖾𝖽 𝖺𝗇𝖽 𝖼𝗈𝗇𝖿𝗂𝗋𝗆𝖾𝖽. 𝖯𝗅𝖾𝖺𝗌𝖾 𝗉𝗋𝗈𝖼𝖾𝖾𝖽 𝗐𝗂𝗍𝗁 𝗍𝗁𝖾 𝗉𝖺𝗒𝗆𝖾𝗇𝗍 𝗍𝗈 𝗎𝗇𝗅𝗈𝖼𝗄 𝗒𝗈𝗎𝗋 𝗌𝗍𝗈𝗋𝗒 𝗂𝗇𝗌𝗍𝖺𝗇𝗍𝗅𝗒."
-        pay_gateway_btn = f"💳 {_sc('PAY VIA RAZORPAY')}"
+        rzp_title = "✅ 𝗔𝘂𝘁𝗼𝗺𝗮𝘁𝗶𝗰 𝗣𝗮𝘆𝗺𝗲𝗻𝘁 (𝗥𝗮𝘇𝗼𝗿𝗽𝗮𝘆)"
+        rzp_desc = "• <b>Benefits:</b> Instant Access (No waiting), 24/7 available.\n• <b>Modes:</b> UPI, Debit Card, Wallets, Net Banking.\n• <b>Verification:</b> Automatically upon successful payment."
+        upi_title = "⏳ 𝗠𝗮𝗻𝘂𝗮𝗹 𝗣𝗮𝘆𝗺𝗲𝗻𝘁 (𝗠𝗮𝗻𝘂𝗮𝗹 𝗨𝗣𝗜)"
+        upi_desc = "• <b>Process:</b> Pay -> Send Screenshot -> Admin Verify.\n• <b>Modes:</b> Only UPI Apps (PhonePe, GPay, etc.).\n• <b>Verification:</b> Manual (Takes 5-10 minutes)."
+        pay_gateway_btn = f"💳 {_sc('PAY VIA RAZORPAY')} ⚡️"
         pay_upi_btn = f"🏦 {_sc('PAY VIA MANUAL UPI')}"
         unavailable_upi = "UPI Currently Unavailable"
         back_btn = f"❮ {_sc('BACK')}"
@@ -891,7 +899,8 @@ async def _show_story_details(client, msg_or_query, story, lang, bot_cfg: dict =
         f"<b>{title}</b>\n\n"
         f"<b>{item_lbl} :</b> <code>{name}</code>\n"
         f"<b>{price_lbl} :</b> {p_str}\n\n"
-        f"{desc}"
+        f"<blockquote expandable=\"true\">{rzp_title}\n{rzp_desc}</blockquote>\n"
+        f"<blockquote expandable=\"true\">{upi_title}\n{upi_desc}</blockquote>"
     )
 
     kb = []
@@ -910,10 +919,24 @@ async def _show_story_details(client, msg_or_query, story, lang, bot_cfg: dict =
     kb.append([InlineKeyboardButton(back_btn, callback_data="mb#return_main")])
     markup = InlineKeyboardMarkup(kb)
 
-    if is_msg:
-        await msg_or_query.reply_text(txt, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
-    else:
-        await _safe_edit(msg_or_query.message, text=txt, markup=markup)
+    IMG_URL = "https://files.catbox.moe/4ud7fx.png"
+
+    # Delete previous message as we are replacing text with an image
+    try:
+        if is_msg:
+            await msg_or_query.delete()
+        else:
+            await msg_or_query.message.delete()
+    except Exception:
+        pass
+        
+    await client.send_photo(
+        chat_id=user_id,
+        photo=IMG_URL,
+        caption=txt,
+        reply_markup=markup,
+        parse_mode=enums.ParseMode.HTML
+    )
 
 async def _process_start(client, message):
     user_id = message.from_user.id
