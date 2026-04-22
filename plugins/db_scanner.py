@@ -428,24 +428,74 @@ def _parse_msg_id(msg) -> int:
 # Auto-index: listen for new files arriving in any DB channel
 # ─────────────────────────────────────────────────────────────────────────────
 
-_indexed_channels: set = set()  # populated at startup or on-demand
+_indexed_channels: set = set()  # caches verified DB channels
+_index_buffer: dict = {}      # chat_id -> {msg_id: entry}
+_index_lock = asyncio.Lock()
+_indexer_started = False
 
+async def _batch_indexer_task():
+    """Background task to batch-commit auto-indexed files to DB to prevent bot hanging."""
+    while True:
+        await asyncio.sleep(5)
+        async with _index_lock:
+            if not _index_buffer:
+                continue
+            to_process = _index_buffer.copy()
+            _index_buffer.clear()
+            
+        for chat_id, entries_dict in to_process.items():
+            try:
+                # 1. Fetch full index once
+                existing = await db.get_channel_index(chat_id)
+                if not existing:
+                    continue
+
+                current_entries = existing.get('entries', [])
+                
+                # 2. Merge existing with new (overwriting dupes)
+                current_dict = {e['msg_id']: e for e in current_entries}
+                current_dict.update(entries_dict)
+                
+                # 3. Sort chronologically
+                new_entries = sorted(list(current_dict.values()), key=lambda x: x['msg_id'])
+                
+                # 4. Save bulk update
+                await db.save_channel_index(
+                    chat_id, 
+                    new_entries, 
+                    meta=existing.get('meta', {})
+                )
+                logger.info(f"[scanner] Batch updated {len(entries_dict)} msgs for DB chat {chat_id}")
+            except Exception as e:
+                logger.error(f"[scanner] Batch auto-index failed for {chat_id}: {e}")
 
 async def _try_auto_index(client, message):
-    """Called for every new message. If it's a DB channel we track, index it."""
+    """Called for every new message. Batched in memory to prevent event-loop choking."""
+    global _indexer_started
+    if not _indexer_started:
+        _indexer_started = True
+        asyncio.create_task(_batch_indexer_task())
+
     chat_id = message.chat.id
-    # Only auto-index channels we already have an index for
-    existing = await db.get_channel_index(chat_id)
-    if not existing:
-        return  # not tracked
+    
+    # 1. Verification cache bypasses DB spam
+    if chat_id not in _indexed_channels:
+        # Check DB once
+        existing = await db.get_channel_index(chat_id)
+        if not existing:
+            return  # not a tracked database
+        _indexed_channels.add(chat_id)
+
+    # 2. File Extractor
     entry = _get_file_info(message)
     if not entry:
-        return  # not a file
-    try:
-        await db.update_channel_index_entry(chat_id, entry)
-        logger.info(f"[scanner] Auto-indexed msg {message.id} in chat {chat_id}")
-    except Exception as e:
-        logger.warning(f"[scanner] Auto-index update failed: {e}")
+        return  
+        
+    # 3. Buffer immediately
+    async with _index_lock:
+        if chat_id not in _index_buffer:
+            _index_buffer[chat_id] = {}
+        _index_buffer[chat_id][entry['msg_id']] = entry
 
 
 # ─────────────────────────────────────────────────────────────────────────────
