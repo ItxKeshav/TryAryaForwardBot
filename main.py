@@ -191,6 +191,30 @@ async def main():
                 await asyncio.sleep(2)  # stagger restarts to avoid hammering Telegram
         except Exception as e:
             logging.warning(f"Cleaner resume error: {e}")
+        # ── Live Batch job auto-resume ───────────────────────────────────────
+        # live_batch jobs marked 'running' lose their asyncio Task on restart.
+        # Without this they appear Running forever but process nothing, and users
+        # must manually pause+resume to kick them back to life.
+        await asyncio.sleep(5)
+        try:
+            from plugins.live_batch import _lb_run_job, _lb_tasks, _lb_paused
+            from database import db as _db
+            lb_orphaned = await _db.db["live_batch_jobs"].find(
+                {"status": {"$in": ["running", "queued"]}}
+            ).to_list(length=None)
+            logging.info(f"[Startup] Resuming {len(lb_orphaned)} orphaned Live Batch job(s)...")
+            for _lbjob in lb_orphaned:
+                _lbjid = _lbjob["job_id"]
+                if _lbjid in _lb_tasks and not _lb_tasks[_lbjid].done():
+                    continue  # already has a live task, skip
+                if _lbjid not in _lb_paused:
+                    _lb_paused[_lbjid] = asyncio.Event()
+                _lb_paused[_lbjid].set()   # ensure not paused
+                _lb_tasks[_lbjid] = asyncio.create_task(_lb_run_job(_lbjid))
+                logging.info(f"[Startup] Resumed Live Batch job {_lbjid}")
+                await asyncio.sleep(2)  # stagger restarts
+        except Exception as e:
+            logging.warning(f"Live Batch resume error: {e}")
         logging.info("Staggered job resumption complete.")
 
     asyncio.create_task(_staggered_resume())
