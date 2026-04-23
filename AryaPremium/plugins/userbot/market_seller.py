@@ -959,6 +959,7 @@ async def _process_start(client, message):
     await db.db.users.update_one({"id": int(user_id)}, {"$addToSet": {"bot_ids": client.me.id}}, upsert=True)
     
     args = message.command
+    arg_p = f"#{args[1]}" if len(args) > 1 and args[1] else ""
 
     if 'lang' not in user:
         lang_prompt = (
@@ -968,8 +969,8 @@ async def _process_start(client, message):
             "अपनी भाषा चुनें और आगे बढ़ें।</i>"
             "</blockquote>"
         )
-        kb = [[InlineKeyboardButton("• English", callback_data="mb#lang#en"),
-               InlineKeyboardButton("• हिंदी", callback_data="mb#lang#hi")]]
+        kb = [[InlineKeyboardButton("• English", callback_data=f"mb#lang#en{arg_p}"),
+               InlineKeyboardButton("• हिंदी", callback_data=f"mb#lang#hi{arg_p}")]]
         return await message.reply_text(lang_prompt, reply_markup=InlineKeyboardMarkup(kb))
 
     lang = user.get('lang', 'en')
@@ -1004,22 +1005,30 @@ async def _process_start(client, message):
 
         join_kb = [
             [InlineKeyboardButton(join_btn, url=INVITE_CHANNEL)],
-            [InlineKeyboardButton(joined_btn, callback_data="mb#joined_check")]
+            [InlineKeyboardButton(joined_btn, callback_data=f"mb#jchk{arg_p}")]
         ]
         return await message.reply_text(f"<b>{join_title}</b>\n\n{join_txt}", reply_markup=InlineKeyboardMarkup(join_kb))
 
     # ── Deep Link Handler ──
     if len(args) > 1 and args[1].startswith("buy_"):
-        story_id = args[1].replace("buy_", "")
+        story_id = args[1].replace("buy_", "").strip()
         from bson.objectid import ObjectId
-        story = await db.db.premium_stories.find_one({"_id": ObjectId(story_id)})
-        if story:
-            has_paid = await db.has_purchase(user_id, story_id)
-            if has_paid:
-                msg = t["already_owned"]
-                await message.reply_text(msg)
-                return await dispatch_delivery_choice(client, user_id, story)
-            return await _show_story_profile(client, user_id, story, lang)
+        from bson.errors import InvalidId
+        try:
+            o_id = ObjectId(story_id)
+        except InvalidId:
+            o_id = None
+            
+        if o_id:
+            story = await db.db.premium_stories.find_one({"_id": o_id})
+            if story:
+                has_paid = await db.has_purchase(user_id, story_id)
+                if has_paid:
+                    t_lang = T[lang]
+                    msg = t_lang["already_owned"]
+                    await message.reply_text(msg)
+                    return await dispatch_delivery_choice(client, user_id, story)
+                return await _show_story_profile(client, user_id, story, lang)
 
     # Standard Main Menu
     wait_msg_txt = "WAIT A SECOND..." if lang == 'en' else "कृपया प्रतीक्षा करें..."
@@ -1471,7 +1480,7 @@ async def _process_callback(client, query):
     cmd = data[1]
 
     # ── Joined Check ──
-    if cmd == "joined_check":
+    if cmd == "jchk" or cmd == "joined_check":
         try:
             from pyrogram import enums
             chat_member = await client.get_chat_member("@AryaPremiumTG", user_id)
@@ -1480,13 +1489,25 @@ async def _process_callback(client, query):
                 await query.answer(msg, show_alert=True)
                 try: await query.message.delete()
                 except: pass
+                
+                pending_arg = data[2] if len(data) > 2 else None
+                if pending_arg:
+                    class MockMsg:
+                        from_user = query.from_user
+                        chat = query.message.chat
+                        command = ["start", pending_arg]
+                        id = query.message.id
+                        async def reply_text(self, text, **kw):
+                            return await client.send_message(user_id, text, **kw)
+                    from plugins.userbot.market_seller import _process_start
+                    return await _process_start(client, MockMsg())
+                
                 return await _send_main_menu(client, user_id, query.from_user, lang)
             else:
                 msg = "Aapne abhi tak join nahi kiya hai। Kripya join karein aur phir check karein।" if lang == 'hi' else "You haven't joined yet. Please join the channel first."
                 return await query.answer(msg, show_alert=True)
         except Exception:
             return await query.answer("Error checking status. Make sure you joined.", show_alert=True)
-
 
     # ── Skip Channel Prompt ──
     if cmd == "skip_channel_prompt":
@@ -1817,12 +1838,24 @@ async def _process_callback(client, query):
     # ── Language ──
     elif cmd == "lang":
         new_lang = data[2]
+        pending_arg = data[3] if len(data) > 3 else None
         await query.answer("✓ Updates applied!", show_alert=False)
         m = await client.send_message(user_id, "<b>› › Yup, Bro updating... ⏳</b>")
         await asyncio.sleep(2)
         await db.update_user(user_id, {"lang": new_lang})
         try: await m.delete()
         except: pass
+        if pending_arg:
+            class MockMsg:
+                from_user = query.from_user
+                chat = query.message.chat
+                command = ["start", pending_arg]
+                id = query.message.id
+                async def reply_text(self, text, **kw):
+                    return await client.send_message(user_id, text, **kw)
+            from plugins.userbot.market_seller import _process_start
+            return await _process_start(client, MockMsg())
+            
         await _edit_main_menu_in_place(client, query, query.from_user, new_lang)
 
     # ── Story preview Continue button ──
