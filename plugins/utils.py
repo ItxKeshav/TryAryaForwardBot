@@ -378,8 +378,23 @@ def extract_ep_label_robust(fname: str) -> dict:
             return {"label": str(nums[0]), "numbers": [nums[0]], "is_range": False}
         return {"label": f"{nums[0]}-{nums[-1]}", "numbers": nums, "is_range": True}
 
-    # ── Priority 1: Greedy Range (N-M, N to M, N_TO_M, etc.) ────────────────
-    # Must come FIRST to prevent single-number fallback from stealing one end.
+    # ── Priority 1: Keyword-tagged episodes (Ep, Episode, Part, #, eps…) ────
+    # Must come FIRST because explicit keywords are absolutely more reliable than naked ranges.
+    kw_delims = r'(?:\s*[\-\,\|\/]\s*)'
+    kw_num_seq = f'(?:{num}(?:{kw_delims}{num})*)'
+    kw_pattern = (
+        r'(?i)\b(?:episode|epi|ep|e|part|#|एपिसोड|भाग|eps)(?:s)?'
+        r'\s*[\-\:\.\\_\*\#]*\s*(' + kw_num_seq + r')(?![0-9])'
+    )
+    kw_m = re.search(kw_pattern, b_norm)
+    if kw_m:
+        label_raw = kw_m.group(1).strip()
+        nums = [int(n) for n in re.findall(r'\d+', label_raw) if int(n) < 10000]
+        if nums:
+            return _format_res(label_raw, nums)
+
+    # ── Priority 2: Greedy Range (N-M, N to M, N_TO_M, etc.) ────────────────
+    # Prevent single-number fallback from stealing one end when no keyword is found.
     range_sep = r'(?:[\s\-_,\.]+|to)+'
     # Note: 'से' is NOT in range_sep here — it was already normalised above only when digit-bounded.
     greedy_range = re.search(
@@ -391,19 +406,6 @@ def extract_ep_label_robust(fname: str) -> dict:
         nums = [int(n) for n in re.findall(r'\d+', label_raw) if int(n) < 10000]
         if len(nums) >= 1:  # even a single num after dedup is fine
             return _format_res(label_raw, nums)
-
-    # ── Priority 2: Keyword-tagged episodes (Ep, Episode, Part, #, eps…) ────
-    kw_delims = r'(?:\s*[\-\,\|\/]\s*)'
-    kw_num_seq = f'(?:{num}(?:{kw_delims}{num})*)'
-    kw_pattern = (
-        r'(?i)\b(?:episode|epi|ep|e|part|#|एपिसोड|भाग|eps)(?:s)?'
-        r'\s*[\-\:\.\\_\*\#]*\s*(' + kw_num_seq + r')(?![0-9])'
-    )
-    kw_m = re.search(kw_pattern, b_norm)
-    if kw_m:
-        label_raw = kw_m.group(1).strip()
-        nums = [int(n) for n in re.findall(r'\d+', label_raw) if int(n) < 10000]
-        return _format_res(label_raw, nums)
 
     # ── Priority 3: Bracketed number group ([100-110], (100|101), {5&6}) ────
     br_delims = r'(?:\s*[\-\,\|\/\&\+\_]\s*)'

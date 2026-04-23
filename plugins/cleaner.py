@@ -591,7 +591,7 @@ async def _cl_run_job(job_id: str, bot=None):
                     change_meta = job.get("change_metadata", True)
                     rename_files = job.get("rename_files", True)  # True = use base_name, False = keep original
                     
-                    combo_name = f"{orig_title} - {orig_fn}" if orig_title else orig_fn
+                    combo_name = f"{orig_title} @@@ {orig_fn}" if orig_title else orig_fn
                     ep_label_res = extract_ep_label_robust(combo_name) if combo_name else {}
                     ep_label = ep_label_res.get("label", "")
 

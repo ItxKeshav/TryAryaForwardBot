@@ -136,7 +136,7 @@ async def _post_live_batch(sb_client, job: dict, chunk_msgs: list):
                 fname = getattr(media_obj, "file_name", "") or ""
                 t = getattr(media_obj, "title", "") or ""
                 cap = m.caption or ""
-                combo_name = f"{t} - {fname}" if t else fname
+                combo_name = f"{t} @@@ {fname}" if t else fname
                 if not combo_name.strip(): combo_name = cap
                 
                 res = extract_ep_label_robust(combo_name)
@@ -241,7 +241,7 @@ async def _post_live_batch(sb_client, job: dict, chunk_msgs: list):
                 _media = getattr(bucket_msg, 'document', None) or getattr(bucket_msg, 'audio', None) or getattr(bucket_msg, 'video', None) or getattr(bucket_msg, 'voice', None)
                 _fn = getattr(_media, "file_name", "") or ""
                 _t = getattr(_media, "title", "") or ""
-                fn = f"{_t} - {_fn}" if _t else _fn
+                fn = f"{_t} @@@ {_fn}" if _t else _fn
                 if not fn.strip(): fn = bucket_msg.caption or ""
                 
                 r = extract_ep_label_robust(fn)
@@ -425,7 +425,7 @@ async def _lb_run_job(job_id: str):
                             _fn = getattr(media_obj, "file_name", "") or ""
                             _t = getattr(media_obj, "title", "") or ""
                             cap = m.caption or ""
-                            fname = f"{_t} - {_fn}" if _t else _fn
+                            fname = f"{_t} @@@ {_fn}" if _t else _fn
                             if not fname.strip(): fname = cap
 
                             if f_uid:

@@ -649,7 +649,7 @@ async def _build_share_links(bot, user_id, sj, info_msg):
             t = _get_audio_title(msg)
             
             # Priority 1: Combined title and filename (most reliable with our robust regex engine)
-            combo_name = f"{t} - {fname}" if t else fname
+            combo_name = f"{t} @@@ {fname}" if t else fname
             if combo_name.strip():
                 r = _extract_range_from_text(combo_name)
                 if r: return r
