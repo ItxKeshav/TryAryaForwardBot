@@ -942,7 +942,7 @@ async def _process_start(client, message):
     user_id = message.from_user.id
     from pyrogram import enums
     # React to the /start command — fire-and-forget
-    react_bg(client, message.chat.id, message.id, pool=REACTIONS_WELCOME)
+    asyncio.create_task(react_bg(client, message.chat.id, message.id, pool=REACTIONS_WELCOME))
     
     is_new = await db.db.users.count_documents({"id": int(user_id)}) == 0
     if is_new:
@@ -960,7 +960,30 @@ async def _process_start(client, message):
     
     args = message.command
     arg_p = f"#{args[1]}" if len(args) > 1 and args[1] else ""
+    lang = user.get('lang', 'en')
 
+    # ── Deep Link Handler (Bypass Force Join & Lang Prompt) ──
+    if len(args) > 1 and args[1].startswith("buy_"):
+        story_id = args[1].replace("buy_", "").strip()
+        from bson.objectid import ObjectId
+        from bson.errors import InvalidId
+        try:
+            o_id = ObjectId(story_id)
+        except InvalidId:
+            o_id = None
+            
+        if o_id:
+            story = await db.db.premium_stories.find_one({"_id": o_id})
+            if story:
+                has_paid = await db.has_purchase(user_id, story_id)
+                if has_paid:
+                    t_lang = T[lang]
+                    msg = t_lang["already_owned"]
+                    await message.reply_text(msg)
+                    return await dispatch_delivery_choice(client, user_id, story)
+                return await _show_story_profile(client, user_id, story, lang)
+
+    # ── Normal Start ──
     if 'lang' not in user:
         lang_prompt = (
             "<b>⟦ 𝗦𝗘𝗟𝗘𝗖𝗧 𝗟𝗔𝗡𝗚𝗨𝗔𝗚𝗘 ⟧</b>\n\n"
@@ -972,8 +995,6 @@ async def _process_start(client, message):
         kb = [[InlineKeyboardButton("• English", callback_data=f"mb#lang#en{arg_p}"),
                InlineKeyboardButton("• हिंदी", callback_data=f"mb#lang#hi{arg_p}")]]
         return await message.reply_text(lang_prompt, reply_markup=InlineKeyboardMarkup(kb))
-
-    lang = user.get('lang', 'en')
 
     # ── Force Join Logic (Unicode only, no emojis) ──
     INVITE_CHANNEL = "https://t.me/AryaPremiumTG"
@@ -1008,27 +1029,6 @@ async def _process_start(client, message):
             [InlineKeyboardButton(joined_btn, callback_data=f"mb#jchk{arg_p}")]
         ]
         return await message.reply_text(f"<b>{join_title}</b>\n\n{join_txt}", reply_markup=InlineKeyboardMarkup(join_kb))
-
-    # ── Deep Link Handler ──
-    if len(args) > 1 and args[1].startswith("buy_"):
-        story_id = args[1].replace("buy_", "").strip()
-        from bson.objectid import ObjectId
-        from bson.errors import InvalidId
-        try:
-            o_id = ObjectId(story_id)
-        except InvalidId:
-            o_id = None
-            
-        if o_id:
-            story = await db.db.premium_stories.find_one({"_id": o_id})
-            if story:
-                has_paid = await db.has_purchase(user_id, story_id)
-                if has_paid:
-                    t_lang = T[lang]
-                    msg = t_lang["already_owned"]
-                    await message.reply_text(msg)
-                    return await dispatch_delivery_choice(client, user_id, story)
-                return await _show_story_profile(client, user_id, story, lang)
 
     # Standard Main Menu
     wait_msg_txt = "WAIT A SECOND..." if lang == 'en' else "कृपया प्रतीक्षा करें..."
@@ -1123,7 +1123,7 @@ async def _process_my_stories(client, message):
 async def _process_text(client, message):
     user_id = message.from_user.id
     # React to any user message in the bot — fire-and-forget
-    react_bg(client, message.chat.id, message.id, pool=REACTIONS_GENERAL)
+    asyncio.create_task(react_bg(client, message.chat.id, message.id, pool=REACTIONS_GENERAL))
     user = await db.get_user(user_id)
     lang = user.get('lang', 'en')
     txt = message.text.strip()
@@ -1301,7 +1301,7 @@ async def _process_text(client, message):
             
             await m_proc.delete()
             # React with success emoji on request submission
-            react_bg(client, user_id, message.id, pool=REACTIONS_SUCCESS)
+            asyncio.create_task(react_bg(client, user_id, message.id, pool=REACTIONS_SUCCESS))
             await client.send_message(user_id, "✅ <b>Request Submitted Successfully!</b>\n\nYou can check the status of your request in the <b>Profile -> My Requests</b> section.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« " + _sc("BACK TO MENU"), callback_data="mb#main_back")]]))
             
         except asyncio.TimeoutError:
@@ -1473,7 +1473,7 @@ async def _show_help_menu(client, query, page: int):
 async def _process_callback(client, query):
     user_id = query.from_user.id
     # React to every button tap — fire-and-forget
-    react_bg(client, query.message.chat.id, query.message.id, pool=REACTIONS_GENERAL)
+    asyncio.create_task(react_bg(client, query.message.chat.id, query.message.id, pool=REACTIONS_GENERAL))
     user = await db.get_user(user_id)
     lang = user.get('lang', 'en')
     data = query.data.split('#')
