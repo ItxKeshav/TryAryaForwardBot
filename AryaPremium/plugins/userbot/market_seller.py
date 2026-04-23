@@ -967,21 +967,30 @@ async def _process_start(client, message):
         story_id = args[1].replace("buy_", "").strip()
         from bson.objectid import ObjectId
         from bson.errors import InvalidId
+        
+        story = None
         try:
             o_id = ObjectId(story_id)
-        except InvalidId:
-            o_id = None
-            
-        if o_id:
             story = await db.db.premium_stories.find_one({"_id": o_id})
-            if story:
-                has_paid = await db.has_purchase(user_id, story_id)
-                if has_paid:
-                    t_lang = T[lang]
-                    msg = t_lang["already_owned"]
-                    await message.reply_text(msg)
-                    return await dispatch_delivery_choice(client, user_id, story)
-                return await _show_story_profile(client, user_id, story, lang)
+        except InvalidId:
+            pass
+            
+        if not story:
+            # Fallback 1: Story might be stored with a string _id
+            story = await db.db.premium_stories.find_one({"_id": story_id})
+            
+        if not story:
+            # Fallback 2: Story might be stored with story_id field
+            story = await db.db.premium_stories.find_one({"story_id": story_id})
+            
+        if story:
+            has_paid = await db.has_purchase(user_id, story_id)
+            if has_paid:
+                t_lang = T[lang]
+                msg = t_lang["already_owned"]
+                await message.reply_text(msg)
+                return await dispatch_delivery_choice(client, user_id, story)
+            return await _show_story_profile(client, user_id, story, lang)
 
     # ── Normal Start ──
     if 'lang' not in user:
