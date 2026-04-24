@@ -376,7 +376,7 @@ async def sl_callback(bot, query):
         kb = [
             [InlineKeyboardButton("📦 Cᴏᴍᴘʟᴇᴛᴇ Mᴏᴅᴇ (Oɴᴇ-Tɪᴍᴇ)", callback_data="sl#complete")],
             [InlineKeyboardButton("📡 Lɪᴠᴇ Aᴜᴛᴏ-Bᴀᴛᴄʜ (Oɴɢᴏɪɴɢ)", callback_data="lb#main")],
-            [InlineKeyboardButton("✖️ Dɪsᴍɪss", callback_data="start_cmd")]
+            [InlineKeyboardButton("✖️ Dɪsᴍɪss", callback_data="close_btn")]
         ]
         await query.message.edit_text(
             "<b><u>Bᴀᴛᴄʜ Lɪɴᴋs Sʏsᴛᴇᴍ</u></b>\n\nChoose your link generation mode:\n\n"
@@ -1397,7 +1397,7 @@ async def _build_share_links(bot, user_id, sj, info_msg):
         logger.error(f"Share link generation error:\n{tb}")
         retry_kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("🔁 Rᴇᴛʀʏ", callback_data="sl#complete"),
-            InlineKeyboardButton("✖️ Dɪsᴍɪss", callback_data="start_cmd")
+            InlineKeyboardButton("✖️ Dɪsᴍɪss", callback_data="close_btn")
         ]])
         err_txt = (
             f"<b>❌ Error during link generation:</b>\n<code>{e}</code>\n\n"

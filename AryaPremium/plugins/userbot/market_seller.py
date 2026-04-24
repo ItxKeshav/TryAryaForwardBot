@@ -750,13 +750,27 @@ async def _show_story_profile(client, user_id, story, lang):
         f"<b>📥 {del_lbl}:</b> <i>{del_val}</i>\n\n"
     )
     if desc and desc.lower() != "none":
+        # Telegram photo caption hard limit: 1024 chars.
+        # Use a short preview in the blockquote title, full text inside (expandable hides overflow).
+        MAX_DESC = 700  # leave room for header_txt
+        desc_preview = desc[:120].rstrip() + ("…" if len(desc) > 120 else "")
+        desc_full = desc if len(desc) <= MAX_DESC else desc[:MAX_DESC].rstrip() + "…"
         header_txt += (
             f"<b>{desc_lbl}</b>\n"
             f"<blockquote expandable>"
-            f"-{to_mathbold(desc)}"
+            f"{to_mathbold(desc_full)}"
             f"</blockquote>\n"
         )
     txt = header_txt
+
+    # Safety: if total text still exceeds 1020 chars, strip from description end
+    MAX_CAPTION = 1020
+    if len(txt) > MAX_CAPTION and image:
+        # Rebuild with a shorter desc to guarantee image fits
+        overflow = len(txt) - MAX_CAPTION
+        # Trim desc_full further
+        safe_desc = desc_full[:max(60, len(desc_full) - overflow - 10)].rstrip() + "…"
+        txt = header_txt.replace(to_mathbold(desc_full), to_mathbold(safe_desc))
         
     demo_btn = "👀 डेमो फ़ाइलें देखें" if lang == "hi" else "👀 View Demo Files"
     kb = [
@@ -849,6 +863,53 @@ def _is_upi_restricted() -> bool:
     return h >= 21 or h < 6
 
 
+def _upi_availability(bot_cfg: dict) -> dict:
+    """
+    Returns a dict:
+      { 'available': bool, 'reason': str, 'until': str }
+    
+    upi_enabled values:
+      True  → admin force-on (override auto-schedule)
+      False → admin manually disabled
+      None/missing → auto schedule (9 PM – 6 AM off)
+    """
+    from datetime import timezone, timedelta
+    ist = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(ist)
+    h = now_ist.hour
+
+    upi_enabled = bot_cfg.get('upi_enabled', None)  # None = use auto schedule
+
+    if upi_enabled is False:
+        # Admin manually turned off
+        return {
+            'available': False,
+            'reason': 'manual',
+            'until': None  # no auto-resume time
+        }
+
+    if upi_enabled is True:
+        # Admin force-enabled (overrides schedule)
+        return {'available': True, 'reason': 'force_on', 'until': None}
+
+    # Auto schedule mode (upi_enabled is None / missing key)
+    in_restricted = h >= 21 or h < 6
+    if not in_restricted:
+        return {'available': True, 'reason': 'schedule', 'until': None}
+    else:
+        # Calculate minutes until 6 AM IST
+        minutes_to_6am = ((6 - h - 1) % 24) * 60 + (60 - now_ist.minute)
+        if minutes_to_6am >= 60:
+            until_str = f"{minutes_to_6am // 60}h {minutes_to_6am % 60}m"
+        else:
+            until_str = f"{minutes_to_6am}m"
+        return {
+            'available': False,
+            'reason': 'schedule',
+            'until': f"6:00 AM IST (in ~{until_str})"
+        }
+
+
 async def _show_story_details(client, msg_or_query, story, lang, bot_cfg: dict = None):
     from pyrogram.types import Message, CallbackQuery
     from pyrogram import enums
@@ -895,12 +956,52 @@ async def _show_story_details(client, msg_or_query, story, lang, bot_cfg: dict =
         unavailable_upi = "UPI Currently Unavailable"
         back_btn = f"❮ {_sc('BACK')}"
 
+    # ── UPI availability check ───────────────────────────────────────────────
+    from .market_seller import _upi_availability
+    upi_status = _upi_availability(bot_cfg)
+    upi_ok = upi_status['available']
+
+    # Build UPI block text based on availability
+    if upi_ok:
+        upi_block = f"<blockquote expandable=\"true\">{upi_title}\n{upi_desc}</blockquote>"
+    else:
+        # Reason-specific unavailability message
+        if upi_status['reason'] == 'schedule':
+            until_note = upi_status.get('until', '6:00 AM IST')
+            if lang == 'hi':
+                upi_block = (
+                    f"<blockquote expandable=\"true\"><b>⏸ मैनुअल UPI अभी उपलब्ध नहीं है।</b>\n\n"
+                    f"• रात्रि 9 बजे से सुबह 6 बजे के बीच सुरक्षा कारणों से मैनुअल UPI स्वचालित रूप से बंद रहता है।\n"
+                    f"• UPI फिर से उपलब्ध होगा: <b>{until_note}</b>\n\n"
+                    f"Razorpay से तत्काल पेमेंट करें — UPI, Debit Card, Net Banking सभी स्वीकार होते हैं।</blockquote>"
+                )
+            else:
+                upi_block = (
+                    f"<blockquote expandable=\"true\"><b>⏸ Manual UPI is currently unavailable.</b>\n\n"
+                    f"• Manual UPI is automatically paused between 9 PM – 6 AM IST for security.\n"
+                    f"• UPI will be available again at: <b>{until_note}</b>\n\n"
+                    f"Use Razorpay for instant payment — accepts UPI, Debit Card &amp; Net Banking.</blockquote>"
+                )
+        else:  # manual off by admin
+            if lang == 'hi':
+                upi_block = (
+                    f"<blockquote expandable=\"true\"><b>⏸ मैनुअल UPI अभी अस्थायी रूप से बंद है।</b>\n\n"
+                    f"• एडमिन ने फिलहाल मैनुअल UPI बंद किया है।\n"
+                    f"• Razorpay से पेमेंट करें — UPI, Debit Card, Net Banking स्वीकार।</blockquote>"
+                )
+            else:
+                upi_block = (
+                    f"<blockquote expandable=\"true\"><b>⏸ Manual UPI is temporarily unavailable.</b>\n\n"
+                    f"• The admin has disabled Manual UPI for now.\n"
+                    f"• Please use Razorpay to complete your payment — accepts UPI, Debit Card &amp; Net Banking.</blockquote>"
+                )
+
     txt = (
         f"<b>{title}</b>\n\n"
         f"<b>{item_lbl} :</b> <code>{name}</code>\n"
         f"<b>{price_lbl} :</b> {p_str}\n\n"
         f"<blockquote expandable=\"true\">{rzp_title}\n{rzp_desc}</blockquote>\n"
-        f"<blockquote expandable=\"true\">{upi_title}\n{upi_desc}</blockquote>"
+        f"{upi_block}"
     )
 
     kb = []
@@ -908,13 +1009,10 @@ async def _show_story_details(client, msg_or_query, story, lang, bot_cfg: dict =
     kb.append([InlineKeyboardButton(pay_gateway_btn, callback_data=f"mb#pay#razorpay#{str(story['_id'])}")])
     
     # UPI row
-    from .market_seller import _is_upi_restricted
-    upi_enabled = bot_cfg.get('upi_enabled', True)
-    upi_restricted = _is_upi_restricted()
-    if upi_enabled and not upi_restricted:
+    if upi_ok:
         kb.append([InlineKeyboardButton(pay_upi_btn, callback_data=f"mb#pay#upi#{str(story['_id'])}")])
     else:
-        kb.append([InlineKeyboardButton(f"🚫 {unavailable_upi}", callback_data="mb#noop")])
+        kb.append([InlineKeyboardButton(f"⏸ {unavailable_upi}", callback_data="mb#noop")])
         
     kb.append([InlineKeyboardButton(back_btn, callback_data="mb#return_main")])
     markup = InlineKeyboardMarkup(kb)
@@ -1599,9 +1697,13 @@ async def _process_callback(client, query):
 
         elif action == "settings":
             t = T[lang]
+            subscribed = u.get("subscribed", True)
+            sub_text = "🔔 Updates: ON" if subscribed else "🔕 Updates: OFF"
+            
             kb = [
                 [InlineKeyboardButton("English", callback_data="mb#lang#en"),
                  InlineKeyboardButton("हिंदी", callback_data="mb#lang#hi")],
+                [InlineKeyboardButton(sub_text, callback_data="mb#toggle_sub")],
                 [InlineKeyboardButton("❮ " + t['back'], callback_data="mb#main_back")]
             ]
             await _safe_edit(query.message, text=t['set_prompt'], markup=InlineKeyboardMarkup(kb))
@@ -1668,6 +1770,29 @@ async def _process_callback(client, query):
         if msg_sub: txt_d += f"\n{msg_sub}"
         kb = [[InlineKeyboardButton("« " + _sc("BACK TO REQUESTS"), callback_data="mb#my_reqs_0")]]
         await _safe_edit(query.message, text=txt_d, markup=InlineKeyboardMarkup(kb))
+        return
+
+    elif cmd == "toggle_sub":
+        u = await db.get_user(user_id)
+        current_sub = u.get("subscribed", True)
+        new_sub = not current_sub
+        await db.update_user(user_id, {"subscribed": new_sub})
+        
+        # update UI
+        lang = u.get("lang", "en")
+        t = T.get(lang, T['en'])
+        sub_text = "🔔 Updates: ON" if new_sub else "🔕 Updates: OFF"
+        kb = [
+            [InlineKeyboardButton("English", callback_data="mb#lang#en"),
+             InlineKeyboardButton("हिंदी", callback_data="mb#lang#hi")],
+            [InlineKeyboardButton(sub_text, callback_data="mb#toggle_sub")],
+            [InlineKeyboardButton("❮ " + t['back'], callback_data="mb#main_back")]
+        ]
+        await _safe_edit(query.message, text=t['set_prompt'], markup=InlineKeyboardMarkup(kb))
+        
+        # also show brief alert
+        alert_msg = "Marketplace updates enabled!" if new_sub else "Marketplace updates disabled!"
+        await query.answer(alert_msg, show_alert=False)
         return
 
     elif cmd == "return_main":
@@ -2372,7 +2497,7 @@ async def _process_callback(client, query):
                 asyncio.create_task(log_payment(
                     user_id=user_id,
                     user_first_name=user_info.get("first_name", "User"),
-                    username=user.get('username', ''),
+                    username=user_info.get('username', ''),
                     s_name=s_name,
                     amount=checkout.get("amount", 0),
                     method=method,
@@ -2384,6 +2509,19 @@ async def _process_callback(client, query):
             
             # Re-fetch story to ensure we have channel/pool data for delivery options
             story = await db.db.premium_stories.find_one({"_id": ObjectId(s_id)})
+            
+            # Send premium invoice document
+            from utils_invoice import send_invoice_to_user
+            asyncio.create_task(send_invoice_to_user(
+                client=client, 
+                user_id=user_id, 
+                order_id=order_id, 
+                amount=checkout.get("amount", 0), 
+                method=method, 
+                story=story,
+                checkout=checkout
+            ))
+            
             return await dispatch_delivery_choice(client, user_id, story)
             
         else:

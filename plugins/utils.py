@@ -12,11 +12,11 @@ class STS:
     def verify(self):
         return self.data.get(self.id)
     
-    def store(self, From, to, skip, limit, continuous=False, reverse_order=False, bot_id=None, smart_order=True, from_thread=None):
+    def store(self, From, to, skip, limit, continuous=False, reverse_order=False, bot_id=None, smart_order=True, from_thread=None, direct_forward=False):
         self.data[self.id] = {"FROM": From, 'TO': to, 'total_files': 0, 'skip': skip, 'limit': limit,
                       'fetched': skip, 'filtered': 0, 'deleted': 0, 'duplicate': 0, 'total': limit,
                       'start': 0, 'continuous': continuous, 'reverse_order': reverse_order, 'bot_id': bot_id,
-                      'smart_order': smart_order, 'from_thread': from_thread}
+                      'smart_order': smart_order, 'from_thread': from_thread, 'direct_forward': direct_forward}
         self.get(full=True)
         return STS(self.id)
         
@@ -78,7 +78,7 @@ class STS:
             'keywords': configs['keywords'], 'media_size': size, 'extensions': configs['extension'], 
             'skip_duplicate': duplicate, 'duration': configs.get('duration', 1), 
             'reverse_order': getattr(k, 'reverse_order', False), 'smart_order': getattr(k, 'smart_order', True),
-            'from_thread': getattr(k, 'from_thread', None),
+            'from_thread': getattr(k, 'from_thread', None), 'direct_forward': getattr(k, 'direct_forward', False),
             'replacements': configs.get('replacements', {})
         }, configs['protect'], button
 

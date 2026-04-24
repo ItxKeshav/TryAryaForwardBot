@@ -272,6 +272,23 @@ async def run(bot, message):
         return
     smart_order = "OFF" not in smart_msg.text and "ᴏғғ" not in smart_msg.text.lower()  # True = ON
 
+    # ── Direct Native Forward toggle ──────────────────────────────────────────
+    direct_btn = ReplyKeyboardMarkup([
+        [KeyboardButton("🚀 Yᴇs, Dɪʀᴇᴄᴛ Fᴏʀᴡᴀʀᴅ (Fᴀsᴛ)"), KeyboardButton("🐢 Nᴏ, Nᴏʀᴍᴀʟ Fᴏʀᴡᴀʀᴅ (Fɪʟᴛᴇʀs)")]
+    ], resize_keyboard=True, one_time_keyboard=True)
+    direct_msg = await bot.ask(
+        message.chat.id,
+        "<b>⚡ Direct Native Forward?</b>\n\nShould the bot forward messages directly without respecting any filters? (Super fast, like a human selecting 100 files at once!)\n\n"
+        "• <b>Yes, Direct:</b> Forwards 100 files at a time directly (Ignores filters/captions but extremely fast)\n"
+        "• <b>No, Normal:</b> Processes message by message (Slower, respects filters and captions)\n\n"
+        "<i>Note: Direct forward uses Telegram's native forward capability!</i>",
+        reply_markup=direct_btn
+    )
+    if direct_msg.text.startswith('/'):
+        await message.reply(await t(user_id, 'CANCEL'), reply_markup=ReplyKeyboardRemove())
+        return
+    direct_forward = "Yes" in direct_msg.text or "Yᴇs" in direct_msg.text
+
     skipno = await bot.ask(message.chat.id, await t(user_id, 'SKIP_MSG'), reply_markup=ReplyKeyboardRemove())
     if skipno.text.startswith('/'):
         await message.reply(await t(user_id, 'CANCEL'))
@@ -359,6 +376,7 @@ async def run(bot, message):
         f"<b>│</b> ⊸ <b>Mode:</b> {mode_lbl}\n"
         f"<b>│</b> ⊸ <b>Order:</b> {order_lbl}\n"
         f"<b>│</b> ⊸ <b>Smart Order:</b> {smart_lbl}\n"
+        f"<b>│</b> ⊸ <b>Direct Native:</b> {'🚀 YES (Fast)' if direct_forward else '🐢 NO (Normal)'}\n"
         f"<b>│</b> ⊸ <b>Status:</b> {fwd_mode}\n"
         f"<b>│</b> ⊸ <b>Caption:</b> {caption_m}\n"
         f"<b>│</b> ⊸ <b>Transfer:</b> {dl_mode}\n"
@@ -377,4 +395,5 @@ async def run(bot, message):
     STS(forward_id).store(chat_id, toid, int(skipno.text) if skipno.text.isdigit() else 0,
                           int(last_msg_id), continuous=continuous,
                           reverse_order=reverse_order, bot_id=selected_bot_id, smart_order=smart_order,
+                          direct_forward=direct_forward,
                           from_thread=locals().get('from_thread', None))

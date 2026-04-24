@@ -79,6 +79,7 @@ class PremiumDatabase:
                 "tc_accepted": False,
                 "purchases": [],
                 "used_channels": [],
+                "subscribed": True,
                 "joined_date": datetime.now(timezone.utc),
             }
             await self.users.insert_one(user)
@@ -93,6 +94,11 @@ class PremiumDatabase:
         
     async def add_purchase(self, user_id: int, story_id: str):
         await self.users.update_one({"id": int(user_id)}, {"$addToSet": {"purchases": story_id}}, upsert=True)
+
+    async def get_subscribed_users(self):
+        """Returns list of all users who have subscribed=True (or missing subscribed key defaulting to True)."""
+        cursor = self.users.find({"subscribed": {"$ne": False}})
+        return await cursor.to_list(length=None)
 
     # ─────────────────────────────────────────────────────────────────
     # Connected Bots Management

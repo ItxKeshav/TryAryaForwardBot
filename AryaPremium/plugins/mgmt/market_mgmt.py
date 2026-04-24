@@ -604,7 +604,13 @@ async def market_callback(client, query):
                 ad_state = f"{ad_val // 3600}H"
 
             prot_state = "ON" if cfg.get("protect", False) else "OFF"
-            upi_state = "ON" if cfg.get("upi_enabled", True) else "OFF"
+            upi_val = cfg.get("upi_enabled", None)
+            if upi_val is True:
+                upi_state = "FORCE ON"
+            elif upi_val is False:
+                upi_state = "OFF"
+            else:
+                upi_state = "Auto"
 
             kb = [
                 [InlineKeyboardButton("📢 " + utils.to_smallcap('Broadcast Message'), callback_data=f"mk#bot_broadcast_{b_id}")],
@@ -714,10 +720,22 @@ async def market_callback(client, query):
             bt = await db.db.premium_bots.find_one({"id": int(b_id)})
             if not bt: return await _safe_answer(query, "Not found!")
             cfg = bt.get("config", {}) or {}
-            curr = cfg.get("upi_enabled", True)
-            cfg["upi_enabled"] = not curr
+            curr = cfg.get("upi_enabled", None)  # None=Auto, False=OFF, True=Force ON
+            
+            # Cycle: Auto -> OFF -> Force ON -> Auto
+            if curr is None:        # Auto -> OFF
+                cfg["upi_enabled"] = False
+                new_label = "OFF (Manually Disabled)"
+            elif curr is False:     # OFF -> Force ON
+                cfg["upi_enabled"] = True
+                new_label = "FORCE ON (Schedule Override)"
+            else:                   # Force ON -> Auto
+                cfg.pop("upi_enabled", None)
+                cfg["upi_enabled"] = None
+                new_label = "Auto (9 PM - 6 AM off)"
+            
             await db.db.premium_bots.update_one({"id": int(b_id)}, {"$set": {"config": cfg}})
-            await _safe_answer(query, f"UPI Payments set to {'ON' if cfg['upi_enabled'] else 'OFF'}", show_alert=True)
+            await _safe_answer(query, f"UPI set to: {new_label}", show_alert=True)
             query.data = f"mk#bot_view_{b_id}"
             return await market_callback(client, query)
 
@@ -752,13 +770,14 @@ async def market_callback(client, query):
                 return await _safe_answer(query, "Not found!")
         
             kb = [
-                [InlineKeyboardButton(utils.to_smallcap("Edit Name"), callback_data=f"mk#st_edit_{s_id}_name"),
-                 InlineKeyboardButton(utils.to_smallcap("Edit Price"), callback_data=f"mk#st_edit_{s_id}_price")],
-                [InlineKeyboardButton(utils.to_smallcap("Edit Image"), callback_data=f"mk#st_edit_{s_id}_image"),
-                 InlineKeyboardButton(utils.to_smallcap("Edit Desc"), callback_data=f"mk#st_edit_{s_id}_desc")],
-                [InlineKeyboardButton(utils.to_smallcap("Edit Status"), callback_data=f"mk#st_edit_{s_id}_status"),
-                 InlineKeyboardButton(utils.to_smallcap("Edit Genre"), callback_data=f"mk#st_edit_{s_id}_genre")],
-                [InlineKeyboardButton(utils.to_smallcap("Edit Episodes"), callback_data=f"mk#st_edit_{s_id}_episodes")],
+                [InlineKeyboardButton(utils.to_smallcap("Edit Name (EN)"), callback_data=f"mk#st_edit_{s_id}_name"),
+                 InlineKeyboardButton(utils.to_smallcap("Edit Name (HI)"), callback_data=f"mk#st_edit_{s_id}_namehi")],
+                [InlineKeyboardButton(utils.to_smallcap("Edit Price"), callback_data=f"mk#st_edit_{s_id}_price"),
+                 InlineKeyboardButton(utils.to_smallcap("Edit Image"), callback_data=f"mk#st_edit_{s_id}_image")],
+                [InlineKeyboardButton(utils.to_smallcap("Edit Desc"), callback_data=f"mk#st_edit_{s_id}_desc"),
+                 InlineKeyboardButton(utils.to_smallcap("Edit Status"), callback_data=f"mk#st_edit_{s_id}_status")],
+                [InlineKeyboardButton(utils.to_smallcap("Edit Genre"), callback_data=f"mk#st_edit_{s_id}_genre"),
+                 InlineKeyboardButton(utils.to_smallcap("Edit Episodes"), callback_data=f"mk#st_edit_{s_id}_episodes")],
                 [InlineKeyboardButton(utils.to_smallcap("Edit DB Range"), callback_data=f"mk#st_edit_{s_id}_eps")],
                 [InlineKeyboardButton(utils.to_smallcap("Remove Story"), callback_data=f"mk#st_confirm_rm_{s_id}")],
                 [InlineKeyboardButton(utils.to_smallcap("Back"), callback_data="mk#manage_stories")],
@@ -841,23 +860,40 @@ async def market_callback(client, query):
             
             st = await db.db.premium_stories.find_one({"_id": checkout['story_id']})
             if st:
-                # Log success for Manual UPI with Screenshot
                 from utils import log_payment
                 user_info = await db.get_user(checkout['user_id'])
                 s_name = st.get("story_name_en", "Unknown")
+                amount_int = int(st.get("price", "0"))
                 asyncio.create_task(log_payment(
                     user_id=checkout['user_id'],
                     user_first_name=user_info.get("first_name", "User"),
                     s_name=s_name,
-                    amount=st.get("price", "0"),
+                    amount=amount_int,
                     method="manual_upi",
                     receipt_id=str(checkout.get('_id', '')),
                     photo_path=checkout.get("proof_path")
                 ))
 
+                import random, string
+                order_id = checkout.get("order_id")
+                if not order_id:
+                    order_id = f"OD-{checkout['user_id']}-{''.join(random.choices(string.ascii_uppercase + string.digits, k=6))}"
+
+                from utils_invoice import send_invoice_to_user
+                
                 from plugins.userbot.market_seller import market_clients, dispatch_delivery_choice
                 u_cli = market_clients.get(str(checkout['bot_id']))
                 if u_cli:
+                    # Also send the invoice
+                    asyncio.create_task(send_invoice_to_user(
+                        client=u_cli, 
+                        user_id=checkout['user_id'], 
+                        order_id=order_id, 
+                        amount=amount_int, 
+                        method="MANUAL UPI", 
+                        story=st,
+                        checkout=checkout
+                    ))
                     try:
                         await u_cli.delete_messages(checkout['user_id'], checkout.get('status_msg_id', 0))
                     except Exception:
@@ -1234,6 +1270,35 @@ async def _add_story_flow(client, user_id):
         sj['story_name_hi'] = utils.transliterate_to_hindi(name_input)
         await waiting_msg.delete()
 
+        # ── Hindi name confirmation ───────────────────────────────────────────
+        confirm_kb = ReplyKeyboardMarkup(
+            [["✅ Correct, Continue"], ["✏️ Type Correct Hindi Name"], ["⛔ Cᴀɴᴄᴇʟ"]],
+            resize_keyboard=True, one_time_keyboard=True
+        )
+        msg_hi_conf = await native_ask(
+            client, user_id,
+            f"<b>❪ STEP 5.1: HINDI NAME CONFIRM ❫</b>\n\n"
+            f"<b>EN:</b> {sj['story_name_en']}\n"
+            f"<b>HI (Auto):</b> {sj['story_name_hi']}\n\n"
+            f"Is the Hindi name correct?\n"
+            f"<i>(Tap 'Correct' to continue or 'Type' to enter manually)</i>",
+            reply_markup=confirm_kb
+        )
+        _conf_txt = getattr(msg_hi_conf, 'text', '') or ''
+        if 'Cᴀɴᴄᴇʟ' in _conf_txt:
+            return await client.send_message(user_id, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
+        if '✏️' in _conf_txt or 'Type' in _conf_txt:
+            # Ask user to type the correct Hindi name
+            msg_hi_manual = await native_ask(
+                client, user_id,
+                "<b>✏️ Enter the correct Hindi/transliterated name:</b>",
+                reply_markup=ReplyKeyboardRemove()
+            )
+            _manual = (getattr(msg_hi_manual, 'text', '') or '').strip()
+            if _manual:
+                sj['story_name_hi'] = _manual
+        # If '✅ Correct' or anything else — keep auto-generated name
+
         msg_img = await native_ask(client, user_id, f"<b>❪ STEP 6: STORY IMAGE ❫</b>\n\n<b>EN:</b> {sj['story_name_en']}\n<b>HI:</b> {sj['story_name_hi']}\n\nSend the cover image for this story:", reply_markup=cancel_kb)
         if getattr(msg_img, 'text', None) and "Cᴀɴᴄᴇʟ" in msg_img.text:
             return await client.send_message(user_id, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
@@ -1387,6 +1452,52 @@ async def _add_story_flow(client, user_id):
         
         await client.send_message(user_id, f"✅ **Story successfully added to Storefront!**\n\nThe Connected bot `@{(sj['bot_username'])}` is now actively selling `{sj['story_name_en']}` for ₹{sj['price']}!\n\n🔗 **Direct Purchase Link:**\n`{deep_link}`", reply_markup=ReplyKeyboardRemove())
 
+        # Subscribed users Notification
+        from plugins.userbot.market_seller import market_clients
+        store_cli = market_clients.get(str(sj["bot_id"]))
+        if store_cli:
+            async def _send_sub_alert():
+                subs = await db.get_subscribed_users()
+                story_name = sj.get("story_name_en", "Unknown")
+                price = sj.get("price", 0)
+                image = sj.get("image")
+                story_name_hi = sj.get("story_name_hi", story_name)
+                
+                caption_en = (
+                    f"<b>🎉 NEW STORY ARRIVED!</b>\n\n"
+                    f"📖 <b>Title:</b> {story_name}\n"
+                    f"💵 <b>Price:</b> ₹{price}\n\n"
+                    f"🚀 <i>You can now purchase this story directly using the link below!</i>\n\n"
+                    f"👉 <a href='{deep_link}'>Click Here to Purchase</a>\n\n"
+                    f"<i>(If you don't want to receive updates, you can turn off notifications in Settings.)</i>"
+                )
+                
+                caption_hi = (
+                    f"<b>🎉 नई कहानी आ गई!</b>\n\n"
+                    f"📖 <b>कहानी:</b> {story_name_hi}\n"
+                    f"💵 <b>कीमत:</b> ₹{price}\n\n"
+                    f"🚀 <i>आप इस कहानी को अभी खरीद सकते हैं!</i>\n\n"
+                    f"👉 <a href='{deep_link}'>यहाँ क्लिक करें</a>\n\n"
+                    f"<i>(अगर आप भविष्य में ऐसे अपडेट नहीं चाहते, तो Settings से Notifications बंद कर सकते हैं।)</i>"
+                )
+                
+                for u in subs:
+                    uid = u.get("id")
+                    if not uid: continue
+                    u_lang = u.get("lang", "en")
+                    cap = caption_en if u_lang == 'en' else caption_hi
+                    
+                    try:
+                        if image:
+                            await store_cli.send_photo(uid, photo=image, caption=cap)
+                        else:
+                            await store_cli.send_message(uid, cap)
+                        await asyncio.sleep(0.05)
+                    except Exception:
+                        pass
+            
+            asyncio.create_task(_send_sub_alert())
+
     except Exception as e:
         logger.error(f"Story creation error: {e}")
         await client.send_message(user_id, f"<b>⚠️ Error adding story:</b> Please ensure all settings (like Store Bots) are correctly configured first.", reply_markup=ReplyKeyboardRemove())
@@ -1470,6 +1581,9 @@ async def _edit_story_flow(client, user_id, s_id, action):
             name_en = utils.translate_to_english(msg.text)
             name_hi = utils.transliterate_to_hindi(msg.text)
             await db.db.premium_stories.update_one({"_id": s_id_obj}, {"$set": {"story_name_en": name_en, "story_name_hi": name_hi}})
+        elif action == "namehi":
+            # Direct update — admin typed the Hindi name manually
+            await db.db.premium_stories.update_one({"_id": s_id_obj}, {"$set": {"story_name_hi": msg.text.strip()}})
         elif action == "image":
             if getattr(msg, 'photo', None):
                 await client.send_message(user_id, "<i>Uploading image to store bot...</i>")

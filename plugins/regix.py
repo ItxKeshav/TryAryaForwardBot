@@ -315,13 +315,45 @@ async def pub_(bot, message):
           if from_chat == me.id or from_chat == me.username:
               from_chat = user
 
-          async for message in client.iter_messages(
-            chat_id=from_chat, 
-            limit=int(sts.get('limit')), 
-            offset=int(sts.get('skip')) if sts.get('skip') else 0,
-            continuous=is_continuous,
-            reverse_order=data.get('reverse_order', False)
-            ):
+          if data.get('direct_forward', False):
+              print(f"Executing DIRECT NATIVE FORWARD for {user}")
+              msg_ids_to_forward = []
+              async for message in client.iter_messages(
+                chat_id=from_chat, 
+                limit=int(sts.get('limit')), 
+                offset=int(sts.get('skip')) if sts.get('skip') else 0,
+                continuous=is_continuous,
+                reverse_order=data.get('reverse_order', False)
+              ):
+                  if await is_cancelled(client, user, m, sts):
+                     return
+                  
+                  if message.empty or message.service:
+                      sts.add('deleted')
+                      continue
+                      
+                  msg_ids_to_forward.append(message.id)
+                  sts.add('fetched')
+                  
+                  if len(msg_ids_to_forward) >= 100:
+                      await forward(client, msg_ids_to_forward, m, sts, protect)
+                      sts.add('total_files', len(msg_ids_to_forward))
+                      msg_ids_to_forward.clear()
+                      await edit(m, 'Progressing', 10, sts)
+                      await asyncio.sleep(5) # Small sleep to prevent FloodWaits
+                      
+              if msg_ids_to_forward:
+                  await forward(client, msg_ids_to_forward, m, sts, protect)
+                  sts.add('total_files', len(msg_ids_to_forward))
+                  msg_ids_to_forward.clear()
+          else:
+              async for message in client.iter_messages(
+                chat_id=from_chat, 
+                limit=int(sts.get('limit')), 
+                offset=int(sts.get('skip')) if sts.get('skip') else 0,
+                continuous=is_continuous,
+                reverse_order=data.get('reverse_order', False)
+                ):
                 if await is_cancelled(client, user, m, sts):
                    return
                 pling += 1
