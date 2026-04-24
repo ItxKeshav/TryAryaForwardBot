@@ -57,6 +57,7 @@ def generate_invoice_image(
     payment_method: str,
     amount: int,
     total_stories: int,
+    duration: str = "N/A"
 ) -> str:
     base_dir = os.path.dirname(__file__)
     possible_paths = [
