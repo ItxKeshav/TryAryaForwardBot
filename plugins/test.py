@@ -63,7 +63,7 @@ async def _schedule_delete(bot, chat_id, message_id, delay=43200): # 12 hours
     except Exception:
         pass
 
-async def start_clone_bot(FwdBot, data=None):
+async def start_clone_bot(FwdBot, data=None, force_restart=False):
    """Start a Pyrogram client with deduplication — if a running client for
    this session already exists in the cache, return it immediately without
    starting a duplicate (which would cause AUTH_KEY_DUPLICATED)."""
@@ -71,6 +71,15 @@ async def start_clone_bot(FwdBot, data=None):
    lock = _get_cache_lock()
 
    async with lock:
+       if force_restart:
+           # Explicitly bypass cache to force a fresh connection
+           logger.warning(f"[ClientCache] Force restart requested for {cache_key}, popping from cache.")
+           _client_refcount.pop(cache_key, None)
+           old_client = _client_cache.pop(cache_key, None)
+           if old_client:
+               try: await old_client.stop()
+               except Exception: pass
+               
        existing = _client_cache.get(cache_key)
        if existing is not None:
            # Verify the cached client is still alive using a cheap MTProto Ping

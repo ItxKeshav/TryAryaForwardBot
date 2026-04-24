@@ -147,7 +147,7 @@ async def _lj_ensure_client_alive(client):
         await asyncio.sleep(backoff)
 
         try:
-            client = await start_clone_bot(client)
+            client = await start_clone_bot(client, force_restart=True)
             # Verify with ping (not get_me) after cold start
             if await _lj_ping_client(client):
                 logger.info(f"[LiveJob] Client reconnected successfully on attempt {attempt+1}")
