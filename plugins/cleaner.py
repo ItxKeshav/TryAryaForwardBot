@@ -612,11 +612,15 @@ async def _cl_run_job(job_id: str, bot=None):
 
 
                     if rename_files:
-                        # User wants renaming: use base_name + episode/number
-                        if ep_label:
-                            clean_title = f"{base_name} {ep_label}"
-                        else:
-                            clean_title = f"{base_name} {curr_num}"
+                        name_format = job.get('name_format', 'format_1')
+                        ep_to_use = ep_label if ep_label else str(curr_num)
+                        
+                        if name_format == "format_2":
+                            clean_title = f"{ep_to_use} - {base_name}"
+                        elif name_format == "format_3":
+                            clean_title = f"{base_name} EP {ep_to_use}"
+                        else:  # format_1
+                            clean_title = f"{base_name} {ep_to_use}"
                     else:
                         # User wants to keep original filename/title
                         orig_title = getattr(media_obj, 'title', None)
@@ -1356,6 +1360,7 @@ async def _create_cl_flow(bot, user_id):
 
     base_name = "Cleaned"
     start_num = 1
+    name_format = "format_1"
     if rename_files:
         # ── Step 5a: Base Name ──────────────────────────────────
         r_base = await _cl_ask(bot, user_id,
@@ -1372,6 +1377,24 @@ async def _create_cl_flow(bot, user_id):
             reply_markup=markup_b)
         if _cancelled(r_num): return await _abort()
         start_num = int((r_num.text or "1").strip()) if (r_num.text or "").strip().isdigit() else 1
+        
+        # ── Step 5c: Naming Format ────────────────────────────────
+        r_fmt = await _cl_ask(bot, user_id,
+            "<b>»  Step 5c/10 — Naming Format</b>\n\nChoose how your cleaned files should be named.\n"
+            "<i>(Where <code>[N]</code> is the episode number/tracking)</i>",
+            reply_markup=ReplyKeyboardMarkup(
+                [["[Name] [N]", "[N] - [Name]", "[Name] EP [N]"],
+                 [CANCEL_BTN]],
+                resize_keyboard=True, one_time_keyboard=True))
+        if _cancelled(r_fmt): return await _abort()
+        
+        fmt_text = (r_fmt.text or "").strip()
+        if "[N] - [Name]" in fmt_text:
+             name_format = "format_2"
+        elif "[Name] EP [N]" in fmt_text:
+             name_format = "format_3"
+        else:
+             name_format = "format_1"
 
     # ── Step 6: Convert Videos to Audio? ──────────────────────────
     r_conv = await _cl_ask(bot, user_id,
@@ -1546,6 +1569,7 @@ async def _create_cl_flow(bot, user_id):
         "start_id": sid, "end_id": eid,
         "total_files": total_range, "files_done": 0,
         "base_name": base_name, "starting_number": start_num,
+        "name_format": name_format,
         "rename_files": rename_files,
         "convert_videos": convert_videos,
         "artist": adv_artist,
@@ -1567,12 +1591,19 @@ async def _create_cl_flow(bot, user_id):
     
     run_msg = "" if should_run_locally else f"\nQueued for worker: <b>{target_node}</b>"
     
+    if name_format == "format_2":
+        num_str = f"<b>{start_num}</b> - {base_name} → <b>{start_num + total_range - 1}</b> - {base_name}"
+    elif name_format == "format_3":
+        num_str = f"{base_name} EP <b>{start_num}</b> → {base_name} EP <b>{start_num + total_range - 1}</b>"
+    else:
+        num_str = f"{base_name} <b>{start_num}</b> → {base_name} <b>{start_num + total_range - 1}</b>"
+
     await bot.send_message(
         user_id,
         f"<b>✅ Cleaner Job Queued!</b>\n"
         f"Name: <code>{base_name}</code>\n"
         f"Files: <code>{sid}</code> → <code>{eid}</code> (~{total_range} msgs)\n"
-        f"Numbering: {base_name} <b>{start_num}</b> → {base_name} <b>{start_num + total_range - 1}</b>\n"
+        f"Numbering: {num_str}\n"
         f"Convert Video: {'✅ Yes' if convert_videos else '❌ No'}\n"
         f"Artist: {adv_artist or '—'}  |  Cover: {'✅ Set' if adv_cover else '—'}{run_msg}",
         reply_markup=ReplyKeyboardRemove()
