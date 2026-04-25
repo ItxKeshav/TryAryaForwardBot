@@ -597,15 +597,23 @@ async def settings_query(bot, query):
      channels = await db.get_user_channels(user_id)
      ch_count = len(channels)
      
-     PER_PAGE = 30
+     PER_PAGE = 20
      start_idx = page * PER_PAGE
      end_idx = start_idx + PER_PAGE
      current_channels = channels[start_idx:end_idx]
      
      buttons = []
-     # Max 30 channels per page (grouped into 1 per row)
+     # Group channels 2 per row
+     row = []
      for channel in current_channels:
-         buttons.append([InlineKeyboardButton(f"{channel['title']}", callback_data=f"settings#editchannels_{channel['chat_id']}")])
+         ch_title = channel.get('title', 'Unknown Channel')
+         ch_id = channel.get('chat_id', '0')
+         row.append(InlineKeyboardButton(f"{ch_title}", callback_data=f"settings#editchannels_{ch_id}"))
+         if len(row) == 2:
+             buttons.append(row)
+             row = []
+     if row:
+         buttons.append(row)
          
      nav_buttons = []
      if page > 0:
@@ -620,46 +628,77 @@ async def settings_query(bot, query):
                      InlineKeyboardButton('Sʏɴᴄ Nᴀᴍᴇs', callback_data='settings#ch_sync')])
      buttons.append([InlineKeyboardButton('❮ Bᴀᴄᴋ', callback_data='settings#main')])
      
-     await query.message.edit_text(
-       f"<b><u>Mʏ Cʜᴀɴɴᴇʟs</u></b>  (<code>{ch_count}/100</code>)\n\n"
-       "<b>Manage your source / destination chats here.</b>\n"
-       "<i>Tip: Use Sync Names to refresh channel titles from Telegram.</i>\n\n"
-       f"<b>Page:</b> {page + 1}/{(max(0, ch_count - 1) // PER_PAGE) + 1}",
-       reply_markup=InlineKeyboardMarkup(buttons))
+     try:
+         await query.message.edit_text(
+           f"<b><u>Mʏ Cʜᴀɴɴᴇʟs</u></b>  (<code>{ch_count}/100</code>)\n\n"
+           "<b>Manage your source / destination chats here.</b>\n"
+           "<i>Tip: Use Sync Names to refresh channel titles from Telegram.</i>\n\n"
+           f"<b>Page:</b> {page + 1}/{(max(0, ch_count - 1) // PER_PAGE) + 1}",
+           reply_markup=InlineKeyboardMarkup(buttons))
+     except Exception as e:
+         await query.answer(f"System Error: {e}", show_alert=True)
 
-  elif type == "ch_multi":
+  elif type.startswith("ch_multi"):
+      parts = type.split('_')
+      page = int(parts[2]) if len(parts) > 2 else 0
+
       if user_id not in _ch_multi_state:
           _ch_multi_state[user_id] = []
       
       selected = _ch_multi_state[user_id]
       channels = await db.get_user_channels(user_id)
+      ch_count = len(channels)
+      
+      PER_PAGE = 20
+      start_idx = page * PER_PAGE
+      end_idx = start_idx + PER_PAGE
+      current_channels = channels[start_idx:end_idx]
+      
       buttons = []
-      for channel in channels:
-          cid = channel['chat_id']
+      row = []
+      for channel in current_channels:
+          cid = channel.get('chat_id', '0')
+          ch_title = channel.get('title', 'Unknown Channel')
           mark = "✅ " if cid in selected else "⬜️ "
-          buttons.append([InlineKeyboardButton(f"{mark}{channel['title']}",
-                           callback_data=f"settings#ch_m_toggle_{cid}")])
+          row.append(InlineKeyboardButton(f"{mark}{ch_title}", callback_data=f"settings#ch_m_toggle_{cid}_{page}"))
+          if len(row) == 2:
+              buttons.append(row)
+              row = []
+      if row:
+          buttons.append(row)
+          
+      nav_buttons = []
+      if page > 0:
+          nav_buttons.append(InlineKeyboardButton("⬅️ Pʀᴇᴠɪᴏᴜs", callback_data=f"settings#ch_multi_{page-1}"))
+      if end_idx < ch_count:
+          nav_buttons.append(InlineKeyboardButton("Nᴇxᴛ ➡️", callback_data=f"settings#ch_multi_{page+1}"))
+      if nav_buttons:
+          buttons.append(nav_buttons)
       
       if selected:
           buttons.append([InlineKeyboardButton(f"🗑 Dᴇʟᴇᴛᴇ Sᴇʟᴇᴄᴛᴇᴅ ({len(selected)})", callback_data="settings#ch_m_del")])
       
-      buttons.append([InlineKeyboardButton('✅ Dᴏɴᴇ (Bᴀᴄᴋ)', callback_data="settings#channels")])
-      await query.message.edit_text(
-          "<b><u>Multiple Channel Removal</u></b>\n\nTap on channels to select or unselect them for deletion:",
-          reply_markup=InlineKeyboardMarkup(buttons)
-      )
+      buttons.append([InlineKeyboardButton('✅ Dᴏɴᴇ (Bᴀᴄᴋ)', callback_data=f"settings#channels_{page}")])
+      
+      try:
+          await query.message.edit_text(
+              f"<b><u>Multiple Channel Removal</u></b>\n\nTap on channels to select or unselect them for deletion:\n\n<b>Page:</b> {page + 1}/{(max(0, ch_count - 1) // PER_PAGE) + 1}",
+              reply_markup=InlineKeyboardMarkup(buttons)
+          )
+      except Exception as e:
+          await query.answer(f"System Error: {e}", show_alert=True)
 
   elif type.startswith("ch_m_toggle_"):
-      cid = int(type.split("_")[3])
+      parts = type.split("_")
+      cid = int(parts[3])
+      page = parts[4] if len(parts) > 4 else "0"
       selected = _ch_multi_state.get(user_id, [])
       if cid in selected:
           selected.remove(cid)
-
-
       else:
           selected.append(cid)
       _ch_multi_state[user_id] = selected
-      query.data = "settings#ch_multi"
+      query.data = f"settings#ch_multi_{page}"
       return await settings_query(bot, query)
 
   elif type == 'ch_sync':
