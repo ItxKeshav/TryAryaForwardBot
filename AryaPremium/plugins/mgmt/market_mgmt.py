@@ -1452,50 +1452,51 @@ async def _add_story_flow(client, user_id):
         
         await client.send_message(user_id, f"✅ **Story successfully added to Storefront!**\n\nThe Connected bot `@{(sj['bot_username'])}` is now actively selling `{sj['story_name_en']}` for ₹{sj['price']}!\n\n🔗 **Direct Purchase Link:**\n`{deep_link}`", reply_markup=ReplyKeyboardRemove())
 
-        # Subscribed users Notification
+        # New Story Notification — only to users who opted IN
         from plugins.userbot.market_seller import market_clients
         store_cli = market_clients.get(str(sj["bot_id"]))
         if store_cli:
             async def _send_sub_alert():
-                subs = await db.get_subscribed_users()
-                story_name = sj.get("story_name_en", "Unknown")
-                price = sj.get("price", 0)
-                image = sj.get("image")
+                # Only users who explicitly turned notifications ON
+                all_users = await db.db.users.find(
+                    {"subscribed": True},
+                    {"id": 1, "lang": 1}
+                ).to_list(length=None)
+
+                story_name    = sj.get("story_name_en", "Unknown")
                 story_name_hi = sj.get("story_name_hi", story_name)
-                
+                price         = sj.get("price", 0)
+                image         = sj.get("image")
+
                 caption_en = (
-                    f"<b>🎉 NEW STORY ARRIVED!</b>\n\n"
-                    f"📖 <b>Title:</b> {story_name}\n"
-                    f"💵 <b>Price:</b> ₹{price}\n\n"
-                    f"🚀 <i>You can now purchase this story directly using the link below!</i>\n\n"
-                    f"👉 <a href='{deep_link}'>Click Here to Purchase</a>\n\n"
-                    f"<i>(If you don't want to receive updates, you can turn off notifications in Settings.)</i>"
+                    f"<b>New Story Available</b>\n\n"
+                    f"<b>{story_name}</b>\n"
+                    f"<i>Price: ₹{price}</i>\n\n"
+                    f"<a href='{deep_link}'>Tap to View & Purchase</a>\n\n"
+                    f"<i>To stop receiving these alerts, go to Settings → Notifications.</i>"
                 )
-                
+
                 caption_hi = (
-                    f"<b>🎉 नई कहानी आ गई!</b>\n\n"
-                    f"📖 <b>कहानी:</b> {story_name_hi}\n"
-                    f"💵 <b>कीमत:</b> ₹{price}\n\n"
-                    f"🚀 <i>आप इस कहानी को अभी खरीद सकते हैं!</i>\n\n"
-                    f"👉 <a href='{deep_link}'>यहाँ क्लिक करें</a>\n\n"
-                    f"<i>(अगर आप भविष्य में ऐसे अपडेट नहीं चाहते, तो Settings से Notifications बंद कर सकते हैं।)</i>"
+                    f"<b>नई कहानी उपलब्ध है</b>\n\n"
+                    f"<b>{story_name_hi}</b>\n"
+                    f"<i>कीमत: ₹{price}</i>\n\n"
+                    f"<a href='{deep_link}'>देखने और खरीदने के लिए टैप करें</a>\n\n"
+                    f"<i>आगे अलर्ट नहीं चाहते? Settings → Notifications बंद करें.</i>"
                 )
-                
-                for u in subs:
+
+                for u in all_users:
                     uid = u.get("id")
                     if not uid: continue
-                    u_lang = u.get("lang", "en")
-                    cap = caption_en if u_lang == 'en' else caption_hi
-                    
+                    cap = caption_hi if u.get("lang") == 'hi' else caption_en
                     try:
                         if image:
                             await store_cli.send_photo(uid, photo=image, caption=cap)
                         else:
                             await store_cli.send_message(uid, cap)
-                        await asyncio.sleep(0.05)
+                        await asyncio.sleep(0.07)
                     except Exception:
                         pass
-            
+
             asyncio.create_task(_send_sub_alert())
 
     except Exception as e:

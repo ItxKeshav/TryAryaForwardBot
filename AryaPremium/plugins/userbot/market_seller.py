@@ -1697,16 +1697,31 @@ async def _process_callback(client, query):
 
         elif action == "settings":
             t = T[lang]
-            subscribed = u.get("subscribed", True)
-            sub_text = "🔔 Updates: ON" if subscribed else "🔕 Updates: OFF"
-            
+            subscribed = user.get("subscribed", False)   # Default OFF
+            if lang == 'hi':
+                sub_text    = "🔔 अपडेट नोटिफिकेशन: चालू"  if subscribed else "🔕 अपडेट नोटिफिकेशन: बंद"
+                lang_label  = "भाषा बदलें"
+                settings_txt = (
+                    "<b>⚙️ सेटिंग्स</b>\n\n"
+                    "<b>भाषा:</b> अपनी पसंदीदा भाषा चुनें\n"
+                    "<b>नोटिफिकेशन:</b> नई कहानियों का अलर्ट"
+                )
+            else:
+                sub_text    = "🔔 New Story Alerts: On"  if subscribed else "🔕 New Story Alerts: Off"
+                lang_label  = "Language"
+                settings_txt = (
+                    "<b>⚙️ Settings</b>\n\n"
+                    "<b>Language:</b> Choose your preferred language\n"
+                    "<b>Notifications:</b> Get alerted when new stories arrive"
+                )
+
             kb = [
-                [InlineKeyboardButton("English", callback_data="mb#lang#en"),
-                 InlineKeyboardButton("हिंदी", callback_data="mb#lang#hi")],
-                [InlineKeyboardButton(sub_text, callback_data="mb#toggle_sub")],
-                [InlineKeyboardButton("❮ " + t['back'], callback_data="mb#main_back")]
+                [InlineKeyboardButton("🇬🇧 English", callback_data="mb#lang#en"),
+                 InlineKeyboardButton("🇮🇳 हिंदी",   callback_data="mb#lang#hi")],
+                [InlineKeyboardButton(sub_text,      callback_data="mb#toggle_sub")],
+                [InlineKeyboardButton("❮ Back" if lang == 'en' else "❮ वापस", callback_data="mb#main_back")]
             ]
-            await _safe_edit(query.message, text=t['set_prompt'], markup=InlineKeyboardMarkup(kb))
+            await _safe_edit(query.message, text=settings_txt, markup=InlineKeyboardMarkup(kb))
 
         elif action == "help":
             return await _show_help_menu(client, query, 0)
@@ -1774,24 +1789,35 @@ async def _process_callback(client, query):
 
     elif cmd == "toggle_sub":
         u = await db.get_user(user_id)
-        current_sub = u.get("subscribed", True)
+        current_sub = u.get("subscribed", False)   # Default OFF
         new_sub = not current_sub
         await db.update_user(user_id, {"subscribed": new_sub})
-        
-        # update UI
+
         lang = u.get("lang", "en")
-        t = T.get(lang, T['en'])
-        sub_text = "🔔 Updates: ON" if new_sub else "🔕 Updates: OFF"
+        if lang == 'hi':
+            sub_text    = "🔔 अपडेट नोटिफिकेशन: चालू"  if new_sub else "🔕 अपडेट नोटिफिकेशन: बंद"
+            settings_txt = (
+                "<b>⚙️ सेटिंग्स</b>\n\n"
+                "<b>भाषा:</b> अपनी पसंदीदा भाषा चुनें\n"
+                "<b>नोटिफिकेशन:</b> नई कहानियों का अलर्ट"
+            )
+            alert_msg = "नोटिफिकेशन चालू किया!" if new_sub else "नोटिफिकेशन बंद किया!"
+        else:
+            sub_text    = "🔔 New Story Alerts: On"  if new_sub else "🔕 New Story Alerts: Off"
+            settings_txt = (
+                "<b>⚙️ Settings</b>\n\n"
+                "<b>Language:</b> Choose your preferred language\n"
+                "<b>Notifications:</b> Get alerted when new stories arrive"
+            )
+            alert_msg = "Story alerts enabled!" if new_sub else "Story alerts disabled!"
+
         kb = [
-            [InlineKeyboardButton("English", callback_data="mb#lang#en"),
-             InlineKeyboardButton("हिंदी", callback_data="mb#lang#hi")],
-            [InlineKeyboardButton(sub_text, callback_data="mb#toggle_sub")],
-            [InlineKeyboardButton("❮ " + t['back'], callback_data="mb#main_back")]
+            [InlineKeyboardButton("🇬🇧 English", callback_data="mb#lang#en"),
+             InlineKeyboardButton("🇮🇳 हिंदी",   callback_data="mb#lang#hi")],
+            [InlineKeyboardButton(sub_text,      callback_data="mb#toggle_sub")],
+            [InlineKeyboardButton("❮ Back" if lang == 'en' else "❮ वापस", callback_data="mb#main_back")]
         ]
-        await _safe_edit(query.message, text=t['set_prompt'], markup=InlineKeyboardMarkup(kb))
-        
-        # also show brief alert
-        alert_msg = "Marketplace updates enabled!" if new_sub else "Marketplace updates disabled!"
+        await _safe_edit(query.message, text=settings_txt, markup=InlineKeyboardMarkup(kb))
         await query.answer(alert_msg, show_alert=False)
         return
 
