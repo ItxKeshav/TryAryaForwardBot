@@ -3057,9 +3057,11 @@ async def _do_dm_delivery(client, user_id, story, status_msg=None, part_start=No
             time_str = f"{autodel} seconds"
 
         status_text = "Important" if not aborted else "Stopped"
-        autodel_text = f"{_sc('Due to copyright, all messages will auto-delete after')} <b>{time_str}</b>." if autodel > 0 else _sc("All sent files are now available below.")
-        reaccess_text = f"{_sc('To re-access, go to')} <b>{_sc('Main Menu')} ⟶ {_sc('My Stories')}</b>."
-        
+        autodel_text = (
+            f"⏳ <b>{_sc('Auto-Delete')}:</b> {_sc('Due to copyright, all messages will auto-delete after')} <b>{time_str}</b>. "
+            f"{_sc('To re-access anytime, go to')} <b>{_sc('Main Menu')} ⟶ {_sc('My Stories')}</b>."
+        ) if autodel > 0 else f"✅ <b>{_sc('Files Delivered')}</b> — {_sc('All sent files are now available below.')}"
+
         if rep_tpl:
             summary = _fmt_delivery_text(
                 rep_tpl,
@@ -3069,12 +3071,26 @@ async def _do_dm_delivery(client, user_id, story, status_msg=None, part_start=No
                 fail_count=failed_count,
             ).replace("{time}", time_str).replace("DELIVERY COMPLETE", _sc(status_text))
         else:
-            summary = (
-                f"‣ <b>{_sc('IMPORTANT')}:</b> {sent_count} ꜰɪʟᴇ(ꜱ) ᴅᴇʟɪᴠᴇʀᴇᴅ! ᴀʟʟ ꜱᴇɴᴛ ꜰɪʟᴇꜱ ᴀʀᴇ ɴᴏᴡ ᴀᴠᴀɪʟᴀʙʟᴇ ʙᴇʟᴏᴡ.\n"
-                f"ᴛᴏ ʀᴇ-ᴀᴄᴄᴇꜱꜱ, ɢᴏ ᴛᴏ ᴍᴀɪɴ ᴍᴇɴᴜ ⟶ ᴍʏ ꜱᴛᴏʀɪᴇꜱ."
-            )
+            if aborted:
+                summary = (
+                    f"⏹️ <b>{_sc('DELIVERY STOPPED')}</b>\n\n"
+                    f"• {_sc('Files Sent')}: <b>{sent_count}</b>\n"
+                    f"• {_sc('Failed')}: <b>{failed_count}</b>\n\n"
+                    f"<i>{_sc('Delivery was cancelled. Files sent so far are available above.')}</i>"
+                )
+            else:
+                summary = (
+                    f"✅ <b>{_sc('DELIVERY COMPLETE')}!</b>\n\n"
+                    f"📦 <b>{sent_count}</b> {_sc('file(s) delivered successfully')}."
+                    + (f"\n⚠️ <b>{failed_count}</b> {_sc('file(s) could not be sent.')}" if failed_count > 0 else "")
+                    + f"\n\n{autodel_text}\n\n"
+                    + f"<blockquote>💡 <b>{_sc('Tip')}:</b> {_sc('Files missing or something went wrong? Use the Regenerate button below or contact us via')} <b>Arya Help</b>.</blockquote>"
+                )
 
-        kb_regen = [[InlineKeyboardButton(f"⟳ {_sc('Regenerate Files')}", callback_data=f"mb#deliver_dm#{story_id_str}")]]
+        kb_regen = [
+            [InlineKeyboardButton(f"⟳ {_sc('Regenerate Files')}", callback_data=f"mb#deliver_dm#{story_id_str}")],
+            [InlineKeyboardButton("🆘 Arya Help", url="https://t.me/AryaHelpTG")],
+        ]
         notice = await client.send_message(user_id, summary, reply_markup=InlineKeyboardMarkup(kb_regen))
 
         from utils import log_delivery, log_arya_event
