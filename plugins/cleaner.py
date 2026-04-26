@@ -311,15 +311,13 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
         repl_sid  = job.get("replace_start_msg_id", 0)
 
         # ── Peer Resolution ───────────────────────────────────────────────
+        from plugins.utils import safe_resolve_peer
         for _p in [from_ch, dest_ch if dest_ch != uid else None]:
             if not _p: continue
-            try: await client.get_chat(_p)
-            except:
-                if _bot:
-                    try:
-                        ci = await _bot.get_chat(_p)
-                        if ci.username: await client.join_chat(ci.username)
-                    except: pass
+            try: await safe_resolve_peer(client, _p, bot=_bot)
+            except Exception as e:
+                logger.warning(f"[Cleaner {job_id}] Peer resolve warning for {_p}: {e}")
+
 
         # ── Cover Image ───────────────────────────────────────────────────
         local_cover = os.path.abspath(f"temp_cover_{job_id}.jpg")
@@ -339,7 +337,7 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
         _msg_cache: dict[int, object] = {}
 
         async def _fill_cache(start: int):
-            """Fetch up to 100 messages. Retries once on timeout."""
+            """Fetch up to 100 messages. Retries once on timeout, then raises exception so job pauses."""
             ids = list(range(start, min(start + 100, eid + 1)))
             if not ids: return
             for attempt in range(2):
@@ -356,6 +354,7 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                 except Exception as e:
                     logger.warning(f"[Cleaner {job_id}] cache fill attempt {attempt+1} err: {e}")
                     if attempt == 0: await asyncio.sleep(3)
+                    else: raise Exception(f"Failed to fetch batch starting at mid={start} — {type(e).__name__}: {e}")
 
         # ── Next media: find message + download in background (TRUE PARALLEL PIPELINE) ─
         # Runs as asyncio.Task so download N+1 happens while FFmpeg processes N.
@@ -433,32 +432,26 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                # Download permanently failed (all 5 retries) — count as failure
+                # Download permanently failed — pause job immediately on that specific message so nothing is skipped.
                 logger.error(f"[Cleaner {job_id}] fatal dl error: {e}")
-                fail_count += 1
-                if fail_count > 10:
-                    err_msg = str(e)[:200]
-                    await _cl_update_job(job_id, {"status": "paused", "error": err_msg})
-                    if _bot:
-                        try:
-                            fail_kb = InlineKeyboardMarkup([[
-                                InlineKeyboardButton("▶️ Rᴇsᴜᴍᴇ / Rᴇsᴛᴀʀᴛ", callback_data=f"cl#resume#{job_id}"),
-                                InlineKeyboardButton("🗑 Dᴇʟᴇᴛᴇ", callback_data=f"cl#del#{job_id}")
-                            ]])
-                            await _bot.send_message(uid,
-                                f"<b>⏸ Cleaner Job Paused!</b>\n\n"
-                                f"<i>Job paused due to repeated errors. It is not deleted.</i>\n\n"
-                                f"<b>🧹 Name:</b> {base_name}\n"
-                                f"<b>📁 Done:</b> {done} files\n"
-                                f"<b>❌ Last Error:</b> <code>{err_msg}</code>",
-                                reply_markup=fail_kb)
-                        except: pass
-                    job_failed = True
-                    break
-                # Advance past this one broken message ID and try next
-                msg_id += 1
-                _next_task = asyncio.create_task(_next_media(msg_id))
-                continue
+                err_msg = str(e)[:200]
+                await _cl_update_job(job_id, {"status": "paused", "error": err_msg, "current_msg_id": msg_id})
+                if _bot:
+                    try:
+                        fail_kb = InlineKeyboardMarkup([[
+                            InlineKeyboardButton("▶️ Rᴇsᴜᴍᴇ / Rᴇsᴛᴀʀᴛ", callback_data=f"cl#resume#{job_id}"),
+                            InlineKeyboardButton("🗑 Dᴇʟᴇᴛᴇ", callback_data=f"cl#del#{job_id}")
+                        ]])
+                        await _bot.send_message(uid,
+                            f"<b>⏸ Cleaner Job Paused!</b>\n\n"
+                            f"<i>Job paused instantly due to an error. No files were skipped. Fix the issue and resume.</i>\n\n"
+                            f"<b>🧹 Name:</b> {base_name}\n"
+                            f"<b>📁 Done:</b> {done} files\n"
+                            f"<b>❌ Last Error:</b> <code>{err_msg}</code>",
+                            reply_markup=fail_kb)
+                    except: pass
+                job_failed = True
+                break
             _next_task = None
 
             if not p_res:
@@ -614,33 +607,29 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
 
             except Exception as e:
                 logger.error(f"[Cleaner {job_id}] ✗ mid={active_mid}: {e}")
-                fail_count += 1
-                for _p in [dl_path, locals().get('out_path')]:
-                    try:
-                        if _p and os.path.exists(_p): os.remove(_p)
+                err_msg = str(e)[:200]
+                await _cl_update_job(job_id, {"status": "paused", "error": err_msg, "current_msg_id": active_mid})
+                if os.path.exists(dl_path):
+                    try: os.remove(dl_path)
                     except: pass
-                if fail_count > 10:
-                    err_msg = str(e)[:200]
-                    await _cl_update_job(job_id, {"status": "paused", "error": err_msg})
-                    if _bot:
-                        try:
-                            fail_kb = InlineKeyboardMarkup([[
-                                InlineKeyboardButton("▶️ Rᴇsᴜᴍᴇ / Rᴇsᴛᴀʀᴛ", callback_data=f"cl#resume#{job_id}"),
-                                InlineKeyboardButton("🗑 Dᴇʟᴇᴛᴇ", callback_data=f"cl#del#{job_id}")
-                            ]])
-                            await _bot.send_message(uid,
-                                f"<b>⏸ Cleaner Job Paused!</b>\n\n"
-                                f"<i>Job paused due to repeated errors. It is not deleted.</i>\n\n"
-                                f"<b>🧹 Name:</b> {base_name}\n"
-                                f"<b>📁 Done:</b> {done} files\n"
-                                f"<b>❌ Last Error:</b> <code>{err_msg}</code>",
-                                reply_markup=fail_kb)
-                        except: pass
-                    if _next_task: _next_task.cancel()
-                    if _upload_task: _upload_task.cancel()
-                    job_failed = True
-                    break
-                await asyncio.sleep(2)
+                if _bot:
+                    try:
+                        fail_kb = InlineKeyboardMarkup([[
+                            InlineKeyboardButton("▶️ Rᴇsᴜᴍᴇ / Rᴇsᴛᴀʀᴛ", callback_data=f"cl#resume#{job_id}"),
+                            InlineKeyboardButton("🗑 Dᴇʟᴇᴛᴇ", callback_data=f"cl#del#{job_id}")
+                        ]])
+                        await _bot.send_message(uid,
+                            f"<b>⏸ Cleaner Job Paused!</b>\n\n"
+                            f"<i>Job paused instantly during processing. Fix the issue and resume.</i>\n\n"
+                            f"<b>🧹 Name:</b> {base_name}\n"
+                            f"<b>📁 Done:</b> {done} files\n"
+                            f"<b>❌ Last Error:</b> <code>{err_msg}</code>",
+                            reply_markup=fail_kb)
+                    except: pass
+                if _next_task: _next_task.cancel()
+                if _upload_task: _upload_task.cancel()
+                job_failed = True
+                break
 
             # Safety net: ensure next task is running
             if _next_task is None and msg_id <= eid:
@@ -1003,9 +992,11 @@ async def _create_cl_flow(bot, user_id):
 
     # Artist
     _artists = [a.strip() for a in str(adv_artist).split("|") if a.strip()]
-    art_rows  = [[KeyboardButton(a)] for a in _artists] + [[SKIP_BTN, CANCEL_BTN]]
+    art_rows = []
+    for i in range(0, len(_artists), 2): art_rows.append([KeyboardButton(a) for a in _artists[i:i+2]])
+    art_rows.append([SKIP_BTN, CANCEL_BTN])
     r_art = await _cl_ask(bot, user_id,
-        f"<b>> Step 7a — Artist Name</b>\n<i>Saved: {', '.join(_artists) or 'None'}</i>",
+        f"<b>> Step 7a — Artist Name</b>\n<i>Saved: {', '.join(_artists[:5]) or 'None'}</i>",
         reply_markup=ReplyKeyboardMarkup(art_rows, resize_keyboard=True))
     if _cancelled(r_art): return await _abort()
     if not _skip(r_art.text or ""):
@@ -1016,8 +1007,11 @@ async def _create_cl_flow(bot, user_id):
 
     # Album
     _albums  = [a.strip() for a in str(df.get("album_history","") or "").split("|") if a.strip()]
-    alb_rows = [[KeyboardButton(a)] for a in _albums[:5]]
-    alb_rows += [[KeyboardButton("🗑 Clear"), KeyboardButton("✏️ Custom")], [SKIP_BTN, CANCEL_BTN]]
+    alb_list = _albums[:6]
+    alb_rows = []
+    for i in range(0, len(alb_list), 2): alb_rows.append([KeyboardButton(a) for a in alb_list[i:i+2]])
+    alb_rows.append([KeyboardButton("🗑 Clear"), KeyboardButton("✏️ Custom")])
+    alb_rows.append([SKIP_BTN, CANCEL_BTN])
     r_alb = await _cl_ask(bot, user_id,
         f"<b>> Step 7b — Album Name</b>\n<i>Current: {adv_album or 'None'}</i>",
         reply_markup=ReplyKeyboardMarkup(alb_rows, resize_keyboard=True, one_time_keyboard=True))
