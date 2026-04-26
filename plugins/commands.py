@@ -334,7 +334,7 @@ async def status(bot, query):
         'users_count': users_count,
         'bots_count': bots_count,
         'total_channels': total_channels,
-        'banned_users': temp.BANNED_USERS,
+        'banned_users': len(temp.BANNED_USERS),
         'current_forwards': temp.forwardings,
         'live_forward': live_fwd,
         'batch_forward': batch_fwd,
@@ -351,8 +351,8 @@ async def status(bot, query):
     await _safe_edit(bot, query, 
         text=_tx(lang, 'STATUS_TXT', **kwargs),
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton('🗑 Clean All Temp Files', callback_data='sysmon#cleanup')],
-            [InlineKeyboardButton('«  ʙᴀᴄᴋ', callback_data='back')]
+            [InlineKeyboardButton('🔄 Rᴇғʀᴇsʜ', callback_data='status')],
+            [InlineKeyboardButton('🗑 Cʟᴇᴀɴ Tᴇᴍᴘ', callback_data='sysmon#cleanup'), InlineKeyboardButton('«  Bᴀᴄᴋ', callback_data='back')]
         ]),
         parse_mode=enums.ParseMode.HTML,
         disable_web_page_preview=True,
@@ -534,12 +534,12 @@ async def workers_cb(bot, query):
             pass
         return await query.answer("✅ Refreshed!")
 
-    # ── List running jobs so user can pick one to shift ───────────────────────
+    # ── List running/paused/failed jobs so user can pick one to shift ───────────────────────
     elif action == "shift_list":
         running = []
         for tt, (coll, label) in _COLL_MAP.items():
             try:
-                async for job in db.db[coll].find({"status": "running"}):
+                async for job in db.db[coll].find({"status": {"$in": ["running", "paused", "failed"]}}):
                     jid    = job.get("job_id", "")
                     worker = job.get("worker_node", "?")
                     name   = (job.get("name") or job.get("output_name")

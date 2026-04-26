@@ -486,9 +486,11 @@ async def _process_start(client, message):
             txt = (
                 f"<i>‣  Important: {total} file(s) delivered! Due to copyright, all messages "
                 f"will auto-delete after {del_str}. "
-                f"To re-access, simply click the same link button again.{fail_note}</i>"
+                f"To re-access, simply click the same link button again.{fail_note}</i>\n\n"
+                f"<blockquote>💡 <b>Tip:</b> If any files are missing, the bot is not working properly, or you have suggestions, please contact us via the <b>Arya Help</b> button below.</blockquote>"
             )
-        notice = await message.reply_text(txt)
+        kb_help = InlineKeyboardMarkup([[InlineKeyboardButton("🆘 Arya Help", url="https://t.me/AryaHelpTG")]])
+        notice = await message.reply_text(txt, reply_markup=kb_help)
         asyncio.create_task(
             delete_later(client, user_id, sent_ids, notice.id, auto_delete_mins * 60)
         )
@@ -498,8 +500,10 @@ async def _process_start(client, message):
         txt = (format_msg(suc_tpl, message.from_user) if suc_tpl
                else f"<i>‣  Important: {total} file(s) delivered! Due to copyright, all messages "
                     f"will auto-delete after 3 hours. "
-                    f"To re-access, simply click the same link button again.{fail_note}</i>")
-        await message.reply_text(txt)
+                    f"To re-access, simply click the same link button again.{fail_note}</i>\n\n"
+                    f"<blockquote>💡 <b>Tip:</b> If any files are missing, the bot is not working properly, or you have suggestions, please contact us via the <b>Arya Help</b> button below.</blockquote>")
+        kb_help = InlineKeyboardMarkup([[InlineKeyboardButton("🆘 Arya Help", url="https://t.me/AryaHelpTG")]])
+        await message.reply_text(txt, reply_markup=kb_help)
 
     # ── Increment global delivery counter + Enhanced bilingual Thank-You ──
     if bot_id:

@@ -1947,24 +1947,24 @@ async def job_limits_cb(bot, query):
     await query.message.delete()
 
     cur_max_sz  = job.get("max_size_mb", 0) or 0
-    cur_max_dur = (job.get("max_duration_secs", 0) or 0) // 60
-    cur_min_dur = (job.get("min_duration_secs", 0) or 0) // 60
+    cur_max_dur = job.get("max_duration_secs", 0) or 0
+    cur_min_dur = job.get("min_duration_secs", 0) or 0
     cur_notify  = job.get("notify_large_file_mb", 0) or 0
 
     r = await _ask(bot, user_id,
         f"<b>⚙️ Edit Limits — Job {job_id[-6:]}</b>\n\n"
         f"<b>Current settings:</b>\n"
         f"• Max size: <code>{cur_max_sz} MB</code>\n"
-        f"• Max duration: <code>{cur_max_dur} min</code>\n"
-        f"• Min duration: <code>{cur_min_dur} min</code> (skip shorter files)\n"
+        f"• Max duration: <code>{cur_max_dur} seconds</code>\n"
+        f"• Min duration: <code>{cur_min_dur} seconds</code> (skip shorter files)\n"
         f"• Large file alert: <code>{cur_notify} MB</code> (0 = off)\n\n"
         "<b>Send new limits in format:</b>\n"
-        "<code>max_mb : max_min : min_min : alert_mb</code>\n\n"
+        "<code>max_mb : max_seconds : min_seconds : alert_mb</code>\n\n"
         "Examples:\n"
         "• <code>0:0:0:0</code> — remove all limits\n"
-        "• <code>200:0:1:0</code> — max 200MB, skip files under 1 min, no alert\n"
-        "• <code>0:60:1:300</code> — max 60min, skip files under 1 min, alert at 300MB\n"
-        "• <code>500:0:2:400</code> — max 500MB, min 2min, alert owner at 400MB+\n\n"
+        "• <code>200:0:10:0</code> — max 200MB, skip files under 10 seconds, no alert\n"
+        "• <code>0:3600:60:300</code> — max 3600sec, skip files under 60 sec, alert at 300MB\n"
+        "• <code>0:0:30:0</code> — just skip files shorter than 30 seconds\n\n"
         "<i>Send 0 for any field to remove that limit.</i>",
         reply_markup=ReplyKeyboardMarkup(
             [[KeyboardButton(f"{cur_max_sz}:{cur_max_dur}:{cur_min_dur}:{cur_notify}")],
@@ -1983,8 +1983,8 @@ async def job_limits_cb(bot, query):
         except: return default
 
     new_max_sz  = _int(parts[0] if len(parts) > 0 else 0)
-    new_max_dur = _int(parts[1] if len(parts) > 1 else 0) * 60
-    new_min_dur = _int(parts[2] if len(parts) > 2 else 0) * 60
+    new_max_dur = _int(parts[1] if len(parts) > 1 else 0)
+    new_min_dur = _int(parts[2] if len(parts) > 2 else 0)
     new_notify  = _int(parts[3] if len(parts) > 3 else 0)
 
     await _update_job(job_id,
@@ -1997,8 +1997,8 @@ async def job_limits_cb(bot, query):
     summary = (
         f"✅ <b>Limits updated for Job {job_id[-6:]}</b>\n\n"
         f"• Max size: <code>{'No limit' if not new_max_sz else str(new_max_sz)+' MB'}</code>\n"
-        f"• Max duration: <code>{'No limit' if not new_max_dur else str(new_max_dur//60)+' min'}</code>\n"
-        f"• Min duration: <code>{'Off' if not new_min_dur else str(new_min_dur//60)+' min (shorter files skipped)'}</code>\n"
+        f"• Max duration: <code>{'No limit' if not new_max_dur else str(new_max_dur)+' secs'}</code>\n"
+        f"• Min duration: <code>{'Off' if not new_min_dur else str(new_min_dur)+' secs (shorter files skipped)'}</code>\n"
         f"• Large file alert: <code>{'Off' if not new_notify else '≥ '+str(new_notify)+' MB → DM owner'}</code>\n\n"
         f"<i>Changes take effect on the next poll cycle.</i>"
     )
@@ -2310,16 +2310,15 @@ async def _create_job_flow(bot, user_id: int):
     # ── Step 7: Size / Duration Limit ─────────────────────────────
     while True:
         limit_r = await _ask(bot, user_id,
-            "<b>Step 7/7 — Size / Duration Limits</b>\n\n"
+            "<b>Step 7/8 — Size & Duration Limits</b>\n\n"
             "Set limits for this job. Files outside the limits will be <b>silently skipped</b>.\n\n"
             "<blockquote expandable>"
-            "Format: <code>max_mb : max_min : min_min</code>\n\n"
+            "Format: <code>max_mb : max_seconds : min_seconds</code>\n\n"
             "• <code>0</code> — no limits (forward everything)\n"
-            "• <code>200</code> — skip files larger than 200 MB\n"
-            "• <code>200:60</code> — max 200MB, max 60 minutes\n"
-            "• <code>200:60:1</code> — max 200MB, max 60min, <b>skip files under 1 minute</b>\n"
-            "• <code>0:0:2</code> — no size/max-dur limit, but skip files shorter than 2 min\n\n"
-            "<b>Tip:</b> Use min_min to skip short clips (e.g. 10-second files)"
+            "• <code>2000:0:0</code> — skip files larger than 2000 MB\n"
+            "• <code>0:0:30</code> — skip files shorter than 30 seconds (best for voice notes)\n"
+            "• <code>100:3600:60</code> — Max 100MB, Max 3600sec, Skip under 60sec\n\n"
+            "<b>Tip:</b> If you want to skip 10 seconds or 30 seconds voice messages, just send <code>0:0:10</code> or <code>0:0:30</code>"
             "</blockquote>",
             reply_markup=ReplyKeyboardMarkup(
                 [[KeyboardButton("0 (No limit)")], [UNDO_BTN, CANCEL_BTN]],
@@ -2331,7 +2330,7 @@ async def _create_job_flow(bot, user_id: int):
         if _undo(limit_r.text):
             # redo batch mode
             batch_r3 = await _ask(bot, user_id,
-                "<b>↩️ Redo — Step 6/7: Batch Mode</b>\n\nON or OFF?",
+                "<b>↩️ Redo — Step 6/8: Batch Mode</b>\n\nON or OFF?",
                 reply_markup=ReplyKeyboardMarkup(
                     [[KeyboardButton("✅ ON")], [KeyboardButton("❌ OFF")], [CANCEL_BTN]],
                     resize_keyboard=True, one_time_keyboard=True))
@@ -2349,8 +2348,8 @@ async def _create_job_flow(bot, user_id: int):
             try: return max(0, int(v))
             except: return 0
         max_size_mb    = _lim_int(parts_l[0] if len(parts_l) > 0 else "0")
-        max_duration_s = _lim_int(parts_l[1] if len(parts_l) > 1 else "0") * 60
-        min_duration_s = _lim_int(parts_l[2] if len(parts_l) > 2 else "0") * 60
+        max_duration_s = _lim_int(parts_l[1] if len(parts_l) > 1 else "0")
+        min_duration_s = _lim_int(parts_l[2] if len(parts_l) > 2 else "0")
 
     # ── Step 8: Skip Duplicates ─────────────────────────────
     while True:
@@ -2374,7 +2373,7 @@ async def _create_job_flow(bot, user_id: int):
             # redo limits
             limit_r2 = await _ask(bot, user_id,
                 "<b>↩️ Redo — Step 7/8: Size / Duration Limits</b>\n\n"
-                "Format: max_mb : max_min : min_min (or 0 for none):",
+                "Format: max_mb : max_seconds : min_seconds (or 0 for none):",
                 reply_markup=ReplyKeyboardMarkup(
                     [[KeyboardButton("0 (No limit)")], [CANCEL_BTN]],
                     resize_keyboard=True, one_time_keyboard=True))
@@ -2388,8 +2387,8 @@ async def _create_job_flow(bot, user_id: int):
                     try: return max(0, int(v))
                     except: return 0
                 max_size_mb   = _lim_int(parts_l[0] if len(parts_l) > 0 else "0")
-                max_duration_s = _lim_int(parts_l[1] if len(parts_l) > 1 else "0") * 60
-                min_duration_s = _lim_int(parts_l[2] if len(parts_l) > 2 else "0") * 60
+                max_duration_s = _lim_int(parts_l[1] if len(parts_l) > 1 else "0")
+                min_duration_s = _lim_int(parts_l[2] if len(parts_l) > 2 else "0")
             continue
         break
 
@@ -2440,7 +2439,9 @@ async def _create_job_flow(bot, user_id: int):
     if max_size_mb:
         size_lbl += f"\n<b>Max size:</b> {max_size_mb} MB"
     if max_duration_s:
-        size_lbl += f"\n<b>Max duration:</b> {max_duration_s // 60} min"
+        size_lbl += f"\n<b>Max duration:</b> {max_duration_s} seconds"
+    if min_duration_s:
+        size_lbl += f"\n<b>Min duration:</b> {min_duration_s} seconds"
     if not size_lbl:
         size_lbl = "\n<b>Size limit:</b> None"
     dupe_lbl = "\n<b>Skip Dupes:</b> ✅ ON" if skip_dupelicates else "\n<b>Skip Dupes:</b> ❌ OFF"

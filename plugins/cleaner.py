@@ -186,35 +186,35 @@ def _build_ffmpeg_cmd(input_path, output_path, cover_path, meta: dict, deep_clea
            "-err_detect", "ignore_err", "-fflags", "+discardcorrupt",
            "-i", input_path]
 
-    # Multi-format cover art handling
-    if cover_path and os.path.exists(cover_path) and os.path.getsize(cover_path) > 1024:
+    out_ext = os.path.splitext(output_path)[1].lower()
+
+    # Multi-format cover art handling (only for audio)
+    if cover_path and os.path.exists(cover_path) and os.path.getsize(cover_path) > 1024 and out_ext not in (".mp4", ".mkv", ".webm"):
         cmd += ["-i", cover_path, "-map", "0:a:0", "-map", "1:v:0"]
-        out_ext = os.path.splitext(output_path)[1].lower()
-        
-        if out_ext in (".mp4", ".m4a", ".m4b"):
-            # MP4 containers handle covers as video streams but need specific muxing
-            cmd += ["-c:v", "copy", "-disposition:v", "attached_pic"]
+        if out_ext in (".m4a", ".m4b"):
+            cmd += ["-c:v", "mjpeg", "-disposition:v", "attached_pic"]
         else:
-            # MP3 / Others
             cmd += ["-c:v", "mjpeg", "-id3v2_version", "3", "-disposition:v", "attached_pic"]
-            
         cmd += ["-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)"]
     else:
-        cmd += ["-map", "0:a:0"]
+        # If it's a video, map both video and audio from input 0
+        if out_ext in (".mp4", ".mkv", ".webm"):
+            cmd += ["-map", "0:v:0?", "-map", "0:a:0?"]
+        else:
+            cmd += ["-map", "0:a:0?"]
 
     # Global flags to prevent muxer errors from weird streams
     cmd += ["-sn", "-dn"]  # No subtitles, No data streams
 
     # Ultra-Fast Stream Copy or Deep Mode
     in_ext = os.path.splitext(input_path)[1].lower()
-    out_ext = os.path.splitext(output_path)[1].lower()
 
     if deep_clean:
         cmd += ["-af", "afftdn,dynaudnorm=f=150:g=15,aresample=44100"]
         cmd += ["-c:a", "libmp3lame", "-b:a", "128k", "-ac", "1"]
     elif in_ext == out_ext:
         cmd += ["-c:a", "copy"]
-        if out_ext in (".mp4", ".mkv"):
+        if out_ext in (".mp4", ".mkv", ".webm"):
             cmd += ["-c:v", "copy"]
     else:
         cmd += ["-c:a", "libmp3lame", "-b:a", "128k", "-ac", "1", "-threads", "1"]
@@ -438,18 +438,19 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                 fail_count += 1
                 if fail_count > 10:
                     err_msg = str(e)[:200]
-                    await _cl_update_job(job_id, {"status": "failed", "error": err_msg})
+                    await _cl_update_job(job_id, {"status": "paused", "error": err_msg})
                     if _bot:
                         try:
                             fail_kb = InlineKeyboardMarkup([[
-                                InlineKeyboardButton("🔁 Rᴇᴛʀʏ / Rᴇsᴛᴀʀᴛ", callback_data=f"cl#reset#{job_id}"),
+                                InlineKeyboardButton("▶️ Rᴇsᴜᴍᴇ / Rᴇsᴛᴀʀᴛ", callback_data=f"cl#resume#{job_id}"),
                                 InlineKeyboardButton("🗑 Dᴇʟᴇᴛᴇ", callback_data=f"cl#del#{job_id}")
                             ]])
                             await _bot.send_message(uid,
-                                f"<b>⚠️ Cleaner Job Failed!</b>\n\n"
+                                f"<b>⏸ Cleaner Job Paused!</b>\n\n"
+                                f"<i>Job paused due to repeated errors. It is not deleted.</i>\n\n"
                                 f"<b>🧹 Name:</b> {base_name}\n"
                                 f"<b>📁 Done:</b> {done} files\n"
-                                f"<b>❌ Error:</b> <code>{err_msg}</code>",
+                                f"<b>❌ Last Error:</b> <code>{err_msg}</code>",
                                 reply_markup=fail_kb)
                         except: pass
                     job_failed = True
@@ -620,18 +621,19 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                     except: pass
                 if fail_count > 10:
                     err_msg = str(e)[:200]
-                    await _cl_update_job(job_id, {"status": "failed", "error": err_msg})
+                    await _cl_update_job(job_id, {"status": "paused", "error": err_msg})
                     if _bot:
                         try:
                             fail_kb = InlineKeyboardMarkup([[
-                                InlineKeyboardButton("🔁 Rᴇᴛʀʏ / Rᴇsᴛᴀʀᴛ", callback_data=f"cl#reset#{job_id}"),
+                                InlineKeyboardButton("▶️ Rᴇsᴜᴍᴇ / Rᴇsᴛᴀʀᴛ", callback_data=f"cl#resume#{job_id}"),
                                 InlineKeyboardButton("🗑 Dᴇʟᴇᴛᴇ", callback_data=f"cl#del#{job_id}")
                             ]])
                             await _bot.send_message(uid,
-                                f"<b>⚠️ Cleaner Job Failed!</b>\n\n"
+                                f"<b>⏸ Cleaner Job Paused!</b>\n\n"
+                                f"<i>Job paused due to repeated errors. It is not deleted.</i>\n\n"
                                 f"<b>🧹 Name:</b> {base_name}\n"
                                 f"<b>📁 Done:</b> {done} files\n"
-                                f"<b>❌ Error:</b> <code>{err_msg}</code>",
+                                f"<b>❌ Last Error:</b> <code>{err_msg}</code>",
                                 reply_markup=fail_kb)
                         except: pass
                     if _next_task: _next_task.cancel()
@@ -650,7 +652,7 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
             up_ok, up_err = await _upload_task
             if not up_ok:
                 err_msg = str(up_err)[:200]
-                await _cl_update_job(job_id, {"status": "failed", "error": err_msg})
+                await _cl_update_job(job_id, {"status": "paused", "error": err_msg})
                 job_failed = True
 
         try:
