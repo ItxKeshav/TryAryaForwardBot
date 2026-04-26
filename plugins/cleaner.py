@@ -195,9 +195,14 @@ def _build_ffmpeg_cmd(input_path, output_path, cover_path, meta: dict) -> list:
     else:
         cmd += ["-map", "0:a:0"]
 
-    # Ultra-Fast Copy or Fast Transcode (No CPU-Heavy Audio Filters)
-    if input_path.lower().endswith(".mp3") and output_path.lower().endswith(".mp3"):
+    # Ultra-Fast Stream Copy: Bypass CPU Transcoding if formats match
+    in_ext = os.path.splitext(input_path)[1].lower()
+    out_ext = os.path.splitext(output_path)[1].lower()
+
+    if in_ext == out_ext:
         cmd += ["-c:a", "copy"]
+        if out_ext in (".mp4", ".mkv"):
+            cmd += ["-c:v", "copy"]
     else:
         cmd += ["-c:a", "libmp3lame", "-b:a", "128k", "-ac", "1", "-threads", "1"]
 
@@ -473,7 +478,15 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                 else:
                     clean_title = orig_title or os.path.splitext(orig_fn)[0] or orig_cap or f"{base_name} {curr_num}"
 
-                out_ext    = ".mp3" if use_ff else orig_ext
+                if use_ff:
+                    if is_audio and orig_ext.lower() in (".mp3", ".m4a", ".flac", ".wav", ".aac", ".ogg"):
+                        out_ext = orig_ext
+                    elif is_video:
+                        out_ext = orig_ext if orig_ext else ".mp4"
+                    else:
+                        out_ext = ".mp3"
+                else:
+                    out_ext = orig_ext
                 out_path   = os.path.abspath(f"temp_cl_out_{job_id}_{active_mid}{out_ext}")
                 clean_file = f"{clean_title}{out_ext}"
 
