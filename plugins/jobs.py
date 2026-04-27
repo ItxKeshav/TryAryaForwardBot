@@ -132,14 +132,12 @@ async def _lj_ensure_client_alive(client, acc: dict = None):
         logger.warning(f"[LiveJob] Client dead (attempt {attempt+1}/{3}) — reconnecting in {backoff}s…")
         _lj_last_reconnect[sname] = asyncio.get_event_loop().time()
 
-        # Clean up the dead client
+        # Clean up the dead client reference
         try:
             if sname:
                 await release_client(sname)
         except Exception: pass
-        try:
-            await client.stop()
-        except Exception: pass
+        # DO NOT manually await client.stop() here — it breaks parallel tasks using this client!
 
         # Evict stale me cache
         _lj_me_cache.pop(sname, None)
