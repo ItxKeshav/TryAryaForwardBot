@@ -631,6 +631,7 @@ async def _run_job(job_id: str, user_id: int):
         # Always resolve the source to a numeric ID and determine if it's a DM/bot
         _resolved_from_chat = from_chat
         try:
+            await safe_resolve_peer(client, from_chat, bot=BOT_INSTANCE)
             # Try resolving via the forwarding client first, fall back to main bot
             try:
                 peer_chat = await client.get_chat(from_chat)

@@ -435,6 +435,7 @@ async def _run_multijob(job_id: str, user_id: int, bot=None):
         from plugins.utils import safe_resolve_peer
 
         try:
+            await safe_resolve_peer(client, from_chat, bot=bot)
             try:
                 peer_chat = await client.get_chat(from_chat)
             except Exception:

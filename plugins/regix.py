@@ -205,8 +205,11 @@ async def pub_(bot, message):
           seq_counter = 0
           smart_order = data.get('smart_order', True)
           # SMART ORDER: Buffer up to 500 messages to sort accurately via NLP
-          limit_val = int(sts.get('limit') or 1)
-          SORT_WINDOW = min(limit_val, 500) if smart_order else 1
+          limit_val = int(sts.get('limit') or 0)
+          if not smart_order:
+              SORT_WINDOW = 1
+          else:
+              SORT_WINDOW = min(limit_val, 500) if limit_val > 0 else 500
           sort_buffer = []
           
           async def flush_buffer():
@@ -314,6 +317,9 @@ async def pub_(bot, message):
           me = await client.get_me()
           if from_chat == me.id or from_chat == me.username:
               from_chat = user
+
+          from plugins.utils import safe_resolve_peer
+          await safe_resolve_peer(client, from_chat, bot)
 
           if data.get('direct_forward', False):
               print(f"Executing DIRECT NATIVE FORWARD for {user}")

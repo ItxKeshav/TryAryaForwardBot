@@ -38,8 +38,10 @@ _cl_paused: dict[str, asyncio.Event] = {}
 _cl_waiter: dict[int, asyncio.Future] = {}
 _cl_bot_ref: dict[str, object] = {}
 _cl_cancel_users: set = set()
-MAX_CONCURRENT = 3
+MAX_CONCURRENT = 100  # Allow up to 100 jobs to run visibly without artificial blocks
 _cl_semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+_cl_dl_sem = asyncio.Semaphore(15)  # Raise limit to aggressively saturate high-end VPS speeds
+_cl_ul_sem = asyncio.Semaphore(15)
 IST_OFFSET = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 # Thread pool for FFmpeg — runs in OS threads so asyncio loop stays free
@@ -396,18 +398,19 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                 dl_timeout = min(300, max(60, fsize // (500 * 1024)))
 
                 try:
-                    # Guard: download_media sometimes returns None synchronously (not a coroutine)
-                    # when Telegram can't locate the file. Catch this before awaiting.
-                    coro = client.download_media(m, file_name=ipath)
-                    if coro is None:
-                        # Media reference is gone — skip this message, continue to next
-                        logger.warning(f"[Cleaner {job_id}] mid={m.id}: download_media returned None (media expired/deleted — skipping)")
-                        try:
-                            if os.path.exists(ipath): os.remove(ipath)
-                        except: pass
-                        continue
-
-                    dp = await asyncio.wait_for(coro, timeout=dl_timeout)
+                    async with _cl_dl_sem:
+                        # Guard: download_media sometimes returns None synchronously (not a coroutine)
+                        # when Telegram can't locate the file. Catch this before awaiting.
+                        coro = client.download_media(m, file_name=ipath)
+                        if coro is None:
+                            # Media reference is gone — skip this message, continue to next
+                            logger.warning(f"[Cleaner {job_id}] mid={m.id}: download_media returned None (media expired/deleted — skipping)")
+                            try:
+                                if os.path.exists(ipath): os.remove(ipath)
+                            except: pass
+                            continue
+    
+                        dp = await asyncio.wait_for(coro, timeout=dl_timeout)
 
                     if dp and os.path.exists(str(dp)):
                         return m, str(dp), m_obj, m.id, lbl, ext   # ✓ success
@@ -577,27 +580,28 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                     try:
                         for att in range(4):
                             try:
-                                if repl_mode:
-                                    edit_mid = repl_sid + c_done
-                                    from pyrogram.types import InputMediaAudio, InputMediaVideo
-                                    if is_ff or is_aud:
-                                        _g = await asyncio.wait_for(u_cli.send_audio("me", p_out), timeout=300)
-                                        _im = InputMediaAudio(_g.audio.file_id, caption=cap, title=c_title, performer=art, thumb=thumb)
-                                    elif is_vid:
-                                        _g = await asyncio.wait_for(u_cli.send_video("me", p_out), timeout=300)
-                                        _im = InputMediaVideo(_g.video.file_id, caption=cap, thumb=thumb)
-                                    else: break
-                                    await asyncio.wait_for(u_cli.edit_message_media(dest_ch, edit_mid, media=_im), timeout=120)
-                                    try: await _g.delete()
-                                    except: pass
-                                else:
-                                    if is_ff or is_aud:
-                                        await asyncio.wait_for(u_cli.send_audio(dest_ch, p_out, caption=cap, title=c_title, performer=art, file_name=c_file, thumb=thumb), timeout=300)
-                                    elif is_vid:
-                                        await asyncio.wait_for(u_cli.send_video(dest_ch, p_out, caption=cap, file_name=c_file, thumb=thumb), timeout=300)
+                                async with _cl_ul_sem:
+                                    if repl_mode:
+                                        edit_mid = repl_sid + c_done
+                                        from pyrogram.types import InputMediaAudio, InputMediaVideo
+                                        if is_ff or is_aud:
+                                            _g = await asyncio.wait_for(u_cli.send_audio("me", p_out), timeout=300)
+                                            _im = InputMediaAudio(_g.audio.file_id, caption=cap, title=c_title, performer=art, thumb=thumb)
+                                        elif is_vid:
+                                            _g = await asyncio.wait_for(u_cli.send_video("me", p_out), timeout=300)
+                                            _im = InputMediaVideo(_g.video.file_id, caption=cap, thumb=thumb)
+                                        else: break
+                                        await asyncio.wait_for(u_cli.edit_message_media(dest_ch, edit_mid, media=_im), timeout=120)
+                                        try: await _g.delete()
+                                        except: pass
                                     else:
-                                        await asyncio.wait_for(u_cli.send_document(dest_ch, p_out, caption=cap, file_name=c_file, thumb=thumb), timeout=300)
-                                break
+                                        if is_ff or is_aud:
+                                            await asyncio.wait_for(u_cli.send_audio(dest_ch, p_out, caption=cap, title=c_title, performer=art, file_name=c_file, thumb=thumb), timeout=300)
+                                        elif is_vid:
+                                            await asyncio.wait_for(u_cli.send_video(dest_ch, p_out, caption=cap, file_name=c_file, thumb=thumb), timeout=300)
+                                        else:
+                                            await asyncio.wait_for(u_cli.send_document(dest_ch, p_out, caption=cap, file_name=c_file, thumb=thumb), timeout=300)
+                                    break
                             except FloodWait as fw:
                                 await asyncio.sleep(fw.value + 2)
                             except Exception as ue:
