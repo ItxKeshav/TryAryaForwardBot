@@ -42,7 +42,7 @@ MAX_CONCURRENT = 100  # Allow up to 100 jobs to run visibly without artificial b
 _cl_semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 _cl_dl_sem = asyncio.Semaphore(15)  # Raise limit to aggressively saturate high-end VPS speeds
 _cl_ul_sem = asyncio.Semaphore(15)
-_cl_ff_sem = asyncio.Semaphore(2)  # Stop CPU thrashing: limit global FFmpeg concurrent processes
+_cl_ff_sem = asyncio.Semaphore(4)  # 4GB RAM VPS: allow up to 4 parallel FFmpeg processes
 IST_OFFSET = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 # Thread pool for FFmpeg — runs in OS threads so asyncio loop stays free
