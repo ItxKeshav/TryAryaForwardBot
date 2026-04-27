@@ -454,6 +454,9 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                 if _next_task and not _next_task.done(): _next_task.cancel()
                 break
 
+            if _next_task is None:
+                break
+
             try:
                 p_res = await _next_task   # waits for: find msg + full download
             except asyncio.CancelledError:
