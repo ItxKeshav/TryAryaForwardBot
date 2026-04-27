@@ -125,69 +125,76 @@ async def run(bot, message):
     elif fromid.text and not fromid.forward_date:
         regex = re.compile(r"(https://)?(t\.me/|telegram\.me/|telegram\.dog/)(c/)?(\d+|[a-zA-Z_0-9]+)/(\d+)$")
         match = regex.match(fromid.text.replace("?single", ""))
+        default_limit = None
         if match:
             chat_id = match.group(4)
-            last_msg_id = int(match.group(5))
+            default_limit = int(match.group(5))
             if chat_id.isnumeric():
                 chat_id  = int(("-100" + chat_id))
         else:
             chat_id = fromid.text.strip()
             if chat_id.lstrip('-').isdigit():
                 chat_id = int(chat_id)
-            # ── Optional topic/thread selection ──────────────────────────────
-            topic_btn = ReplyKeyboardMarkup([
-                [KeyboardButton("✅ Yᴇs, ʜᴀs ᴀ ᴛᴏᴘɪᴄ"), KeyboardButton("❌ Nᴏ ᴛᴏᴘɪᴄ")]
-            ], resize_keyboard=True, one_time_keyboard=True)
-            topic_q = await bot.ask(
+                
+        # ── Optional topic/thread selection ──────────────────────────────
+        topic_btn = ReplyKeyboardMarkup([
+            [KeyboardButton("✅ Yᴇs, ʜᴀs ᴀ ᴛᴏᴘɪᴄ"), KeyboardButton("❌ Nᴏ ᴛᴏᴘɪᴄ")]
+        ], resize_keyboard=True, one_time_keyboard=True)
+        topic_q = await bot.ask(
+            message.chat.id,
+            "<b>🗂 Topic / Thread?</b>\n\n"
+            "Is the source a <b>group topic</b>? If yes, I will filter messages from that topic only.\n"
+            "• Send the <b>thread/topic message ID</b> if Yes\n"
+            "• Or click No to forward the whole group",
+            reply_markup=topic_btn
+        )
+        if topic_q.text.startswith('/'):
+            await message.reply(await t(user_id, 'CANCEL'), reply_markup=ReplyKeyboardRemove())
+            return
+
+        from_thread = None
+        if "yes" in topic_q.text.lower() or "✅" in topic_q.text:
+            thread_msg = await bot.ask(
                 message.chat.id,
-                "<b>🗂 Topic / Thread?</b>\n\n"
-                "Is the source a <b>group topic</b>? If yes, I will filter messages from that topic only.\n"
-                "• Send the <b>thread/topic message ID</b> if Yes\n"
-                "• Or click No to forward the whole group",
-                reply_markup=topic_btn
+                "<b>Send the Topic Thread ID</b> (the message ID of the first message in the topic, usually same as topic ID):",
+                reply_markup=ReplyKeyboardRemove()
             )
-            if topic_q.text.startswith('/'):
-                await message.reply(await t(user_id, 'CANCEL'), reply_markup=ReplyKeyboardRemove())
+            if thread_msg.text.startswith('/'):
+                await message.reply(await t(user_id, 'CANCEL'))
                 return
-
-            from_thread = None
-            if "yes" in topic_q.text.lower() or "✅" in topic_q.text:
-                thread_msg = await bot.ask(
-                    message.chat.id,
-                    "<b>Send the Topic Thread ID</b> (the message ID of the first message in the topic, usually same as topic ID):",
-                    reply_markup=ReplyKeyboardRemove()
-                )
-                if thread_msg.text.startswith('/'):
-                    await message.reply(await t(user_id, 'CANCEL'))
-                    return
-                if thread_msg.text.strip().lstrip('-').isdigit():
-                    from_thread = int(thread_msg.text.strip())
-                else:
-                    await message.reply("Invalid thread ID. Continuing without topic filtering.")
-            # ─────────────────────────────────────────────────────────────────
-
-            mode_btn = ReplyKeyboardMarkup([
-                [KeyboardButton("Bᴀᴛᴄʜ"), KeyboardButton("Lɪᴠᴇ")]
-            ], resize_keyboard=True, one_time_keyboard=True)
-            mode_msg = await bot.ask(message.chat.id, await t(user_id, 'SAVED_MSG_MODE'), reply_markup=mode_btn)
-            if mode_msg.text.startswith('/'):
-                await message.reply(await t(user_id, 'CANCEL'), reply_markup=ReplyKeyboardRemove())
-                return
-            if "live" in mode_msg.text.lower() or "lɪᴠᴇ" in mode_msg.text.lower() or "2" in mode_msg.text:
-                continuous = True
-                last_msg_id = 10000000
+            if thread_msg.text.strip().lstrip('-').isdigit():
+                from_thread = int(thread_msg.text.strip())
             else:
-                limit_msg = await bot.ask(message.chat.id, await t(user_id, 'SAVED_MSG_LIMIT'), reply_markup=ReplyKeyboardRemove())
-                if limit_msg.text.startswith('/'):
-                    await message.reply(await t(user_id, 'CANCEL'))
-                    return
-                if limit_msg.text.lower() == "all":
-                     last_msg_id = 10000000
-                elif not limit_msg.text.isdigit():
-                     await message.reply("Invalid number.")
-                     return
-                else:
-                     last_msg_id = int(limit_msg.text)
+                await message.reply("Invalid thread ID. Continuing without topic filtering.")
+        # ─────────────────────────────────────────────────────────────────
+
+        mode_btn = ReplyKeyboardMarkup([
+            [KeyboardButton("Bᴀᴛᴄʜ"), KeyboardButton("Lɪᴠᴇ")]
+        ], resize_keyboard=True, one_time_keyboard=True)
+        mode_msg = await bot.ask(message.chat.id, await t(user_id, 'SAVED_MSG_MODE'), reply_markup=mode_btn)
+        if mode_msg.text.startswith('/'):
+            await message.reply(await t(user_id, 'CANCEL'), reply_markup=ReplyKeyboardRemove())
+            return
+            
+        if "live" in mode_msg.text.lower() or "lɪᴠᴇ" in mode_msg.text.lower() or "2" in mode_msg.text:
+            continuous = True
+            last_msg_id = 10000000
+        else:
+            limit_prompt = await t(user_id, 'SAVED_MSG_LIMIT')
+            if default_limit: 
+                limit_prompt = f"<b>💡 Link provided!</b> Expected limit is `{default_limit}`.\n\n" + limit_prompt
+                
+            limit_msg = await bot.ask(message.chat.id, limit_prompt, reply_markup=ReplyKeyboardRemove())
+            if limit_msg.text.startswith('/'):
+                await message.reply(await t(user_id, 'CANCEL'))
+                return
+            if limit_msg.text.lower() == "all":
+                 last_msg_id = 10000000
+            elif not limit_msg.text.isdigit():
+                 await message.reply("Invalid number.")
+                 return
+            else:
+                 last_msg_id = int(limit_msg.text)
     elif fromid.forward_from_chat and fromid.forward_from_chat.type in [enums.ChatType.CHANNEL]:
         last_msg_id = fromid.forward_from_message_id
         chat_id = fromid.forward_from_chat.username or fromid.forward_from_chat.id

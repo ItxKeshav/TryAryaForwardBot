@@ -796,7 +796,8 @@ async def is_cancelled(client, user, msg, sts):
 
 async def stop(client, user):
    try:
-     await client.stop()
+     # Do NOT stop the shared client instance here.
+     pass
    except:
      pass 
    await db.rmve_frwd(user)

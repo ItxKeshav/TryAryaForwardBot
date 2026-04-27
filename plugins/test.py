@@ -185,7 +185,12 @@ async def start_clone_bot(FwdBot, data=None, force_restart=False):
                         lo = mid
                     else:
                         hi = mid
-                except Exception:
+                except Exception as e:
+                    import logging
+                    err_str = str(e).upper()
+                    if "PEER" in err_str or "CHANNEL" in err_str or "ACCESS" in err_str:
+                        logging.getLogger(__name__).error(f"Binary search failed on {chat_id}: {e}")
+                        raise e
                     hi = mid
             top_id = hi
 
@@ -273,19 +278,20 @@ class CLIENT:
   def client(self, data, user=None):
      if user == None and data.get('is_bot') == False:
         sname = f"userbot_{data.get('id', 'temp')}"
-        return Client(sname, self.api_id, self.api_hash, session_string=data.get('session'), max_concurrent_transmissions=7, in_memory=True)
+        return Client(sname, self.api_id, self.api_hash, session_string=data.get('session'), max_concurrent_transmissions=50, in_memory=True)
      elif user == True:
         # data is session string directly, use memory temporarily (wait, add_session handles this right after)
-        return Client("temp_userbot_creation", self.api_id, self.api_hash, session_string=data, max_concurrent_transmissions=7, in_memory=True)
+        return Client("temp_userbot_creation", self.api_id, self.api_hash, session_string=data, max_concurrent_transmissions=50, in_memory=True)
      
      if user != False:
         token = data.get('token')
         sname = f"bot_{data.get('id', 'temp')}"
+        return Client(sname, self.api_id, self.api_hash, bot_token=token, max_concurrent_transmissions=50, in_memory=True)
      else:
         token = data
         sname = f"bot_{str(token).split(':')[0] if ':' in str(token) else 'temp'}"
         
-     return Client(sname, self.api_id, self.api_hash, bot_token=token, in_memory=True, max_concurrent_transmissions=7)
+     return Client(sname, self.api_id, self.api_hash, bot_token=token, in_memory=True, max_concurrent_transmissions=50)
   async def add_bot(self, bot, message):
      user_id = int(message.from_user.id)
      msg = await bot.ask(chat_id=user_id, text=BOT_TOKEN_TEXT)
