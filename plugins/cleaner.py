@@ -547,8 +547,6 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                 if use_ff:
                     ff_cmd = _build_ffmpeg_cmd(dl_path, out_path, local_cover, meta, deep_clean=deep_clean)
                     ok, ff_err = await _ffmpeg_async(ff_cmd)
-                    try: os.remove(dl_path)
-                    except: pass
                     if not ok:
                         # Distinguish skippable codec/stream errors from fatal system errors
                         _ff_skip_phrases = (
@@ -559,17 +557,23 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                         )
                         _ff_lower = ff_err.lower()
                         if any(p in _ff_lower for p in _ff_skip_phrases):
-                            logger.warning(f"[Cleaner {job_id}] mid={active_mid}: FFmpeg skipped (bad stream) — {ff_err[:120]}")
+                            logger.warning(f"[Cleaner {job_id}] mid={active_mid}: FFmpeg stream error, falling back to basic rename — {ff_err[:80]}")
                             try:
                                 if os.path.exists(out_path): os.remove(out_path)
                             except: pass
-                            # Count as processed (skip), advance checkpoint so resume doesn't re-hit it
-                            done += 1
-                            curr_num += 1
-                            await _cl_update_job(job_id, {"files_done": done, "current_msg_id": msg_id, "curr_num_checkpoint": curr_num})
-                            continue
+                            # FATAL FIX: Never skip files! Fallback to standard renaming bypassing FFmpeg
+                            out_ext = orig_ext
+                            out_path = os.path.abspath(f"temp_cl_out_{job_id}_{active_mid}{out_ext}")
+                            clean_file = f"{clean_title}{out_ext}"
+                            shutil.move(dl_path, out_path)
+                            use_ff = False  # Mark as raw file for uploader
                         else:
+                            try: os.remove(dl_path)
+                            except: pass
                             raise Exception(f"FFmpeg: {ff_err[:120]}")
+                    else:
+                        try: os.remove(dl_path)
+                        except: pass
                 else:
                     shutil.move(dl_path, out_path)
 
