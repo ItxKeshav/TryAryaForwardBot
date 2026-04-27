@@ -2032,8 +2032,6 @@ async def _ask_dest(bot, user_id: int, channels: list, step_label: str, optional
     from plugins.utils import ask_channel_picker
     
     extra = []
-    if optional:
-        extra.append("⏭ Sᴋɪᴘ (no second destination)")
     if undo_btn:
         extra.append("↩️ Uɴᴅᴏ")
         
@@ -2045,8 +2043,6 @@ async def _ask_dest(bot, user_id: int, channels: list, step_label: str, optional
     if isinstance(picked, str):
         if picked == "↩️ Uɴᴅᴏ":
             return None, None, "undo"
-        if picked == "⏭ Sᴋɪᴘ (no second destination)":
-            return None, None, False
             
     return picked['chat_id'], picked['title'], False
 
@@ -2131,7 +2127,7 @@ async def _create_job_flow(bot, user_id: int):
         if _undo(src_r.text):
             # redo step 2
             acc_r2 = await _ask(bot, user_id,
-                "<b>↩️ Redo — Step 2/7: Account</b>\n\nChoose the account again:",
+                "<b>↩️ Redo — Step 2/6: Account</b>\n\nChoose the account again:",
                 reply_markup=ReplyKeyboardMarkup(acc_btns, resize_keyboard=True, one_time_keyboard=True))
             if _cancel(acc_r2.text):
                 return await bot.send_message(user_id, "<i>Process Cancelled Successfully!</i>", reply_markup=ReplyKeyboardRemove())

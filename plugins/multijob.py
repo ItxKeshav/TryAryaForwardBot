@@ -1323,8 +1323,6 @@ async def _mj_ask_dest(bot, user_id: int, channels: list, step_label: str, optio
     from plugins.utils import ask_channel_picker
     
     extra = []
-    if optional:
-        extra.append("⏭ Sᴋɪᴘ (no second destination)")
     if undo_btn:
         extra.append("↩️ Uɴᴅᴏ")
         
@@ -1336,8 +1334,6 @@ async def _mj_ask_dest(bot, user_id: int, channels: list, step_label: str, optio
     if isinstance(picked, str):
         if picked == "↩️ Uɴᴅᴏ":
             return None, None, "undo"
-        if picked == "⏭ Sᴋɪᴘ (no second destination)":
-            return None, None, False
             
     return picked['chat_id'], picked['title'], False
 
@@ -1565,16 +1561,6 @@ async def _create_mj_flow(bot, user_id: int):
             try: start_id = int(rtext)
             except Exception: pass
 
-    # ── Step 6: Second Destination (optional) ─────────────────────
-    to_chat_2, to_title_2, cancelled2 = await _mj_ask_dest(bot, user_id, channels,
-        "<b>Step 6/6 — Second Destination (Optional)</b>\n\n"
-        "Send to a <b>second</b> channel simultaneously? Press Skip if not needed.",
-        optional=True)
-    if cancelled2 == True:
-        return
-    to_thread_2 = None
-    if to_chat_2:
-        to_thread_2 = await _mj_ask_topic(bot, user_id, "Second Destination")
 
     # ── Save & Start ──────────────────────────────────────────────
     job_id = f"mj-{user_id}-{int(time.time())}"
@@ -1595,9 +1581,6 @@ async def _create_mj_flow(bot, user_id: int):
         "to_chat":        to_chat,
         "to_title":       to_title,
         "to_thread_id":   to_thread,
-        "to_chat_2":      to_chat_2,
-        "to_title_2":     to_title_2,
-        "to_thread_id_2": to_thread_2,
         "start_id":       start_id,
         "end_id":         end_id,
         "current_id":     start_id,
