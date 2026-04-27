@@ -231,10 +231,14 @@ def _build_ffmpeg_cmd(input_path, output_path, cover_path, meta: dict, deep_clea
 # ─── Client health ────────────────────────────────────────────────────────────
 async def _ensure_alive(client):
     try:
+        if not getattr(client, "is_initialized", False):
+            await client.start()
+            return client
         if not getattr(client, "is_connected", True):
             await client.connect()
     except Exception as e:
-        logger.warning(f"[Cleaner] reconnect: {e}")
+        if "already" not in str(e).lower():
+            logger.warning(f"[Cleaner] reconnect: {e}")
     return client
 
 
@@ -556,10 +560,10 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                 # ── TRUE PARALLEL UPLOAD PIPELINE ──
                 # 1. Wait for PREVIOUS file to finish uploading (Strict Ordering)
                 if _upload_task:
-                    up_ok, up_err = await _upload_task
+                    up_ok, up_err, up_mid = await _upload_task
                     _upload_task = None
                     if not up_ok:
-                        raise Exception(f"Upload failed: {up_err}")
+                        raise Exception(f"Upload task failed (mid={up_mid}): {up_err}")
 
                 # 2. Kick off CURRENT file upload in background!
                 out_size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
@@ -597,7 +601,7 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                             except FloodWait as fw:
                                 await asyncio.sleep(fw.value + 2)
                             except Exception as ue:
-                                if att >= 3: return False, str(ue)
+                                if att >= 3: return False, str(ue), c_mid
                                 logger.warning(f"[Cleaner bg-up {job_id}] retry {att}: {ue}")
                                 u_cli = client
                                 await asyncio.sleep(3 * (att + 1))
@@ -619,9 +623,9 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                             "last_progress_ts": time.time(),
                         })
                         logger.info(f"[Cleaner {job_id}] ✓ {done} | mid={c_mid} | {c_title}")
-                        return True, None
+                        return True, None, c_mid
                     except Exception as fatal:
-                        return False, str(fatal)
+                        return False, str(fatal), c_mid
 
                 # Spawn background upload task - it runs CONCURRENTLY with next N+1 Download and N+1 FFmpeg
                 _upload_task = asyncio.create_task(
@@ -634,7 +638,15 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
             except Exception as e:
                 logger.error(f"[Cleaner {job_id}] ✗ mid={active_mid}: {e}")
                 err_msg = str(e)[:200]
-                await _cl_update_job(job_id, {"status": "paused", "error": err_msg, "current_msg_id": active_mid})
+                
+                # If we threw this exception because NEXT loop's wait-for-upload failed:
+                save_mid = active_mid
+                if "Upload task failed (mid=" in str(e):
+                    import re
+                    match = re.search(r"mid=(\d+)", str(e))
+                    if match: save_mid = int(match.group(1))
+
+                await _cl_update_job(job_id, {"status": "paused", "error": err_msg, "current_msg_id": save_mid})
                 if os.path.exists(dl_path):
                     try: os.remove(dl_path)
                     except: pass
