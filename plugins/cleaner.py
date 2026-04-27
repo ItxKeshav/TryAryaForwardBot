@@ -399,51 +399,65 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                 fsize = getattr(m_obj, 'file_size', 0) or 0
                 dl_timeout = min(300, max(60, fsize // (500 * 1024)))
 
-                try:
-                    async with _cl_dl_sem:
-                        # Guard: download_media sometimes returns None synchronously (not a coroutine)
-                        # when Telegram can't locate the file. Catch this before awaiting.
-                        coro = client.download_media(m, file_name=ipath)
-                        if coro is None:
-                            # Media reference is gone — skip this message, continue to next
-                            logger.warning(f"[Cleaner {job_id}] mid={m.id}: download_media returned None (media expired/deleted — skipping)")
+                # Retry download up to 3 times; double timeout each attempt
+                _dl_success = False
+                for _dl_attempt in range(3):
+                    _attempt_timeout = dl_timeout * (2 ** _dl_attempt)  # 60s → 120s → 240s
+                    try:
+                        async with _cl_dl_sem:
+                            coro = client.download_media(m, file_name=ipath)
+                            if coro is None:
+                                logger.warning(f"[Cleaner {job_id}] mid={m.id}: download_media returned None (expired) — skipping")
+                                try:
+                                    if os.path.exists(ipath): os.remove(ipath)
+                                except: pass
+                                break  # skip this message
+
+                            dp = await asyncio.wait_for(coro, timeout=_attempt_timeout)
+
+                        if dp and os.path.exists(str(dp)):
+                            _dl_success = True
+                            break  # ✓ downloaded successfully
+                        else:
+                            logger.warning(f"[Cleaner {job_id}] mid={m.id}: download resolved to None (expired) — skipping")
                             try:
                                 if os.path.exists(ipath): os.remove(ipath)
                             except: pass
+                            break  # skip, try next message
+
+                    except asyncio.TimeoutError:
+                        try:
+                            if os.path.exists(ipath): os.remove(ipath)
+                        except: pass
+                        logger.warning(f"[Cleaner {job_id}] mid={m.id}: download timeout attempt {_dl_attempt+1}/3 (>{_attempt_timeout}s)")
+                        if _dl_attempt < 2:
+                            await asyncio.sleep(5 * (_dl_attempt + 1))
+                            continue  # retry
+                        else:
+                            logger.warning(f"[Cleaner {job_id}] mid={m.id}: all 3 download attempts timed out — skipping file")
+                            break  # skip after 3 failures
+
+                    except Exception as e:
+                        err_upper = str(e).upper()
+                        try:
+                            if os.path.exists(ipath): os.remove(ipath)
+                        except: pass
+                        if any(x in err_upper for x in ("FILE_REFERENCE_EXPIRED", "FILE_ID_INVALID", "MSG_ID_INVALID", "MEDIA_EMPTY")):
+                            logger.warning(f"[Cleaner {job_id}] mid={m.id}: media reference expired ({e}) — skipping")
+                            break  # skip
+                        # Network/auth error — retry
+                        logger.warning(f"[Cleaner {job_id}] mid={m.id}: download error attempt {_dl_attempt+1}/3: {e}")
+                        if _dl_attempt < 2:
+                            await asyncio.sleep(5 * (_dl_attempt + 1))
                             continue
-    
-                        dp = await asyncio.wait_for(coro, timeout=dl_timeout)
+                        else:
+                            logger.warning(f"[Cleaner {job_id}] mid={m.id}: all 3 download attempts failed — skipping file")
+                            break
 
-                    if dp and os.path.exists(str(dp)):
-                        return m, str(dp), m_obj, m.id, lbl, ext   # ✓ success
-                    else:
-                        # download completed but returned None (e.g. Telegram purged the file)
-                        logger.warning(f"[Cleaner {job_id}] mid={m.id}: download_media resolved to None (media expired — skipping)")
-                        try:
-                            if os.path.exists(ipath): os.remove(ipath)
-                        except: pass
-                        continue  # skip, try next message
+                if not _dl_success:
+                    continue  # skip to next message in range
 
-                except asyncio.TimeoutError:
-                    try:
-                        if os.path.exists(ipath): os.remove(ipath)
-                    except: pass
-                    raise Exception(f"Download timed out (>{dl_timeout}s) for mid={m.id}")
-
-                except Exception as e:
-                    err_upper = str(e).upper()
-                    # Media-gone errors: skip silently, don't pause the job
-                    if any(x in err_upper for x in ("FILE_REFERENCE_EXPIRED", "FILE_ID_INVALID", "MSG_ID_INVALID", "MEDIA_EMPTY")):
-                        logger.warning(f"[Cleaner {job_id}] mid={m.id}: media reference expired ({e}) — skipping")
-                        try:
-                            if os.path.exists(ipath): os.remove(ipath)
-                        except: pass
-                        continue
-                    # All other errors (network, auth, flood) → pause job
-                    try:
-                        if os.path.exists(ipath): os.remove(ipath)
-                    except: pass
-                    raise Exception(f"Download error at mid={m.id}: {type(e).__name__}: {e}")
+                return m, str(dp), m_obj, m.id, lbl, ext   # ✓ success
 
             return None  # no more messages in range
 
