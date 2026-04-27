@@ -558,7 +558,26 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                     try: os.remove(dl_path)
                     except: pass
                     if not ok:
-                        raise Exception(f"FFmpeg: {ff_err[:120]}")
+                        # Distinguish skippable codec/stream errors from fatal system errors
+                        _ff_skip_phrases = (
+                            "invalid audio stream", "no audio", "invalid data",
+                            "could not find codec", "decoder not found", "encoder not found",
+                            "invalid stream", "no such file", "invalid argument",
+                            "moov atom not found", "end of file", "connection refused",
+                        )
+                        _ff_lower = ff_err.lower()
+                        if any(p in _ff_lower for p in _ff_skip_phrases):
+                            logger.warning(f"[Cleaner {job_id}] mid={active_mid}: FFmpeg skipped (bad stream) — {ff_err[:120]}")
+                            try:
+                                if os.path.exists(out_path): os.remove(out_path)
+                            except: pass
+                            # Count as processed (skip), advance checkpoint so resume doesn't re-hit it
+                            done += 1
+                            curr_num += 1
+                            await _cl_update_job(job_id, {"files_done": done, "current_msg_id": msg_id, "curr_num_checkpoint": curr_num})
+                            continue
+                        else:
+                            raise Exception(f"FFmpeg: {ff_err[:120]}")
                 else:
                     shutil.move(dl_path, out_path)
 
