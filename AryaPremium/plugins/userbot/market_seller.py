@@ -30,6 +30,17 @@ logger = logging.getLogger(__name__)
 market_clients: dict = {}
 dm_aborts = set()
 
+def _sc(val): return to_smallcap(str(val))
+def _bs(val): return f"<b>{val}</b>"
+def to_mathbold(val): return f"<b>{val}</b>"
+
+def _is_cancel(msg):
+    if not msg: return False
+    if hasattr(msg, "data") and msg.data == "ask_cancel": return True
+    txt = (getattr(msg, 'text', '') or '').lower()
+    # Support both standard and smallcap "cancel"
+    return "cancel" in txt or "c\u1d00\u0274\u1d04\u1d07\u029f" in txt or "/cancel" in txt or "back" in txt
+
 
 def _clean_upi_note(s: str) -> str:
     # Keep it short + app-compatible.
