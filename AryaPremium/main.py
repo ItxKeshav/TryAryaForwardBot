@@ -46,7 +46,7 @@ async def main():
 
     # ── 2. Load Store Bots ──
     try:
-        from plugins.userbot.market_seller import market_clients, _process_start, _process_screenshot, _process_callback, _process_text, _process_my_stories, _process_chat_member
+        from plugins.userbot.market_seller import market_clients, _process_start, _process_screenshot, _process_callback, _process_text, _process_media, _process_my_stories, _process_chat_member
         from pyrogram.handlers import MessageHandler, CallbackQueryHandler, ChatMemberUpdatedHandler
         from utils import setup_ask_router
         
@@ -67,7 +67,8 @@ async def main():
             setup_ask_router(cli)
             cli.add_handler(MessageHandler(_process_start, filters.command("start") & filters.private))
             cli.add_handler(MessageHandler(_process_my_stories, filters.command(["mystories", "stories"]) & filters.private))
-            cli.add_handler(MessageHandler(_process_screenshot, filters.photo & filters.private))
+            # Media handler (feedback + screenshot) — must come before _process_screenshot
+            cli.add_handler(MessageHandler(_process_media, (filters.photo | filters.video | filters.animation | filters.document) & filters.private))
             cli.add_handler(MessageHandler(_process_text, filters.text & filters.private))
             cli.add_handler(CallbackQueryHandler(_process_callback, filters.regex(r'^mb#')))
             cli.add_handler(ChatMemberUpdatedHandler(_process_chat_member))

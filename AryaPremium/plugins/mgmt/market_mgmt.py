@@ -1,4 +1,4 @@
-﻿"""
+"""
 Management UI for Arya Premium
 ==============================
 Provides the exact Batch-Links style Inline Keyboard Menu 
@@ -258,10 +258,12 @@ async def market_callback(client, query):
 
         elif cmd.startswith("fbreply_"):
             # format: fbreply_{fb_id}_{user_id}
-            parts_r = cmd.split("_", 2)
-            fb_id = parts_r[1] if len(parts_r) > 1 else ""
-            target_uid = int(parts_r[2]) if len(parts_r) > 2 else 0
-            await query.message.delete()
+            # Use rsplit to safely extract user_id from the end
+            suffix = cmd[len("fbreply_"):]
+            parts_r = suffix.rsplit("_", 1)  # split on LAST underscore => [fb_id, user_id]
+            fb_id = parts_r[0] if len(parts_r) > 0 else ""
+            target_uid = int(parts_r[1]) if len(parts_r) > 1 and parts_r[1].isdigit() else 0
+            await _safe_answer(query)  # just ack the tap, don't delete message
             asyncio.create_task(_fb_reply_flow(client, user_id, fb_id, target_uid))
 
         elif cmd.startswith("reqs_"):
