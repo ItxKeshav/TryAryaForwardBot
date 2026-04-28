@@ -1,4 +1,4 @@
-"""
+﻿"""
 Management UI for Arya Premium
 ==============================
 Provides the exact Batch-Links style Inline Keyboard Menu 
@@ -1843,51 +1843,36 @@ async def _edit_story_flow(client, user_id, s_id, action):
                         from plugins.userbot.market_seller import market_clients
                         store_cli = market_clients.get(str(story.get("bot_id")))
                         if store_cli:
-                            # To maximize reach for marketing, send to all global system users 
-                            # (Marketplace bots use the main `users` collection)
                             bot_users = await db.db.users.find({}, {"id": 1}).to_list(length=None)
-                            
                             story_name = story.get('story_name_en', 'Premium Story')
-                            trend = "DECREASED 📉" if new_price < old_price else "INCREASED 📈"
-                            msg_text = (
-                                f"<b>📢 Price Update Alert!</b>\n\n"
-                                f"📖 <b>Story:</b> {story_name}\n"
-                                f"💸 <b>Price {trend}</b>\n\n"
-                                f"❌ Old Price: ₹{old_price}\n"
-                                f"✅ <b>New Price: ₹{new_price}</b>\n\n"
-                                f"<i>Go to the main menu to grab it now!</i>"
-                            )
-                            
+                            trend = "DECREASED" if new_price < old_price else "INCREASED"
+                            msg_text = (f"<b>Price Update</b>\n\nStory: {story_name}\nOld: \u20b9{old_price}  New: \u20b9{new_price}")
                             sent = 0
                             for u in bot_users:
                                 uid_int = u.get("id")
                                 if uid_int:
                                     try:
-                                        await store_cli.send_message(uid_int, msg_text)
+                                        await store_cli.send_message(uid_int, msg_text, parse_mode=enums.ParseMode.HTML)
                                         sent += 1
                                         await asyncio.sleep(0.05)
                                     except Exception:
                                         pass
-                    await client.send_message(user_id, f"✅ Broadcasting completed. Sent to {sent} users.",
-                        reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("« Back to Story", callback_data=f"mk#st_view_{s_id}"),
-                            InlineKeyboardButton("« Story List", callback_data="mk#ms_list_0")
-                        ]]), parse_mode=enums.ParseMode.HTML)
+                            await client.send_message(user_id, f"<b>Broadcast complete.</b> Sent to {sent} users.",
+                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back to Story", callback_data=f"mk#st_view_{s_id}"), InlineKeyboardButton("Story List", callback_data="mk#ms_list_0")]]),
+                                parse_mode=enums.ParseMode.HTML)
                         else:
-                            await client.send_message(user_id, "⚠️ Store bot is offline. Could not send broadcast.",
-                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back to Story", callback_data=f"mk#st_view_{s_id}")]]),
+                            await client.send_message(user_id, "Store bot is offline.",
+                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back to Story", callback_data=f"mk#st_view_{s_id}")]]),
                                 parse_mode=enums.ParseMode.HTML)
                     except Exception as e:
                         logger.error(f"Broadcast error: {e}")
-                        await client.send_message(user_id, "⚠️ Error during broadcast.",
-                            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back to Story", callback_data=f"mk#st_view_{s_id}")]]),
+                        await client.send_message(user_id, "Error during broadcast.",
+                            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back to Story", callback_data=f"mk#st_view_{s_id}")]]),
                             parse_mode=enums.ParseMode.HTML)
                 else:
-                    await client.send_message(user_id, f"✅ <b>Price updated to ₹{new_price}.</b> (No broadcast sent)",
-                        reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("« Back to Story", callback_data=f"mk#st_view_{s_id}"),
-                            InlineKeyboardButton("« Story List", callback_data="mk#ms_list_0")
-                        ]]), parse_mode=enums.ParseMode.HTML)
+                    await client.send_message(user_id, f"Price updated to \u20b9{new_price}. (No broadcast)",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back to Story", callback_data=f"mk#st_view_{s_id}"), InlineKeyboardButton("Story List", callback_data="mk#ms_list_0")]]),
+                        parse_mode=enums.ParseMode.HTML)
                 return
         elif action == "name":
             name_en = utils.translate_to_english(msg.text)
