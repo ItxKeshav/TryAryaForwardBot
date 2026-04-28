@@ -1632,36 +1632,12 @@ async def _show_about_arya(client, query, page: int):
     await _safe_edit(query.message, text=txt, markup=InlineKeyboardMarkup(kb))
 
 
-async def _show_help_menu(client, query, page: int):
-    if page == 0:
-        txt = (
-            f"<b>⟦ {_sc('SUPPORT & HELP CENTER')} ⟧</b>\n\n"
-            f"<blockquote expandable>"
-            f"<i>{_sc('Welcome to the detailed guide for using Arya Premium.')}</i>\n\n"
-            f"<u>{_sc('COMMANDS:')}</u>\n"
-            f"• /start — {_sc('Launches the main interface menu.')}\n\n"
-            f"<u>{_sc('MENU BUTTONS:')}</u>\n"
-            f"• <b>{_sc('Marketplace:')}</b> {_sc('Browse all available stories filtered by platform.')}\n"
-            f"• <b>{_sc('My Stories:')}</b> {_sc('Access your previously purchased stories. You can instantly redownload them from here.')}\n"
-            f"• <b>{_sc('Profile:')}</b> {_sc('View your account details, Telegram ID, and purchase count.')}\n"
-            f"• <b>{_sc('Settings:')}</b> {_sc('Change your preferred bot language.')}\n\n"
-            f"<u>{_sc('HOW TO BUY:')}</u>\n"
-            f"<i><b>1.</b></i> {_sc('Find a story in the Marketplace.')}\n"
-            f"<i><b>2.</b></i> {_sc('Choose to pay securely via Razorpay (Instant) or Manual UPI.')}\n"
-            f"<i><b>3.</b></i> {_sc('For UPI, send the exact amount to the provided details and upload your screenshot.')}\n"
-            f"<i><b>4.</b></i> {_sc('Once verified, tap ')}<b>{_sc('Get Delivery')}</b> {_sc('and choose your method (Direct DM or Secure Channel Invite).')}\n\n"
-            f"<i>{_sc('For technical issues, use the Terms & Refund buttons below.')}</i>"
-            f"</blockquote>"
-        )
-        kb = [
-            [InlineKeyboardButton(f"{_sc('TERMS')}", callback_data="mb#help_tc"),
-             InlineKeyboardButton(f"{_sc('REFUND')}", callback_data="mb#help_refund"),
-             InlineKeyboardButton(_sc("Direct Support"), url="https://t.me/ItsNewtonPlanet")],
-            [InlineKeyboardButton(f"💬 {_sc('FEEDBACK / SUGGESTIONS')}", callback_data="mb#feedback_start")],
-            [InlineKeyboardButton(f"हिंदी (NEXT) ❭", callback_data="mb#help_page_1")],
-            [InlineKeyboardButton(f"« ❮ {_sc('MAIN MENU')}", callback_data="mb#main_back")]
-        ]
-    else:
+async def _show_help_menu(client, query):
+    user_id = query.from_user.id
+    user = await db.get_user(user_id)
+    lang = user.get('lang', 'en')
+
+    if lang == 'hi':
         txt = (
             f"<b>⟦ {_sc('सपोर्ट एवं सहायता केंद्र')} ⟧</b>\n\n"
             f"<blockquote expandable>"
@@ -1683,10 +1659,36 @@ async def _show_help_menu(client, query, page: int):
         )
         kb = [
             [InlineKeyboardButton(f"{_sc('TERMS')}", callback_data="mb#help_tc"),
-             InlineKeyboardButton(f"{_sc('REFUND')}", callback_data="mb#help_refund"),
-             InlineKeyboardButton(_sc("Support Chat"), url="https://t.me/ItsNewtonPlanet")],
+             InlineKeyboardButton(f"{_sc('REFUND')}", callback_data="mb#help_refund")],
             [InlineKeyboardButton(f"💬 {_sc('FEEDBACK / SUGGESTIONS')}", callback_data="mb#feedback_start")],
-            [InlineKeyboardButton(f"❬ PREV (English)", callback_data="mb#help_page_0")],
+            [InlineKeyboardButton(_sc("Contact Support"), url="https://t.me/ItsNewtonPlanet")],
+            [InlineKeyboardButton(f"« ❮ {_sc('MAIN MENU')}", callback_data="mb#main_back")]
+        ]
+    else:
+        txt = (
+            f"<b>⟦ {_sc('SUPPORT & HELP CENTER')} ⟧</b>\n\n"
+            f"<blockquote expandable>"
+            f"<i>{_sc('Welcome to the detailed guide for using Arya Premium.')}</i>\n\n"
+            f"<u>{_sc('COMMANDS:')}</u>\n"
+            f"• /start — {_sc('Launches the main interface menu.')}\n\n"
+            f"<u>{_sc('MENU BUTTONS:')}</u>\n"
+            f"• <b>{_sc('Marketplace:')}</b> {_sc('Browse all available stories filtered by platform.')}\n"
+            f"• <b>{_sc('My Stories:')}</b> {_sc('Access your previously purchased stories. You can instantly redownload them from here.')}\n"
+            f"• <b>{_sc('Profile:')}</b> {_sc('View your account details, Telegram ID, and purchase count.')}\n"
+            f"• <b>{_sc('Settings:')}</b> {_sc('Change your preferred bot language.')}\n\n"
+            f"<u>{_sc('HOW TO BUY:')}</u>\n"
+            f"<i><b>1.</b></i> {_sc('Find a story in the Marketplace.')}\n"
+            f"<i><b>2.</b></i> {_sc('Choose to pay securely via Razorpay (Instant) or Manual UPI.')}\n"
+            f"<i><b>3.</b></i> {_sc('For UPI, send the exact amount to the provided details and upload your screenshot.')}\n"
+            f"<i><b>4.</b></i> {_sc('Once verified, tap ')}<b>{_sc('Get Delivery')}</b> {_sc('and choose your method (Direct DM or Secure Channel Invite).')}\n\n"
+            f"<i>{_sc('For technical issues, use the Terms & Refund buttons below.')}</i>"
+            f"</blockquote>"
+        )
+        kb = [
+            [InlineKeyboardButton(f"{_sc('TERMS')}", callback_data="mb#help_tc"),
+             InlineKeyboardButton(f"{_sc('REFUND')}", callback_data="mb#help_refund")],
+            [InlineKeyboardButton(f"💬 {_sc('FEEDBACK / SUGGESTIONS')}", callback_data="mb#feedback_start")],
+            [InlineKeyboardButton(_sc("Contact Support"), url="https://t.me/ItsNewtonPlanet")],
             [InlineKeyboardButton(f"« ❮ {_sc('MAIN MENU')}", callback_data="mb#main_back")]
         ]
         
@@ -1748,11 +1750,10 @@ async def _process_callback(client, query):
         await query.answer()
         return await _show_about_arya(client, query, page)
 
-    # ── Help Menu Pagination ──
+    # ── Help Menu Pagination (Legacy fallback) ──
     if cmd.startswith("help_page_"):
-        page = int(cmd.replace("help_page_", ""))
         await query.answer()
-        return await _show_help_menu(client, query, page)
+        return await _show_help_menu(client, query)
 
     # ── Main Menu actions (inline buttons) ──
     if cmd.startswith("main_"):
@@ -1843,7 +1844,7 @@ async def _process_callback(client, query):
             await _safe_edit(query.message, text=settings_txt, markup=InlineKeyboardMarkup(kb))
 
         elif action == "help":
-            return await _show_help_menu(client, query, 0)
+            return await _show_help_menu(client, query)
 
         elif action == "close":
             await query.message.delete()
