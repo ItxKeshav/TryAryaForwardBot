@@ -2194,24 +2194,34 @@ async def _create_flow(bot, uid, mtype="audio"):
         def _clean_out_name(raw: str) -> str:
             import re as _re
             s = raw.strip()
-            # Replace episode-range separators: digits separated by / or _ → digits-hyphen-digits
-            # e.g. "31/32" → "31-32", "31_32" → "31-32"
-            s = _re.sub(r'(\d+)[/_](\d+)', r'\1-\2', s)
-            # Strip forbidden filesystem chars (do NOT replace with underscore)
+            # Step 1: digit/digit or digit_digit (ONLY between digits) → digit-digit
+            # "31/32" → "31-32", "95_96" → "95-96"
+            s = _re.sub(r'(?<=\d)[/_](?=\d)', '-', s)
+            # Step 2: all remaining underscores → space
+            s = s.replace('_', ' ')
+            # Step 3: strip forbidden filesystem chars
             s = _re.sub(r'[<>:"/\\|?*]', '', s)
-            # Collapse multiple spaces/underscores to single space
-            s = _re.sub(r'[ _]{2,}', ' ', s)
-            # Ensure separator between ep-num and story name is " - " (not "- " or " -")
-            s = _re.sub(r'\s*-\s*', ' - ', s)
-            # Title-case the story name part (everything after the last " - ")
+            # Step 4: collapse multiple spaces
+            s = _re.sub(r' {2,}', ' ', s).strip()
+            # Step 5a: if leading ep-number already has a hyphen separator before text, normalize it
+            # "31-32- Ishq" or "31- Ishq" → keep reading; "31-32 - Ishq" → already correct
+            s = _re.sub(r'^(\d+(?:-\d+)?)\s*-\s*(?=[A-Za-z])', r'\1 - ', s)
+            # Step 5b: if leading ep-number has NO separator before story text, add " - "
+            # "31 Ishq Ki Baazi" → "31 - Ishq Ki Baazi"
+            # "95-96 Ishq Ki Baazi" → "95-96 - Ishq Ki Baazi"
+            # (only if no " - " separator yet)
+            if not _re.match(r'^\d+(?:-\d+)? - ', s):
+                s = _re.sub(r'^(\d+(?:-\d+)?)\s+([A-Za-z])', r'\1 - \2', s)
+            # Step 6: Title Case the story name (after last " - ")
             if ' - ' in s:
                 prefix, story = s.rsplit(' - ', 1)
-                story = story.title()
+                story = ' '.join(w.capitalize() for w in story.split())
                 s = f"{prefix} - {story}"
             else:
-                s = s.title()
+                s = ' '.join(w.capitalize() for w in s.split())
             return s.strip()
         out_name = _clean_out_name(msg.text.strip())
+
 
 
         # Scan files for total size and duration
