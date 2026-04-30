@@ -599,6 +599,11 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                 is_photo = bool(msg.photo)
                 use_ff   = conv_vid if is_video else (not is_photo)
 
+                # Ad Inject Only: skip full FFmpeg cleaning (re-encode/normalize/metadata)
+                # Only the ad-injection FFmpeg pass is needed — saves 10-15 min per file on VPS
+                if job.get("ad_inject_only"):
+                    use_ff = False
+
                 orig_fn    = getattr(m_obj, 'file_name', '') or ''
                 orig_title = getattr(m_obj, 'title', '') or ''
                 orig_cap   = (getattr(msg, 'caption', '') or '').strip()
