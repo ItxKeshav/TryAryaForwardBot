@@ -1371,6 +1371,10 @@ async def _create_cl_flow(bot, user_id):
         if _cancelled(r_cap): return await _abort()
         use_caption = "no, empty" not in (r_cap.text or "").lower()
 
+    # Always load defaults before ads section (needed in both full and ad_inject_only modes)
+    if ad_inject_only:
+        df = await _cl_get_defaults(user_id)
+
     # Audio Ad Injection — 4 types, individual skip, duration-aware
     r_ads = await _cl_ask(bot, user_id,
         "<b>» Step 10/10 — Inject Audio Ads? (Premium)</b>\n\n"
