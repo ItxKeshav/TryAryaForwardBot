@@ -157,11 +157,19 @@ async def market_callback(client, query):
         elif cmd == "settings":
             if "query" in locals() and query:
                 await query.answer()
+            groq_key_raw = await db.get_config("groq_api_key")
+            groq_status = f"✅ Set ({(groq_key_raw or '')[:8]}…)" if groq_key_raw else "❌ Not Set"
             kb = [
                 [InlineKeyboardButton("💳 Set UPI ID", callback_data="mk#set_upi")],
+                [InlineKeyboardButton(f"🤖 Groq AI Key [{groq_status}]", callback_data="mk#set_groq")],
                 [InlineKeyboardButton("« Back", callback_data="mk#back")]
             ]
-            await query.message.edit_text("<b>⚙️ Ecosystem Settings</b>\n\nConfigure your global payment settings here. Channel management is available in Channels.", reply_markup=InlineKeyboardMarkup(kb))
+            await query.message.edit_text(
+                "<b>⚙️ Ecosystem Settings</b>\n\n"
+                "Configure global payment settings and AI integrations here.\n"
+                "<i>Groq AI Key powers smart Hindi transliteration and description translation in story creation.</i>",
+                reply_markup=InlineKeyboardMarkup(kb)
+            )
 
         # ── Support Panel (Feedback/Suggestions) ──
         elif cmd.startswith("fb_panel_"):
@@ -420,9 +428,31 @@ async def market_callback(client, query):
                 await query.answer()
             return await _render_home(client, user_id, edit_message=query.message)
 
-        elif cmd in ["set_upi"]:
+        elif cmd in ["set_upi", "set_groq"]:
             await query.message.delete()
             asyncio.create_task(_settings_flow(client, user_id, cmd))
+
+        elif cmd.startswith("st_pay_methods_"):
+            # Toggle payment methods for a story: mk#st_pay_methods_<s_id>_<method>
+            parts = cmd.split("_")
+            # format: st_pay_methods_<s_id>_<method> where s_id is parts[3] and method is parts[4]
+            s_id = parts[3]
+            method = parts[4]  # 'upi' or 'razorpay'
+            from bson.objectid import ObjectId
+            story = await db.db.premium_stories.find_one({"_id": ObjectId(s_id)})
+            if not story:
+                return await _safe_answer(query, "Story not found!", show_alert=True)
+            current = story.get("payment_methods", ["upi", "razorpay"])
+            if method in current:
+                if len(current) <= 1:
+                    return await _safe_answer(query, "⚠️ At least one payment method must remain enabled!", show_alert=True)
+                current.remove(method)
+            else:
+                current.append(method)
+            await db.db.premium_stories.update_one({"_id": ObjectId(s_id)}, {"$set": {"payment_methods": current}})
+            # Reload the story view
+            query.data = f"mk#st_view_{s_id}"
+            return await market_callback(client, query)
 
         # ── Channels System ──
         elif cmd == "channels":
@@ -924,6 +954,11 @@ async def market_callback(client, query):
             desc_raw  = (story.get('description') or '').strip()
             desc      = desc_raw[:200] + ('...' if len(desc_raw) > 200 else '') if desc_raw else 'N/A'
 
+            # Payment methods display
+            pay_methods = story.get('payment_methods', ['upi', 'razorpay'])
+            upi_icon = '✅' if 'upi' in pay_methods else '❌'
+            rzp_icon = '✅' if 'razorpay' in pay_methods else '❌'
+
             detail_txt = (
                 f"<b>⟦ {sname_en} ⟧</b>\n\n"
                 f"<blockquote>"
@@ -933,6 +968,7 @@ async def market_callback(client, query):
                 f"<b>⨉ Genre       ⟶</b> {genre}\n"
                 f"<b>⨉ Episodes    ⟶</b> {episodes}\n"
                 f"<b>⨉ Status      ⟶</b> {status}\n"
+                f"<b>⨉ Payments    ⟶</b> UPI {upi_icon}  Razorpay {rzp_icon}\n"
                 f"<b>⨉ DB ID       ⟶</b> <code>{s_id}</code>"
                 f"</blockquote>\n\n"
                 f"<i>{desc}</i>\n\n"
@@ -948,6 +984,9 @@ async def market_callback(client, query):
                 [InlineKeyboardButton("Genre", callback_data=f"mk#st_edit_{s_id}_genre"),
                  InlineKeyboardButton("Episodes", callback_data=f"mk#st_edit_{s_id}_episodes")],
                 [InlineKeyboardButton("DB Range", callback_data=f"mk#st_edit_{s_id}_eps")],
+                # Payment method toggles
+                [InlineKeyboardButton(f"{upi_icon} Manual UPI", callback_data=f"mk#st_pay_methods_{s_id}_upi"),
+                 InlineKeyboardButton(f"{rzp_icon} Razorpay", callback_data=f"mk#st_pay_methods_{s_id}_razorpay")],
                 [InlineKeyboardButton("Remove Story", callback_data=f"mk#st_confirm_rm_{s_id}")],
                 [InlineKeyboardButton("« Back", callback_data="mk#ms_list_0")],
             ]
@@ -1401,6 +1440,36 @@ async def _settings_flow(client, user_id, cmd):
             return await client.send_message(user_id, "<i>Process Cancelled Successfully!</i>")
         await db.set_config("upi_id", msg.text.strip())
         await client.send_message(user_id, f"✅ UPI ID updated to <code>{msg.text.strip()}</code>", reply_markup=ReplyKeyboardRemove())
+
+    elif cmd == "set_groq":
+        from pyrogram.types import CallbackQuery as _CQ
+        current_key = await db.get_config("groq_api_key")
+        current_hint = f"\n\n<i>Current key: <code>{(current_key or '')[:12]}…</code></i>" if current_key else ""
+        msg = await native_ask(
+            client, user_id,
+            f"<b>❪ SET GROQ AI API KEY ❫</b>{current_hint}\n\n"
+            "Enter your Groq API key (from <a href='https://console.groq.com/keys'>console.groq.com</a>):\n"
+            "<i>This is used for smart Hindi transliteration and description translation in story creation.</i>",
+            reply_markup=cancel_kb
+        )
+        if isinstance(msg, _CQ) or not getattr(msg, 'text', None):
+            return await client.send_message(user_id, "<i>Cancelled. Groq key unchanged.</i>")
+        new_key = msg.text.strip()
+        if not new_key.startswith("gsk_"):
+            return await client.send_message(
+                user_id,
+                "❌ Invalid Groq API key format. Keys start with <code>gsk_</code>. Please try again.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Settings", callback_data="mk#settings")]]),
+                parse_mode=enums.ParseMode.HTML
+            )
+        await db.set_config("groq_api_key", new_key)
+        await client.send_message(
+            user_id,
+            f"✅ <b>Groq AI Key saved!</b>\n<code>{new_key[:12]}…</code>\n\n"
+            "<i>New stories and edits will now use Groq AI for Hindi transliteration and translation.</i>",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Settings", callback_data="mk#settings")]]),
+            parse_mode=enums.ParseMode.HTML
+        )
         
     elif cmd == "set_db":
         await client.send_message(user_id, "Channels are now managed from the Channels panel.", reply_markup=ReplyKeyboardRemove())
@@ -1568,15 +1637,15 @@ async def _add_story_flow(client, user_id):
 
         # Meta Data
         # Meta Data
-        msg_name_en = await native_ask(client, user_id, "<b>❪ STEP 5: STORY NAME ❫</b>\n\nEnter the story name:\n<i>(It will be translated automatically)</i>", reply_markup=cancel_kb)
+        msg_name_en = await native_ask(client, user_id, "<b>❪ STEP 5: STORY NAME ❫</b>\n\nEnter the story name:\n<i>(Groq AI will transliterate to Hindi automatically)</i>", reply_markup=cancel_kb)
         if getattr(msg_name_en, 'text', None) and "Cᴀɴᴄᴇʟ" in msg_name_en.text:
             return await client.send_message(user_id, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
         
         name_input = (msg_name_en.text or "").strip()
-        waiting_msg = await client.send_message(user_id, "⏳ <i>Automatically normalizing name...</i>")
+        waiting_msg = await client.send_message(user_id, "⏳ <i>Processing name with Groq AI...</i>")
         sj['story_name_en'] = utils.translate_to_english(name_input)
-        # Always use transliteration for the Title to preserve recognition
-        sj['story_name_hi'] = utils.transliterate_to_hindi(name_input)
+        # Use Groq AI for accurate Hindi transliteration
+        sj['story_name_hi'] = await utils.groq_transliterate_hindi(name_input)
         await waiting_msg.delete()
 
         # ── Hindi name confirmation ───────────────────────────────────────────
@@ -1639,10 +1708,10 @@ async def _add_story_flow(client, user_id):
             return await client.send_message(user_id, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
         
         desc_input = (msg_desc.text or "None").strip()
-        waiting_msg = await client.send_message(user_id, "⏳ <i>Automatically translating description...</i>")
+        waiting_msg = await client.send_message(user_id, "⏳ <i>Translating description with Groq AI...</i>")
         sj['description'] = utils.translate_to_english(desc_input)
-        # Use meaning-based translation for Descriptions
-        sj['description_hi'] = utils.smart_translate_meaning(desc_input)
+        # Use Groq AI for description translation (with fallback)
+        sj['description_hi'] = await utils.groq_translate_description(desc_input, target_lang='hi')
         await waiting_msg.delete()
 
         msg_eps = await native_ask(client, user_id, "<b>❪ STEP 6.3: EPISODES ❫</b>\n\nHow many episodes? e.g. '595 / 595' or '100+':", reply_markup=cancel_kb)
@@ -1675,6 +1744,30 @@ async def _add_story_flow(client, user_id):
                 break
             except Exception:
                 await client.send_message(user_id, "❌ Price must be a positive number.")
+
+        # ── Payment Methods Selection ──────────────────────────────────────────
+        pay_kb = ReplyKeyboardMarkup(
+            [["✅ Both (UPI + Razorpay)"], ["🏦 Manual UPI Only"], ["💳 Razorpay Only"], ["⛔ Cᴀɴᴄᴇʟ"]],
+            resize_keyboard=True, one_time_keyboard=True
+        )
+        msg_pay = await native_ask(
+            client, user_id,
+            "<b>❪ STEP 7.5: PAYMENT METHODS ❫</b>\n\n"
+            "Choose which payment methods to enable for this story:\n"
+            "<i>• Both: Show UPI and Razorpay (default)\n"
+            "• Manual UPI Only: Only manual screenshot verification\n"
+            "• Razorpay Only: Auto gateway payment only</i>",
+            reply_markup=pay_kb
+        )
+        if getattr(msg_pay, 'text', None) and "Cᴀɴᴄᴇʟ" in msg_pay.text:
+            return await client.send_message(user_id, "<i>Cancelled!</i>", reply_markup=ReplyKeyboardRemove())
+        pay_choice = (msg_pay.text or "").strip()
+        if "UPI Only" in pay_choice:
+            sj["payment_methods"] = ["upi"]
+        elif "Razorpay Only" in pay_choice:
+            sj["payment_methods"] = ["razorpay"]
+        else:
+            sj["payment_methods"] = ["upi", "razorpay"]  # default: both
 
         pf_kb = ReplyKeyboardMarkup([["Pocket FM", "Kuku FM"], ["Kuku TV", "Other"], ["⛔ Cᴀɴᴄᴇʟ"]], resize_keyboard=True)
         msg_plat = await native_ask(client, user_id, "<b>❪ STEP 8: PLATFORM FILTER ❫</b>\n\nWhich platform?", reply_markup=pf_kb)

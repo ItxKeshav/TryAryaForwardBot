@@ -64,6 +64,103 @@ def translate_to_english(text: str) -> str:
     except Exception:
         return text
 
+
+# ── Groq AI Integration ─────────────────────────────────────────────────────
+
+async def _get_groq_key() -> str | None:
+    """Retrieve the Groq API key from DB config."""
+    try:
+        from database import db
+        val = await db.get_config("groq_api_key")
+        return val.strip() if val and isinstance(val, str) else None
+    except Exception:
+        return None
+
+
+async def groq_transliterate_hindi(text: str) -> str:
+    """
+    Uses Groq AI to transliterate a story title from English/Hinglish to
+    accurate Hindi (Devanagari) script. Falls back to Google Input Tools.
+    """
+    if not text: return ""
+    # If already Devanagari, return as-is
+    if any('\u0900' <= c <= '\u097f' for c in text):
+        return text
+
+    api_key = await _get_groq_key()
+    if not api_key:
+        return transliterate_to_hindi(text)  # fallback
+
+    try:
+        import httpx
+        prompt = (
+            "You are a Hindi transliteration expert. Your task is to convert the given story title "
+            "from English/Hinglish into accurate Hindi Devanagari script. "
+            "Preserve the original meaning and phonetics. "
+            "Return ONLY the transliterated Hindi text, nothing else — no explanation, no quotes.\n\n"
+            f"Title: {text}"
+        )
+        payload = {
+            "model": "llama3-70b-8192",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.2,
+            "max_tokens": 100,
+        }
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers)
+            if resp.status_code == 200:
+                result = resp.json()["choices"][0]["message"]["content"].strip()
+                return result if result else transliterate_to_hindi(text)
+    except Exception:
+        pass
+    return transliterate_to_hindi(text)  # fallback
+
+
+async def groq_translate_description(text: str, target_lang: str = "hi") -> str:
+    """
+    Uses Groq AI to translate a story description.
+    target_lang: 'hi' (English→Hindi) or 'en' (Hindi→English).
+    Falls back to deep_translator on failure.
+    """
+    if not text or text.strip().lower() == "none": return text
+
+    api_key = await _get_groq_key()
+    if not api_key:
+        # fallback
+        if target_lang == "hi":
+            return smart_translate_meaning(text)
+        return translate_to_english(text)
+
+    try:
+        import httpx
+        lang_name = "Hindi" if target_lang == "hi" else "English"
+        prompt = (
+            f"You are a professional story translator. Translate the following story description into natural, "
+            f"engaging {lang_name}. Keep names of characters and places as they are. "
+            f"Return ONLY the translated text, nothing else.\n\n"
+            f"Description: {text}"
+        )
+        payload = {
+            "model": "llama3-70b-8192",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+            "max_tokens": 500,
+        }
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers)
+            if resp.status_code == 200:
+                result = resp.json()["choices"][0]["message"]["content"].strip()
+                return result if result else (smart_translate_meaning(text) if target_lang == "hi" else translate_to_english(text))
+    except Exception:
+        pass
+    # fallback
+    if target_lang == "hi":
+        return smart_translate_meaning(text)
+    return translate_to_english(text)
+
+
 def _ask_key(bot: Client, user_id: int):
     return (getattr(getattr(bot, "me", None), "id", 0), int(user_id))
 

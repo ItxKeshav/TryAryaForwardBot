@@ -1015,15 +1015,26 @@ async def _show_story_details(client, msg_or_query, story, lang, bot_cfg: dict =
         f"{upi_block}"
     )
 
+    # Determine which payment methods are enabled for this specific story
+    story_methods = story.get("payment_methods", ["upi", "razorpay"])
+    show_razorpay = "razorpay" in story_methods
+    show_upi = "upi" in story_methods
+
     kb = []
-    # Razorpay row
-    kb.append([InlineKeyboardButton(pay_gateway_btn, callback_data=f"mb#pay#razorpay#{str(story['_id'])}")])
+    # Razorpay row - only if enabled for this story
+    if show_razorpay:
+        kb.append([InlineKeyboardButton(pay_gateway_btn, callback_data=f"mb#pay#razorpay#{str(story['_id'])}")])
     
-    # UPI row
-    if upi_ok:
-        kb.append([InlineKeyboardButton(pay_upi_btn, callback_data=f"mb#pay#upi#{str(story['_id'])}")])
-    else:
-        kb.append([InlineKeyboardButton(f"⏸ {unavailable_upi}", callback_data="mb#noop")])
+    # UPI row - only if enabled for this story
+    if show_upi:
+        if upi_ok:
+            kb.append([InlineKeyboardButton(pay_upi_btn, callback_data=f"mb#pay#upi#{str(story['_id'])}")])
+        else:
+            kb.append([InlineKeyboardButton(f"⏸ {unavailable_upi}", callback_data="mb#noop")])
+    
+    # If neither method is enabled (fallback), show message
+    if not show_razorpay and not show_upi:
+        kb.append([InlineKeyboardButton("⚠️ No payment method available", callback_data="mb#noop")])
         
     kb.append([InlineKeyboardButton(back_btn, callback_data="mb#return_main")])
     markup = InlineKeyboardMarkup(kb)
@@ -2517,7 +2528,11 @@ async def _process_callback(client, query):
         # Block UPI if time-restricted or admin has disabled it per-bot
         if method == "upi":
             bt_cfg = (await db.db.premium_bots.find_one({"id": client.me.id}) or {}).get("config", {})
-            if not bt_cfg.get("upi_enabled", True) or _is_upi_restricted():
+            upi_status = _upi_availability(bt_cfg)
+            # Also check story-level payment method restriction
+            story_methods = story.get("payment_methods", ["upi", "razorpay"])
+            upi_in_story = "upi" in story_methods
+            if not upi_status["available"] or not upi_in_story:
                 rzp_kb = [
                     [InlineKeyboardButton(f"💳 {_sc('PAY VIA RAZORPAY')}", callback_data=f"mb#pay#razorpay#{s_id}")],
                     [InlineKeyboardButton(f"❮ {_sc('BACK')}", callback_data="mb#return_main")]
