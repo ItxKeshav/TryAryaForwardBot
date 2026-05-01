@@ -127,6 +127,18 @@ def _tm(s):
     if s < 3600: return f"{s//60}m {s%60}s"
     return f"{s//3600}h {(s%3600)//60}m"
 
+def _sanitize_for_filename(text: str) -> str:
+    import unicodedata
+    import re
+    # Telegram backend aggressively replaces spaces/hyphens with underscores if a filename contains 
+    # non-ASCII/fancy fonts or parentheses. Normalize to ASCII and strip unsafe characters.
+    nfkc = unicodedata.normalize('NFKC', text)
+    ascii_only = nfkc.encode('ascii', 'ignore').decode('ascii')
+    # Allow alphanumeric, spaces, and hyphens. Strip out parentheses, brackets, etc., that trigger Telegram's slugifier.
+    safe = re.sub(r'[^a-zA-Z0-9\s\-&]', '', ascii_only)
+    safe = re.sub(r'\s+', ' ', safe).strip()
+    return safe
+
 
 # ─── Info Text Builder ────────────────────────────────────────────────────────
 def _build_cl_info(job: dict) -> str:
@@ -694,7 +706,11 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                 else:
                     out_ext = orig_ext
                 out_path   = os.path.abspath(f"temp_cl_out_{job_id}_{active_mid}{out_ext}")
-                clean_file = f"{clean_title}{out_ext}"
+                
+                # Telegram backend slugifies (replaces spaces/hyphens with underscores) any filename containing 
+                # non-ASCII/fancy fonts or special symbols. We sanitize the filename using our helper function.
+                clean_file_name_only = _sanitize_for_filename(clean_title)
+                clean_file = f"{clean_file_name_only}{out_ext}"
 
                 meta = {
                     "title":  clean_title,
@@ -737,7 +753,7 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                             except: pass
                             out_ext = orig_ext
                             out_path = os.path.abspath(f"temp_cl_out_{job_id}_{active_mid}{out_ext}")
-                            clean_file = f"{clean_title}{out_ext}"
+                            clean_file = f"{_sanitize_for_filename(clean_title)}{out_ext}"
                             shutil.move(dl_path, out_path)
                             use_ff = False  # Mark as raw file for uploader
                         else:
@@ -912,13 +928,16 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                     
                     # If original filename is an ugly Telegram ID (e.g. 5_6314...), use the title instead
                     if orig_fn and _fn_re.match(r'^\d+_\d+', orig_fn):
-                        bg_file = f"{orig_title}{out_ext}" if orig_title else clean_file
+                        _raw_name = orig_title if orig_title else clean_file.replace(out_ext, "")
                     else:
-                        bg_file = orig_fn or f"{bg_title}{out_ext}" if bg_title else clean_file
-                    
-                    if bg_file and not bg_file.lower().endswith(out_ext):
-                        bg_file += out_ext
+                        _raw_name = orig_fn if orig_fn else (bg_title if bg_title else clean_file.replace(out_ext, ""))
+                        
+                    if _raw_name.lower().endswith(out_ext):
+                        _raw_name = _raw_name[:-len(out_ext)]
+                        
+                    bg_file = f"{_sanitize_for_filename(_raw_name)}{out_ext}"
                 else:
+                    bg_title = clean_title
                     bg_cap  = f"**{clean_file}**" if use_cap else ""
                     bg_art  = art
                     bg_file = clean_file
