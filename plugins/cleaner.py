@@ -907,14 +907,17 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                 import re as _fn_re
                 if job.get("ad_inject_only"):
                     bg_cap   = orig_cap
-                    bg_art   = getattr(m_obj, 'performer', '') or ''
-                    bg_title = orig_title
+                    bg_art   = getattr(m_obj, 'performer', None) or None
+                    bg_title = orig_title or None
                     
                     # If original filename is an ugly Telegram ID (e.g. 5_6314...), use the title instead
                     if orig_fn and _fn_re.match(r'^\d+_\d+', orig_fn):
                         bg_file = f"{orig_title}{out_ext}" if orig_title else clean_file
                     else:
-                        bg_file = orig_fn or clean_file
+                        bg_file = orig_fn or f"{bg_title}{out_ext}" if bg_title else clean_file
+                    
+                    if bg_file and not bg_file.lower().endswith(out_ext):
+                        bg_file += out_ext
                 else:
                     bg_cap  = f"**{clean_file}**" if use_cap else ""
                     bg_art  = art
@@ -930,22 +933,34 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                                     if repl_mode:
                                         edit_mid = c_mid if job.get("ad_inject_only") else (repl_sid + c_done)
                                         from pyrogram.types import InputMediaAudio, InputMediaVideo
+                                        
+                                        # Rename physical file to enforce file_name for InputMedia since it ignores file_name kwarg
+                                        _ul_dir = os.path.join(os.path.dirname(p_out), f"ul_{job_id}_{c_mid}")
+                                        os.makedirs(_ul_dir, exist_ok=True)
+                                        _real_name = c_file if c_file else f"file_{c_mid}{out_ext}"
+                                        _new_p_out = os.path.join(_ul_dir, _real_name)
+                                        try:
+                                            import shutil
+                                            shutil.move(p_out, _new_p_out)
+                                            p_out = _new_p_out
+                                        except: pass
+
                                         if job.get("ad_inject_only"):
-                                            # Direct upload + edit — preserve original title/performer/filename
+                                            # Direct upload + edit — preserve original title/performer
                                             if is_ff or is_aud:
                                                 _im = InputMediaAudio(p_out, caption=cap,
-                                                    title=c_title, performer=art, file_name=c_file)
+                                                    title=c_title or None, performer=art or None)
                                             elif is_vid:
-                                                _im = InputMediaVideo(p_out, caption=cap, file_name=c_file)
+                                                _im = InputMediaVideo(p_out, caption=cap)
                                             else: break
                                             await asyncio.wait_for(u_cli.edit_message_media(dest_ch, edit_mid, media=_im), timeout=360)
                                         else:
                                             # Normal replace mode: upload to me → file_id → edit
                                             if is_ff or is_aud:
-                                                _g = await asyncio.wait_for(u_cli.send_audio("me", p_out), timeout=300)
-                                                _im = InputMediaAudio(_g.audio.file_id, caption=cap, title=c_title, performer=art, thumb=thumb)
+                                                _g = await asyncio.wait_for(u_cli.send_audio("me", p_out, title=c_title or None, performer=art or None, file_name=c_file), timeout=300)
+                                                _im = InputMediaAudio(_g.audio.file_id, caption=cap, title=c_title or None, performer=art or None, thumb=thumb)
                                             elif is_vid:
-                                                _g = await asyncio.wait_for(u_cli.send_video("me", p_out), timeout=300)
+                                                _g = await asyncio.wait_for(u_cli.send_video("me", p_out, file_name=c_file), timeout=300)
                                                 _im = InputMediaVideo(_g.video.file_id, caption=cap, thumb=thumb)
                                             else: break
                                             await asyncio.wait_for(u_cli.edit_message_media(dest_ch, edit_mid, media=_im), timeout=120)
@@ -954,7 +969,7 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
 
                                     else:
                                         if is_ff or is_aud:
-                                            await asyncio.wait_for(u_cli.send_audio(dest_ch, p_out, caption=cap, title=c_title, performer=art, file_name=c_file, thumb=thumb), timeout=300)
+                                            await asyncio.wait_for(u_cli.send_audio(dest_ch, p_out, caption=cap, title=c_title or None, performer=art or None, file_name=c_file, thumb=thumb), timeout=300)
                                         elif is_vid:
                                             await asyncio.wait_for(u_cli.send_video(dest_ch, p_out, caption=cap, file_name=c_file, thumb=thumb), timeout=300)
                                         else:
