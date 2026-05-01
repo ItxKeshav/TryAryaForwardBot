@@ -369,10 +369,18 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
         if inject_ads and ads_config:
             total_files = (eid - sid + 1) if (sid and eid) else 0
 
-            # Backward-compat: migrate old "cleaner" key → "arya_premium"
+            # Backward-compat: migrate old keys
             _ads_cfg_load = dict(ads_config)
-            if "cleaner" in _ads_cfg_load and "arya_premium" not in _ads_cfg_load:
-                _ads_cfg_load["arya_premium"] = _ads_cfg_load.pop("cleaner")
+            if "cleaner" in _ads_cfg_load and "arya_premium_hi" not in _ads_cfg_load:
+                _ads_cfg_load["arya_premium_hi"] = _ads_cfg_load.pop("cleaner")
+            if "arya_premium" in _ads_cfg_load and "arya_premium_hi" not in _ads_cfg_load:
+                _ads_cfg_load["arya_premium_hi"] = _ads_cfg_load.pop("arya_premium")
+            if "hindi" in _ads_cfg_load and "arya_bot_hi" not in _ads_cfg_load:
+                _ads_cfg_load["arya_bot_hi"] = _ads_cfg_load.pop("hindi")
+            if "eng" in _ads_cfg_load and "arya_bot_en" not in _ads_cfg_load:
+                _ads_cfg_load["arya_bot_en"] = _ads_cfg_load.pop("eng")
+            if "channel" in _ads_cfg_load and "channel_hi" not in _ads_cfg_load:
+                _ads_cfg_load["channel_hi"] = _ads_cfg_load.pop("channel")
 
             # Download all ad audio files upfront (once per job)
             _ad_dl_cli = _bot or client
@@ -394,15 +402,7 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                 import math as _math
 
                 # ── Per-100-episode chunk schedule ─────────────────────────────
-                # 6 ads per 100 episodes: 2 hindi + 2 eng + 1 arya_premium + 1 channel
-                # 50-ep subrule: within each 100-ep chunk, the two arya-bot ads are
-                #   placed in opposite 50-ep halves (randomly positioned inside each half).
-                # Partial final chunk: proportional count (min 1).
                 _CHUNK    = 100
-                _ADS_FULL = 6
-
-                _ARYA_T  = ["hindi", "eng"]
-                _OTHER_T = ["arya_premium", "channel"]
 
                 n_total_files = total_files
                 _base_serial  = curr_num
@@ -411,64 +411,51 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                     _cs   = _ci * _CHUNK
                     _ce   = min(_cs + _CHUNK, n_total_files)
                     _csz  = _ce - _cs
-                    _n_ads = _ADS_FULL if _csz >= 80 else max(1, round(_ADS_FULL * _csz / _CHUNK))
 
                     # Build pool
                     _pool: list = []
-                    if _csz >= 80:
-                        for _k in ["hindi", "hindi", "eng", "eng", "arya_premium", "channel"]:
-                            if _k in _ad_local: _pool.append(_k)
-                    elif _csz >= 50:
-                        for _k in ["hindi", "eng", "arya_premium", "channel"]:
-                            if _k in _ad_local: _pool.append(_k)
-                    elif _csz >= 25:
-                        for _k in ["hindi", "eng", "arya_premium"]:
-                            if _k in _ad_local: _pool.append(_k)
+                    if _csz > 50:
+                        for cat in [("arya_bot_hi", "arya_bot_en"), ("arya_premium_hi", "arya_premium_en"), ("channel_hi", "channel_en")]:
+                            _av = [k for k in cat if k in _ad_local]
+                            if len(_av) == 2:
+                                _pool.extend(_av)
+                            elif len(_av) == 1:
+                                _pool.extend([_av[0], _av[0]])
                     else:
-                        _av = [k for k in _ARYA_T if k in _ad_local]
-                        if _av: _pool.append(_random.choice(_av))
-                        _ov = [k for k in _OTHER_T if k in _ad_local]
-                        if _ov: _pool.append(_random.choice(_ov))
-                    _pool = _pool[:_n_ads]
+                        for cat in [("arya_bot_hi", "arya_bot_en"), ("arya_premium_hi", "arya_premium_en"), ("channel_hi", "channel_en")]:
+                            _av = [k for k in cat if k in _ad_local]
+                            if _av:
+                                _pool.append(_random.choice(_av))
+                                
                     if not _pool: continue
-
-                    _ch_sn   = list(range(_base_serial + _cs, _base_serial + _ce))
-                    _half    = len(_ch_sn) // 2
-                    _first_h = _ch_sn[:_half]
-                    _second_h = _ch_sn[_half:]
-
-                    _arya_ads  = [a for a in _pool if a in _ARYA_T]
-                    _other_ads = [a for a in _pool if a not in _ARYA_T]
+                    _random.shuffle(_pool)
+                    
                     _used: set = set()
-
                     def _pick(halv):
-                        # Try to find a slot with a gap of at least 12 episodes from other ads
                         for gap in [12, 8, 5, 2, 0]:
                             avl = [s for s in halv if s not in _used and s not in _ad_schedule and all(abs(s - u) >= gap for u in _used)]
                             if avl:
                                 return _random.choice(avl)
                         return None
-
-                    # 50-ep subrule: 1st arya ad → 1st half, 2nd → 2nd half
-                    _arem = list(_arya_ads)
-                    if _arem:
-                        sn = _pick(_first_h)
-                        if sn: _ad_schedule[sn] = _arem.pop(0); _used.add(sn)
-                    if _arem:
-                        sn = _pick(_second_h)
-                        if sn: _ad_schedule[sn] = _arem.pop(0); _used.add(sn)
-                    for _at in _arem:
-                        sn = _pick(_ch_sn)
-                        if sn: _ad_schedule[sn] = _at; _used.add(sn)
-
-                    # Other ads anywhere in chunk, respecting the gap
-                    for _at in _other_ads:
-                        sn = _pick(_ch_sn)
-                        if sn: _ad_schedule[sn] = _at; _used.add(sn)
+                        
+                    _n_ads = len(_pool)
+                    _seg_size = _csz / _n_ads
+                    for idx, _at in enumerate(_pool):
+                        _seg_s = int(_base_serial + _cs + idx * _seg_size)
+                        _seg_e = int(_base_serial + _cs + (idx + 1) * _seg_size)
+                        if idx == _n_ads - 1:
+                            _seg_e = _base_serial + _ce
+                        _seg_sn = list(range(_seg_s, _seg_e))
+                        sn = _pick(_seg_sn)
+                        if not sn:
+                            sn = _pick(list(range(_base_serial + _cs, _base_serial + _ce)))
+                        if sn:
+                            _ad_schedule[sn] = _at
+                            _used.add(sn)
 
                 logger.info(
                     f"[Cleaner {job_id}] Ad schedule: {len(_ad_schedule)} ads for {n_total_files} files "
-                    f"({_math.ceil(n_total_files/_CHUNK)} chunks × ~{_ADS_FULL}/100ep): {_ad_schedule}"
+                    f"({_math.ceil(n_total_files/_CHUNK)} chunks): {_ad_schedule}"
                 )
 
 
@@ -804,26 +791,20 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                     if _is_group:
                         # Proportional ads based on episode count in group
                         _grp_ep_cnt = _grp_end - _grp_start + 1
-                        _grp_n_ads  = max(1, round(6 * _grp_ep_cnt / 100))
-                        # Build an ad pool for this group
-                        _ARYA_TG  = ["hindi", "eng"]
-                        _OTHER_TG = ["arya_premium", "channel"]
                         _grp_pool: list = []
-                        if _grp_ep_cnt >= 80:
-                            for _k in ["hindi", "hindi", "eng", "eng", "arya_premium", "channel"]:
-                                if _k in _ad_local: _grp_pool.append(_k)
-                        elif _grp_ep_cnt >= 50:
-                            for _k in ["hindi", "eng", "arya_premium", "channel"]:
-                                if _k in _ad_local: _grp_pool.append(_k)
-                        elif _grp_ep_cnt >= 25:
-                            for _k in ["hindi", "eng", "arya_premium"]:
-                                if _k in _ad_local: _grp_pool.append(_k)
+                        if _grp_ep_cnt > 50:
+                            for cat in [("arya_bot_hi", "arya_bot_en"), ("arya_premium_hi", "arya_premium_en"), ("channel_hi", "channel_en")]:
+                                _av = [k for k in cat if k in _ad_local]
+                                if len(_av) == 2:
+                                    _grp_pool.extend(_av)
+                                elif len(_av) == 1:
+                                    _grp_pool.extend([_av[0], _av[0]])
                         else:
-                            _av = [k for k in _ARYA_TG if k in _ad_local]
-                            if _av: _grp_pool.append(_rnd_inj.choice(_av))
-                            _ov = [k for k in _OTHER_TG if k in _ad_local]
-                            if _ov: _grp_pool.append(_rnd_inj.choice(_ov))
-                        _grp_pool = _grp_pool[:_grp_n_ads]
+                            for cat in [("arya_bot_hi", "arya_bot_en"), ("arya_premium_hi", "arya_premium_en"), ("channel_hi", "channel_en")]:
+                                _av = [k for k in cat if k in _ad_local]
+                                if _av:
+                                    _grp_pool.append(_rnd_inj.choice(_av))
+                                    
                         _rnd_inj.shuffle(_grp_pool)
                         _inj_types = _grp_pool
                         logger.info(f"[Cleaner {job_id}] Group file ep {_grp_start}-{_grp_end} "
@@ -1592,25 +1573,52 @@ async def _create_cl_flow(bot, user_id):
         inject_ads = True
     elif "yes" in r_ads_text or "edit" in r_ads_text:
         inject_ads = "yes" in r_ads_text
-        # Backward-compat: migrate old "cleaner" key
+        # Backward-compat: migrate old keys
         saved_ads = df.get("audio_ads", {})
-        if "cleaner" in saved_ads and "arya_premium" not in saved_ads:
-            saved_ads["arya_premium"] = saved_ads.pop("cleaner")
+        if "cleaner" in saved_ads and "arya_premium_hi" not in saved_ads:
+            saved_ads["arya_premium_hi"] = saved_ads.pop("cleaner")
+        if "arya_premium" in saved_ads and "arya_premium_hi" not in saved_ads:
+            saved_ads["arya_premium_hi"] = saved_ads.pop("arya_premium")
+        if "hindi" in saved_ads and "arya_bot_hi" not in saved_ads:
+            saved_ads["arya_bot_hi"] = saved_ads.pop("hindi")
+        if "eng" in saved_ads and "arya_bot_en" not in saved_ads:
+            saved_ads["arya_bot_en"] = saved_ads.pop("eng")
+        if "channel" in saved_ads and "channel_hi" not in saved_ads:
+            saved_ads["channel_hi"] = saved_ads.pop("channel")
     else:
         saved_ads = {}
 
+    # All 6 expected ad slot keys (3 types × 2 langs)
+    _ALL_AD_KEYS = {"arya_bot_hi", "arya_bot_en", "arya_premium_hi", "arya_premium_en", "channel_hi", "channel_en"}
+
     if "yes" in r_ads_text or "edit" in r_ads_text or "reset" in r_ads_text:
-        if "edit" in r_ads_text or "reset" in r_ads_text or not saved_ads:
-            # Ask for each of 4 ad slots individually — each can be skipped
+        # Detect missing slots (new EN keys not present in old configs)
+        _missing_keys = _ALL_AD_KEYS - set(saved_ads.keys())
+        _needs_upgrade = bool(_missing_keys) and "yes" in r_ads_text and not ("edit" in r_ads_text or "reset" in r_ads_text)
+
+        if _needs_upgrade:
+            # Notify user that new ad slots were added and need to be filled
+            await bot.send_message(user_id,
+                "🆕 <b>New Ad Slots Detected!</b>\n\n"
+                "<i>Arya Premium (English) and Channel Promo (English) are now supported.\n"
+                "Please upload the missing ads below. You can skip any slot.</i>",
+                reply_markup=ReplyKeyboardRemove())
+
+        if "edit" in r_ads_text or "reset" in r_ads_text or not saved_ads or _needs_upgrade:
+            # Ask for each of 6 ad slots individually — each can be skipped
             _ad_slots = [
-                ("hindi",        "» Aᴅ 1 — Hɪɴᴅɪ Pʀᴏᴍᴏ",         "Hindi promotional audio (10–30s)."),
-                ("eng",          "» Aᴅ 2 — Eɴɢʟɪsʜ Pʀᴏᴍᴏ",        "English promotional audio (10–30s)."),
-                ("arya_premium", "» Aᴅ 3 — Aʀʏᴀ Pʀᴇᴍɪᴜᴍ",         "Arya Premium Bot promo audio (10–30s)."),
-                ("channel",      "» Aᴅ 4 — Cʜᴀɴɴᴇʟ Pʀᴏᴍᴏᴛɪᴏɴ",    "Channel promotion audio (10–30s)."),
+                ("arya_bot_hi",     "» Aᴅ 1 — Aʀʏᴀ Bᴏᴛ (Hɪɴᴅɪ)",     "Arya Bot Hindi promo (10–30s)."),
+                ("arya_bot_en",     "» Aᴅ 2 — Aʀʏᴀ Bᴏᴛ (Eɴɢʟɪsʜ)",    "Arya Bot English promo (10–30s)."),
+                ("arya_premium_hi", "» Aᴅ 3 — Aʀʏᴀ Pʀᴇᴍɪᴜᴍ (Hɪɴᴅɪ)",  "Arya Premium Hindi promo (10–30s)."),
+                ("arya_premium_en", "» Aᴅ 4 — Aʀʏᴀ Pʀᴇᴍɪᴜᴍ (Eɴɢʟɪsʜ)","Arya Premium English promo (10–30s)."),
+                ("channel_hi",      "» Aᴅ 5 — Cʜᴀɴɴᴇʟ Pʀᴏᴍᴏ (Hɪɴᴅɪ)", "Channel Hindi promo (10–30s)."),
+                ("channel_en",      "» Aᴅ 6 — Cʜᴀɴɴᴇʟ Pʀᴏᴍᴏ (Eɴɢʟɪsʜ)","Channel English promo (10–30s)."),
             ]
             ads_config = dict(saved_ads)
+            # In upgrade mode, only ask for missing slots
+            _slots_to_ask = [(sk, sl, sd) for sk, sl, sd in _ad_slots if (not _needs_upgrade or sk in _missing_keys)]
 
-            for _sk, _sl, _sd in _ad_slots:
+            for _sk, _sl, _sd in _slots_to_ask:
                 _has_saved = bool(saved_ads.get(_sk))
                 _saved_hint = " <i>(saved ✅)</i>" if _has_saved else " <i>(not set)</i>"
                 _skip_label = "⏭ Skip (Keep Saved)" if _has_saved else "⏭ Skip (Disable)"
@@ -1637,11 +1645,11 @@ async def _create_cl_flow(bot, user_id):
             ads_config = {k: v for k, v in ads_config.items() if v}  # drop empty
             await _cl_save_default(user_id, "audio_ads", ads_config)
 
-            if "edit" in r_ads_text or "reset" in r_ads_text:
+            if "edit" in r_ads_text or "reset" in r_ads_text or _needs_upgrade:
                 _active = len(ads_config)
                 await bot.send_message(user_id,
                     f"✅ <b>Ads config saved!</b>\n"
-                    f"Active slots: <b>{_active}/4</b>\n"
+                    f"Active slots: <b>{_active}/6</b>\n"
                     f"Types: {', '.join(ads_config.keys()) if ads_config else 'None'}\n\n"
                     f"<i>Starting job with ads enabled...</i>",
                     reply_markup=ReplyKeyboardRemove())
