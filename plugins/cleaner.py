@@ -906,9 +906,9 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                 bg_th = local_cover if (local_cover and os.path.exists(local_cover)) else None
                 if job.get("ad_inject_only"):
                     bg_cap  = orig_cap
-                    # Preserve original metadata: performer + filename (NOT temp names)
+                    # Preserve original metadata: performer (filename is now cleaned)
                     bg_art  = getattr(m_obj, 'performer', '') or ''
-                    bg_file = orig_fn or clean_file
+                    bg_file = clean_file
                 else:
                     bg_cap  = f"**{clean_file}**" if use_cap else ""
                     bg_art  = art
