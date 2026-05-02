@@ -413,37 +413,32 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                     _ce   = min(_cs + _CHUNK, n_total_files)
                     _csz  = _ce - _cs
 
-                    # Build pool
-                    _pool: list = []
-                    if _csz > 50:
-                        # Arya Bot: Hi + En = 2 slots
-                        _ab = [k for k in ("arya_bot_hi", "arya_bot_en") if k in _ad_local]
-                        if len(_ab) == 2: _pool.extend(_ab)
-                        elif len(_ab) == 1: _pool.extend([_ab[0], _ab[0]])
-                        # Arya Premium: Hi + En + 1 extra random = 3 slots
-                        _ap = [k for k in ("arya_premium_hi", "arya_premium_en") if k in _ad_local]
-                        if len(_ap) == 2:
-                            _pool.extend(_ap)
-                            _pool.append(_random.choice(_ap))   # extra random Hi OR En
-                        elif len(_ap) == 1:
-                            _pool.extend([_ap[0], _ap[0], _ap[0]])
-                        # Channel: Hi + En + 1 extra random = 3 slots
-                        _ach = [k for k in ("channel_hi", "channel_en") if k in _ad_local]
-                        if len(_ach) == 2:
-                            _pool.extend(_ach)
-                            _pool.append(_random.choice(_ach))  # extra random Hi OR En
-                        elif len(_ach) == 1:
-                            _pool.extend([_ach[0], _ach[0], _ach[0]])
-                    else:
-                        # <=50 chunk: Bot=1 random, Premium=Hi+En=2, Channel=Hi+En=2 = 5 ads
-                        _ab50 = [k for k in ("arya_bot_hi", "arya_bot_en") if k in _ad_local]
-                        if _ab50: _pool.append(_random.choice(_ab50))
-                        _ap50 = [k for k in ("arya_premium_hi", "arya_premium_en") if k in _ad_local]
-                        if len(_ap50) == 2: _pool.extend(_ap50)
-                        elif len(_ap50) == 1: _pool.extend([_ap50[0], _ap50[0]])
-                        _ach50 = [k for k in ("channel_hi", "channel_en") if k in _ad_local]
-                        if len(_ach50) == 2: _pool.extend(_ach50)
-                        elif len(_ach50) == 1: _pool.extend([_ach50[0], _ach50[0]])
+                    # ── Proportional ad pool: scale linearly with chunk size ──
+                    # Formula: n_ads = max(1, round(chunk_size / 100 * 8))
+                    # Examples: 15 files→1 ad, 30→2, 50→4, 75→6, 100→8
+                    _n_target = max(1, round(_csz / 100 * 8))
+
+                    # Candidate types in priority order (we fill up to _n_target slots)
+                    # Priority: arya_premium_hi, arya_premium_en, channel_hi, channel_en,
+                    #           arya_bot_hi, arya_bot_en  (same as before, just capped)
+                    _candidates: list = []
+                    _prem = [k for k in ("arya_premium_hi", "arya_premium_en") if k in _ad_local]
+                    _chan = [k for k in ("channel_hi", "channel_en") if k in _ad_local]
+                    _bot  = [k for k in ("arya_bot_hi", "arya_bot_en") if k in _ad_local]
+                    # Interleave: premium-hi, channel-hi, bot-hi/en, premium-en, channel-en, premium-extra, channel-extra, bot-extra
+                    _order = []
+                    if len(_prem) >= 1: _order.append(_prem[0])          # premium hi
+                    if len(_chan) >= 1: _order.append(_chan[0])           # channel hi
+                    if len(_bot)  >= 1: _order.append(_bot[0])           # bot hi
+                    if len(_prem) >= 2: _order.append(_prem[1])          # premium en
+                    if len(_chan) >= 2: _order.append(_chan[1])           # channel en
+                    if len(_bot)  >= 2: _order.append(_bot[1])           # bot en
+                    if len(_prem) >= 1: _order.append(_random.choice(_prem))  # premium extra
+                    if len(_chan) >= 1: _order.append(_random.choice(_chan))   # channel extra
+                    _pool = _order[:_n_target]  # cap to target count
+                    if not _pool and (_prem or _chan or _bot):             # fallback: at least 1
+                        _pool = [_random.choice((_prem or _chan or _bot)[0:1])]
+
 
                     if not _pool: continue
                     _random.shuffle(_pool)
@@ -840,43 +835,31 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                     _inj_types: list = []
 
                     if _is_group:
-                        # Proportional ads based on episode count in group
+                        # Proportional ads for group file:
+                        # Same formula as schedule builder — scale linearly vs 100 eps
                         _grp_ep_cnt = _grp_end - _grp_start + 1
-                        _grp_pool: list = []
-                        if _grp_ep_cnt > 50:
-                            # Arya Bot: Hi + En = 2 slots
-                            _gab = [k for k in ("arya_bot_hi", "arya_bot_en") if k in _ad_local]
-                            if len(_gab) == 2: _grp_pool.extend(_gab)
-                            elif len(_gab) == 1: _grp_pool.extend([_gab[0], _gab[0]])
-                            # Arya Premium: Hi + En + 1 extra random = 3 slots
-                            _gap = [k for k in ("arya_premium_hi", "arya_premium_en") if k in _ad_local]
-                            if len(_gap) == 2:
-                                _grp_pool.extend(_gap)
-                                _grp_pool.append(_rnd_inj.choice(_gap))
-                            elif len(_gap) == 1:
-                                _grp_pool.extend([_gap[0], _gap[0], _gap[0]])
-                            # Channel: Hi + En + 1 extra random = 3 slots
-                            _gac = [k for k in ("channel_hi", "channel_en") if k in _ad_local]
-                            if len(_gac) == 2:
-                                _grp_pool.extend(_gac)
-                                _grp_pool.append(_rnd_inj.choice(_gac))
-                            elif len(_gac) == 1:
-                                _grp_pool.extend([_gac[0], _gac[0], _gac[0]])
-                        else:
-                            # <=50 group eps: Bot=1 random, Premium=Hi+En=2, Channel=Hi+En=2 = 5 ads
-                            _gab50 = [k for k in ("arya_bot_hi", "arya_bot_en") if k in _ad_local]
-                            if _gab50: _grp_pool.append(_rnd_inj.choice(_gab50))
-                            _gap50 = [k for k in ("arya_premium_hi", "arya_premium_en") if k in _ad_local]
-                            if len(_gap50) == 2: _grp_pool.extend(_gap50)
-                            elif len(_gap50) == 1: _grp_pool.extend([_gap50[0], _gap50[0]])
-                            _gach50 = [k for k in ("channel_hi", "channel_en") if k in _ad_local]
-                            if len(_gach50) == 2: _grp_pool.extend(_gach50)
-                            elif len(_gach50) == 1: _grp_pool.extend([_gach50[0], _gach50[0]])
+                        _grp_n_target = max(1, round(_grp_ep_cnt / 100 * 8))
+
+                        _g_prem = [k for k in ("arya_premium_hi", "arya_premium_en") if k in _ad_local]
+                        _g_chan = [k for k in ("channel_hi", "channel_en") if k in _ad_local]
+                        _g_bot  = [k for k in ("arya_bot_hi", "arya_bot_en") if k in _ad_local]
+                        _g_order = []
+                        if len(_g_prem) >= 1: _g_order.append(_g_prem[0])
+                        if len(_g_chan)  >= 1: _g_order.append(_g_chan[0])
+                        if len(_g_bot)   >= 1: _g_order.append(_g_bot[0])
+                        if len(_g_prem) >= 2: _g_order.append(_g_prem[1])
+                        if len(_g_chan)  >= 2: _g_order.append(_g_chan[1])
+                        if len(_g_bot)   >= 2: _g_order.append(_g_bot[1])
+                        if len(_g_prem) >= 1: _g_order.append(_rnd_inj.choice(_g_prem))
+                        if len(_g_chan)  >= 1: _g_order.append(_rnd_inj.choice(_g_chan))
+                        _grp_pool = _g_order[:_grp_n_target]
+                        if not _grp_pool and (_g_prem or _g_chan or _g_bot):
+                            _grp_pool = [(_g_prem or _g_chan or _g_bot)[0]]
 
                         _rnd_inj.shuffle(_grp_pool)
                         _inj_types = _grp_pool
                         logger.info(f"[Cleaner {job_id}] Group file ep {_grp_start}-{_grp_end} "
-                                    f"({_grp_ep_cnt} eps) → {len(_inj_types)} ads")
+                                    f"({_grp_ep_cnt} eps) → {len(_inj_types)} ads (target={_grp_n_target})")
                     elif _ad_schedule and curr_num in _ad_schedule:
                         # Single-ep file scheduled for injection
                         _inj_types = [_ad_schedule[curr_num]]
