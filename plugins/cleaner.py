@@ -334,6 +334,7 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
         repl_mode = job.get("replace_mode", False)
         repl_sid  = job.get("replace_start_msg_id", 0)
         deep_clean = job.get("deep_clean", False)
+        smart_rename = job.get("smart_rename", False)
         inject_ads = job.get("inject_ads", False)
         ads_config = job.get("ads_config", {})
 
@@ -415,12 +416,24 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                     # Build pool
                     _pool: list = []
                     if _csz > 50:
-                        for cat in [("arya_bot_hi", "arya_bot_en"), ("arya_premium_hi", "arya_premium_en"), ("channel_hi", "channel_en")]:
-                            _av = [k for k in cat if k in _ad_local]
-                            if len(_av) == 2:
-                                _pool.extend(_av)
-                            elif len(_av) == 1:
-                                _pool.extend([_av[0], _av[0]])
+                        # Arya Bot: Hi + En = 2 slots
+                        _ab = [k for k in ("arya_bot_hi", "arya_bot_en") if k in _ad_local]
+                        if len(_ab) == 2: _pool.extend(_ab)
+                        elif len(_ab) == 1: _pool.extend([_ab[0], _ab[0]])
+                        # Arya Premium: Hi + En + 1 extra random = 3 slots
+                        _ap = [k for k in ("arya_premium_hi", "arya_premium_en") if k in _ad_local]
+                        if len(_ap) == 2:
+                            _pool.extend(_ap)
+                            _pool.append(_random.choice(_ap))   # extra random Hi OR En
+                        elif len(_ap) == 1:
+                            _pool.extend([_ap[0], _ap[0], _ap[0]])
+                        # Channel: Hi + En + 1 extra random = 3 slots
+                        _ach = [k for k in ("channel_hi", "channel_en") if k in _ad_local]
+                        if len(_ach) == 2:
+                            _pool.extend(_ach)
+                            _pool.append(_random.choice(_ach))  # extra random Hi OR En
+                        elif len(_ach) == 1:
+                            _pool.extend([_ach[0], _ach[0], _ach[0]])
                     else:
                         for cat in [("arya_bot_hi", "arya_bot_en"), ("arya_premium_hi", "arya_premium_en"), ("channel_hi", "channel_en")]:
                             _av = [k for k in cat if k in _ad_local]
@@ -673,11 +686,34 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                 orig_title = getattr(m_obj, 'title', '') or ''
                 orig_cap   = (getattr(msg, 'caption', '') or '').strip()
 
+                # ── Garbage filename detection (for smart_rename) ──────────
+                def _is_garbage(fn, tt):
+                    """Return True if the filename/title looks random/garbage."""
+                    candidate = (os.path.splitext(fn)[0] if fn else '') or tt or ''
+                    candidate = candidate.strip()
+                    if not candidate:
+                        return True
+                    # Pure digits (e.g. '6746684757646')
+                    if re.match(r'^\d+$', candidate):
+                        return True
+                    # All hex/random alphanumeric with no spaces or readable words
+                    # (e.g. 'aB3xK9mQ2p1z' — no 3+ letter word sequence)
+                    stripped = re.sub(r'[^a-zA-Z0-9]', '', candidate)
+                    if len(stripped) >= 10 and not re.search(r'[a-zA-Z]{3,}', candidate):
+                        return True
+                    return False
+
                 if rename:
                     ep_use = ep_label if ep_label else str(curr_num)
                     if   fmt == "format_2": clean_title = f"{ep_use} - {base_name}"
                     elif fmt == "format_3": clean_title = f"{base_name} EP {ep_use}"
                     else:                  clean_title = f"{base_name} {ep_use}"
+                elif smart_rename and _is_garbage(orig_fn, orig_title):
+                    # Garbage filename → apply configured base_name + curr_num
+                    _sr_num = str(curr_num)
+                    if   fmt == "format_2": clean_title = f"{_sr_num} - {base_name}"
+                    elif fmt == "format_3": clean_title = f"{base_name} EP {_sr_num}"
+                    else:                  clean_title = f"{base_name} {_sr_num}"
                 else:
                     clean_title = orig_title or os.path.splitext(orig_fn)[0] or orig_cap or f"{base_name} {curr_num}"
 
@@ -793,12 +829,24 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                         _grp_ep_cnt = _grp_end - _grp_start + 1
                         _grp_pool: list = []
                         if _grp_ep_cnt > 50:
-                            for cat in [("arya_bot_hi", "arya_bot_en"), ("arya_premium_hi", "arya_premium_en"), ("channel_hi", "channel_en")]:
-                                _av = [k for k in cat if k in _ad_local]
-                                if len(_av) == 2:
-                                    _grp_pool.extend(_av)
-                                elif len(_av) == 1:
-                                    _grp_pool.extend([_av[0], _av[0]])
+                            # Arya Bot: Hi + En = 2 slots
+                            _gab = [k for k in ("arya_bot_hi", "arya_bot_en") if k in _ad_local]
+                            if len(_gab) == 2: _grp_pool.extend(_gab)
+                            elif len(_gab) == 1: _grp_pool.extend([_gab[0], _gab[0]])
+                            # Arya Premium: Hi + En + 1 extra random = 3 slots
+                            _gap = [k for k in ("arya_premium_hi", "arya_premium_en") if k in _ad_local]
+                            if len(_gap) == 2:
+                                _grp_pool.extend(_gap)
+                                _grp_pool.append(_rnd_inj.choice(_gap))
+                            elif len(_gap) == 1:
+                                _grp_pool.extend([_gap[0], _gap[0], _gap[0]])
+                            # Channel: Hi + En + 1 extra random = 3 slots
+                            _gac = [k for k in ("channel_hi", "channel_en") if k in _ad_local]
+                            if len(_gac) == 2:
+                                _grp_pool.extend(_gac)
+                                _grp_pool.append(_rnd_inj.choice(_gac))
+                            elif len(_gac) == 1:
+                                _grp_pool.extend([_gac[0], _gac[0], _gac[0]])
                         else:
                             for cat in [("arya_bot_hi", "arya_bot_en"), ("arya_premium_hi", "arya_premium_en"), ("channel_hi", "channel_en")]:
                                 _av = [k for k in cat if k in _ad_local]
@@ -1422,6 +1470,42 @@ async def _create_cl_flow(bot, user_id):
             if "EP"  in (rf.text or ""): name_format = "format_3"
             elif "-" in (rf.text or ""): name_format = "format_2"
 
+        # Smart Rename — fix garbage filenames automatically
+        smart_rename = False
+        if not rename_files:
+            r_sr = await _cl_ask(bot, user_id,
+                "<b>» Step 5d — 🔧 Smart-Fix Random Filenames?</b>\n\n"
+                "<i>If a file has a garbage/random name (e.g. <code>6746684757646.mp3</code>), "
+                "the bot will auto-rename it using your configured base name + episode number.\n"
+                "Files with proper names are left unchanged.</i>",
+                reply_markup=ReplyKeyboardMarkup(
+                    [["✅ Yes, Fix Random Names", "❌ No, Keep As-Is"], [CANCEL_BTN]],
+                    resize_keyboard=True, one_time_keyboard=True))
+            if _cancelled(r_sr): return await _abort()
+            smart_rename = "yes" in (r_sr.text or "").lower()
+            if smart_rename:
+                # Ask for base name + starting number + format for smart rename
+                rb2 = await _cl_ask(bot, user_id,
+                    "<b>» Step 5d-i — Base Name for Fixed Files</b>\n"
+                    "<i>Enter the story/series name to use for random-named files:</i>",
+                    reply_markup=mk_c)
+                if _cancelled(rb2): return await _abort()
+                base_name = re.sub(r'[<>:"/\\|?*]', '_', (rb2.text or "Cleaned").strip())
+                rn2 = await _cl_ask(bot, user_id,
+                    "<b>» Step 5d-ii — Starting Number</b>",
+                    reply_markup=mk_b)
+                if _cancelled(rn2): return await _abort()
+                try: start_num = int((rn2.text or "1").strip())
+                except: start_num = 1
+                rf2 = await _cl_ask(bot, user_id, "<b>» Step 5d-iii — Naming Format</b>",
+                    reply_markup=ReplyKeyboardMarkup(
+                        [["[Name] [N]", "[N] - [Name]", "[Name] EP [N]"], [CANCEL_BTN]],
+                        resize_keyboard=True, one_time_keyboard=True))
+                if _cancelled(rf2): return await _abort()
+                if "EP"  in (rf2.text or ""): name_format = "format_3"
+                elif "-" in (rf2.text or ""): name_format = "format_2"
+                else: name_format = "format_1"
+
         # Convert video
         r_cv = await _cl_ask(bot, user_id, "<b>» Step 6/9 — Convert Video to Audio?</b>",
             reply_markup=ReplyKeyboardMarkup([["✅ Yes, Convert", "❌ No, Keep Video"], [CANCEL_BTN]],
@@ -1667,7 +1751,7 @@ async def _create_cl_flow(bot, user_id):
         "replace_mode": replace_mode, "replace_start_msg_id": replace_start_msg_id,
         "start_id": sid, "end_id": eid, "total_files": total, "files_done": 0,
         "base_name": base_name, "starting_number": start_num,
-        "name_format": name_format, "rename_files": rename_files,
+        "name_format": name_format, "rename_files": rename_files, "smart_rename": smart_rename,
         "convert_videos": convert_videos, "deep_clean": deep_clean,
         "artist": adv_artist, "year": adv_year, "album": adv_album, "genre": adv_genre,
         "cover_file_id": adv_cover, "use_caption": use_caption,
