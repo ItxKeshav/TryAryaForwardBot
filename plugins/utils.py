@@ -338,10 +338,16 @@ def extract_ep_label_robust(fname: str) -> dict:
     fname = fname.translate(_DEVANAGARI_DIGITS)
 
     # ── 1. Strip extension & metadata markers ────────────────────────────────
-    base = re.sub(r'\.\w{2,5}$', '', fname)
+    # Strip extensions from ANYWHERE in the combined string (title @@@  filename @@@ caption).
+    # The caller combines them with @@@ so .mp3, .mp4, .m4a etc. appear in the middle,
+    # not just at the end. Without this, '3' in 'mp3' or '4' in 'mp4' gets mistakenly
+    # extracted as the episode number.
+    base = re.sub(r'\.(?:mp3|mp4|m4a|m4b|ogg|opus|flac|wav|aac|wma|webm|mkv|avi|mov|dat|3gp|amr)(?=\s|@|$)', ' ', fname, flags=re.IGNORECASE)
+    base = re.sub(r'\.\w{2,5}$', '', base)  # also strip any remaining extension at end
     base = re.sub(r'(?i)\b(?:copy|duplicate|v\d+)\b', '', base)
     base = re.sub(r'(?i)\(\s*(?:copy|duplicate|\d+)\s*\)\s*$', '', base)
     b_norm = base.strip()
+
 
 
     # ── 2. Normalize dash variants → plain hyphen ────────────────────────────
