@@ -16,17 +16,48 @@ import asyncio
 import logging
 import tempfile
 import datetime
-from pyrogram import Client, filters
+from pyrogram import Client, filters, ContinuePropagation
 from pyrogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup,
     ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 )
 from database import db
 from plugins.test import CLIENT
-from plugins.jobs import _ask
 
 logger = logging.getLogger(__name__)
 _CLIENT = CLIENT()
+
+# ── Self-contained Future-based ask() — avoids cross-module routing conflicts ──
+# Uses its own waiting dict and input router (group=-13).
+# Prevents conflicts with share_jobs (group=-14), live jobs (group=-12),
+# and cleaner (group=-16/-15) routers that all intercept the same private stream.
+_ds_waiting: dict = {}
+
+@Client.on_message(filters.private, group=-13)
+async def _ds_input_router(bot, message):
+    """Route private messages to db_scanner _ask() futures."""
+    uid = message.from_user.id if message.from_user else None
+    if uid and uid in _ds_waiting:
+        fut = _ds_waiting.pop(uid)
+        if not fut.done():
+            fut.set_result(message)
+    raise ContinuePropagation
+
+async def _ask(bot, user_id: int, text: str, reply_markup=None, timeout: int = 300):
+    """Send text and wait for the next private message from user_id."""
+    loop = asyncio.get_event_loop()
+    fut = loop.create_future()
+    old = _ds_waiting.pop(user_id, None)
+    if old and not old.done():
+        old.cancel()
+    _ds_waiting[user_id] = fut
+    from pyrogram.enums import ParseMode
+    await bot.send_message(user_id, text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    try:
+        return await asyncio.wait_for(fut, timeout=timeout)
+    except asyncio.TimeoutError:
+        _ds_waiting.pop(user_id, None)
+        raise
 
 # Active scan sessions: {user_id: True}
 _active_scans: dict = {}
