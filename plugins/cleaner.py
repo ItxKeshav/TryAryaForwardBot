@@ -198,7 +198,7 @@ async def _ffmpeg_async(cmd: list) -> tuple:
 
 def _build_ffmpeg_cmd(input_path, output_path, cover_path, meta: dict, deep_clean: bool = False, force_reencode: bool = False) -> list:
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-           "-analyzeduration", "10M", "-probesize", "10M",
+           "-analyzeduration", "2M", "-probesize", "2M",
            "-err_detect", "ignore_err", "-fflags", "+discardcorrupt",
            "-i", input_path]
 
@@ -736,7 +736,23 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                     "track":  ep_label or str(curr_num),
                 }
 
-                # FFmpeg in ThreadPoolExecutor — event loop free for _next_task download
+                # ── Fast-path: skip FFmpeg when no actual processing is needed ─────────
+                # Conditions: no deep_clean + no cover + no user metadata (artist/year/genre)
+                # + same extension (no re-encode) + no ads scheduled for this file.
+                # In this case just move the downloaded file to out_path and let Telegram
+                # receive the correct title/filename via send_audio() params.
+                _has_user_meta = any([art, yr, gen])  # cover checked separately
+                _has_cover     = bool(local_cover and os.path.exists(local_cover))
+                _ads_this_file = inject_ads and _ad_local and (curr_num in _ad_schedule)
+                _same_ext      = (orig_ext.lower() == out_ext.lower())
+                _can_skip_ff   = (
+                    use_ff and not deep_clean
+                    and not _has_cover and not _has_user_meta
+                    and not _ads_this_file and _same_ext
+                )
+                if _can_skip_ff:
+                    use_ff = False  # bypass FFmpeg — simple file move
+
                 # FFmpeg in ThreadPoolExecutor — event loop free for _next_task download
                 if use_ff:
                     ff_cmd = _build_ffmpeg_cmd(dl_path, out_path, local_cover, meta, deep_clean=deep_clean)
