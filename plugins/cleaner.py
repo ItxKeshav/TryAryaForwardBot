@@ -435,11 +435,16 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                         elif len(_ach) == 1:
                             _pool.extend([_ach[0], _ach[0], _ach[0]])
                     else:
-                        for cat in [("arya_bot_hi", "arya_bot_en"), ("arya_premium_hi", "arya_premium_en"), ("channel_hi", "channel_en")]:
-                            _av = [k for k in cat if k in _ad_local]
-                            if _av:
-                                _pool.append(_random.choice(_av))
-                                
+                        # <=50 chunk: Bot=1 random, Premium=Hi+En=2, Channel=Hi+En=2 = 5 ads
+                        _ab50 = [k for k in ("arya_bot_hi", "arya_bot_en") if k in _ad_local]
+                        if _ab50: _pool.append(_random.choice(_ab50))
+                        _ap50 = [k for k in ("arya_premium_hi", "arya_premium_en") if k in _ad_local]
+                        if len(_ap50) == 2: _pool.extend(_ap50)
+                        elif len(_ap50) == 1: _pool.extend([_ap50[0], _ap50[0]])
+                        _ach50 = [k for k in ("channel_hi", "channel_en") if k in _ad_local]
+                        if len(_ach50) == 2: _pool.extend(_ach50)
+                        elif len(_ach50) == 1: _pool.extend([_ach50[0], _ach50[0]])
+
                     if not _pool: continue
                     _random.shuffle(_pool)
                     
@@ -848,11 +853,16 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                             elif len(_gac) == 1:
                                 _grp_pool.extend([_gac[0], _gac[0], _gac[0]])
                         else:
-                            for cat in [("arya_bot_hi", "arya_bot_en"), ("arya_premium_hi", "arya_premium_en"), ("channel_hi", "channel_en")]:
-                                _av = [k for k in cat if k in _ad_local]
-                                if _av:
-                                    _grp_pool.append(_rnd_inj.choice(_av))
-                                    
+                            # <=50 group eps: Bot=1 random, Premium=Hi+En=2, Channel=Hi+En=2 = 5 ads
+                            _gab50 = [k for k in ("arya_bot_hi", "arya_bot_en") if k in _ad_local]
+                            if _gab50: _grp_pool.append(_rnd_inj.choice(_gab50))
+                            _gap50 = [k for k in ("arya_premium_hi", "arya_premium_en") if k in _ad_local]
+                            if len(_gap50) == 2: _grp_pool.extend(_gap50)
+                            elif len(_gap50) == 1: _grp_pool.extend([_gap50[0], _gap50[0]])
+                            _gach50 = [k for k in ("channel_hi", "channel_en") if k in _ad_local]
+                            if len(_gach50) == 2: _grp_pool.extend(_gach50)
+                            elif len(_gach50) == 1: _grp_pool.extend([_gach50[0], _gach50[0]])
+
                         _rnd_inj.shuffle(_grp_pool)
                         _inj_types = _grp_pool
                         logger.info(f"[Cleaner {job_id}] Group file ep {_grp_start}-{_grp_end} "
