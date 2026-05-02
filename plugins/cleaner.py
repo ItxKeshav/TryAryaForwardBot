@@ -529,7 +529,9 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                 _tt  = getattr(m_obj, 'title', '') or ''
                 _cp  = (getattr(m, 'caption', '') or '').strip()
                 lbl  = (extract_ep_label_robust(f"{_tt} @@@ {_fn} @@@ {_cp}") or {}).get("label", "")
-                if lbl and lbl in _seen: continue
+                # smart_rename = force-sequential mode: ALL files must be processed
+                # regardless of original label, so disable ep_label deduplication.
+                if lbl and lbl in _seen and not smart_rename: continue
 
                 # Ad Inject Only Logic: Skip file download completely if it's not scheduled for an ad
                 ad_inject_only = job.get("ad_inject_only", False)
@@ -644,7 +646,7 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
 
             # Handled skipped files in Ad Inject Only mode
             if not dl_path:
-                if ep_label: _seen.add(str(ep_label))
+                if ep_label and not smart_rename: _seen.add(str(ep_label))
                 done += 1
                 curr_num += 1
                 await _cl_update_job(job_id, {
@@ -1031,7 +1033,8 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
 
                         # Access safely via nonlocal
                         nonlocal done, curr_num, fail_count, msg_id
-                        if l_ep: _seen.add(str(l_ep))
+                        # smart_rename: don't track ep_labels — all files are force-renamed
+                        if l_ep and not smart_rename: _seen.add(str(l_ep))
                         done += 1
                         curr_num += 1
                         fail_count = 0  # reset on full success
