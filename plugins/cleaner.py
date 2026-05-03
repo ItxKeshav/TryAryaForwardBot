@@ -1149,7 +1149,7 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
 
         # ── Cleanup ───────────────────────────────────────────────────────
         # Ensure final pending upload is strictly finished before we complete the job
-        if _upload_task and not _upload_task.done():
+        if _upload_task:
             try:
                 up_ok, up_err, _up_mid = await _upload_task
             except Exception as _ue:
@@ -1187,18 +1187,27 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
             # FIX #2: Completion notification — uses local _bot var, always works
             if _bot:
                 try:
+                    import html
+                    _safe_base = html.escape(str(base_name))
                     _ad_rep_txt = ""
                     if _ad_report:
-                        _ad_lines = "\n".join(
-                            f"  ➥ Ep <b>{sn}</b>: <i>{at}</i> ad @ {ts}"
-                            for sn, at, ts in _ad_report
-                        )
+                        if len(_ad_report) > 30:
+                            _ad_lines = "\n".join(
+                                f"  ➥ Ep <b>{sn}</b>: <i>{at}</i> ad @ {ts}"
+                                for sn, at, ts in _ad_report[:30]
+                            )
+                            _ad_lines += f"\n  ➥ ... and {len(_ad_report)-30} more."
+                        else:
+                            _ad_lines = "\n".join(
+                                f"  ➥ Ep <b>{sn}</b>: <i>{at}</i> ad @ {ts}"
+                                for sn, at, ts in _ad_report
+                            )
                         _ad_rep_txt = f"\n\n<b>🎵 Audio Ads Injected:</b> {len(_ad_report)}\n{_ad_lines}"
                     await _bot.send_message(uid,
                         f"<b>🎉 Cleaner Job Completed!</b>\n\n"
-                        f"<b>🧹 Name:</b> {base_name}\n"
+                        f"<b>🧹 Name:</b> {_safe_base}\n"
                         f"<b>📄 Files Processed:</b> {done}\n"
-                        f"<b>🔢 Numbered:</b> {job.get('starting_number',1)} → {job.get('starting_number',1)+done-1}"
+                        f"<b>🔢 Numbered:</b> {job.get('starting_number',1)} → {job.get('starting_number',1)+done-1}\n"
                         f"{_ad_rep_txt}\n"
                         f"<i>Engine: Stable Turbo v4 ⚡</i>")
                 except Exception as ex:
