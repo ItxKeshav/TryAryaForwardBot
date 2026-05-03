@@ -42,7 +42,7 @@ MAX_CONCURRENT = 100  # Allow up to 100 jobs to run visibly without artificial b
 _cl_semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 _cl_dl_sem = asyncio.Semaphore(12)  # 12 concurrent downloads across all jobs (6 jobs × 2 slots)
 _cl_ul_sem = asyncio.Semaphore(12)
-_cl_ff_sem = asyncio.Semaphore(8)   # 8 parallel FFmpeg processes (single-pass ad injection is much lighter)
+_cl_ff_sem = asyncio.Semaphore(2)   # 2 parallel FFmpeg processes (prevents CPU starvation on VPS)
 IST_OFFSET = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 # Thread pool for FFmpeg — runs in OS threads so asyncio loop stays free
@@ -179,12 +179,12 @@ def _build_cl_info(job: dict) -> str:
 def _run_ffmpeg_sync(cmd: list) -> tuple:
     """Blocking FFmpeg call — runs in ThreadPoolExecutor thread."""
     try:
-        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=2700)
         if r.returncode != 0:
             return False, r.stderr.decode('utf-8', 'ignore')[:500]
         return True, ""
     except subprocess.TimeoutExpired:
-        return False, "FFmpeg timeout (10m)"
+        return False, "FFmpeg timeout (45m)"
     except Exception as e:
         return False, str(e)
 
@@ -810,12 +810,15 @@ async def _cl_run_job_inner(job_id: str, bot=None, skip_sem: bool = False):
                     _inj_loop = asyncio.get_event_loop()
 
                     def _probe_dur_sync(_ppath):
-                        _pr = __import__("subprocess").run(
-                            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                             "-of", "default=noprint_wrappers=1:nokey=1", _ppath],
-                            capture_output=True, text=True
-                        )
-                        return float(_pr.stdout.strip() or "0")
+                        try:
+                            _pr = __import__("subprocess").run(
+                                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                                 "-of", "default=noprint_wrappers=1:nokey=1", _ppath],
+                                capture_output=True, text=True, timeout=60
+                            )
+                            return float(_pr.stdout.strip() or "0")
+                        except Exception:
+                            return 0.0
 
                     # ── Detect group-file episode range ────────────────────────
                     _grp_start = _grp_end = None

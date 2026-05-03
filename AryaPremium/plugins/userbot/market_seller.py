@@ -810,33 +810,33 @@ async def _show_tc(client, user_id, story_id, lang='en'):
         tc_title = "<b>⟦ नियम और शर्तें ⟧</b>"
         tc_subtitle = "खरीदने से पहले, कृपया निम्नलिखित पढ़ें और सहमत हों:"
         missing_title = "• <b>गायब एपिसोड</b>"
-        missing_desc = "यदि सार्वजनिक रूप से जारी नहीं किया गया तो 3-5 एपिसोड अनुपलब्ध हो सकते हैं। बाद में उपलब्ध होने पर, उन्हें अपने आप जोड़ दिया जाएगा। 5 से अधिक गायब? सहायता से संपर्क करें।"
+        missing_desc = "सार्वजनिक रूप से जारी न होने पर 3-4 एपिसोड अनुपलब्ध हो सकते हैं। ऐसा होने पर हम अपनी तरफ से कहानी की कीमत कम रखते हैं। यदि वे एपिसोड हमें बाद में मिलते हैं, तो उन्हें आपके वर्तमान एपिसोड्स में जोड़ दिया जाएगा। यदि 4 से अधिक एपिसोड गायब हैं, तो कृपया सपोर्ट से संपर्क करें।"
         quality_title = "• <b>क्वालिटी</b>"
         quality_desc = "पुराने एपिसोड्स की क्वालिटी कम हो सकती है। हम 100% क्वालिटी की गारंटी नहीं दे सकते, लेकिन हमेशा सर्वश्रेष्ठ वर्जन प्रदान करेंगे।"
-        order_title = "• <b>एपिसोड क्रम</b>"
-        order_desc = "एपिसोड्स कभी-कभी क्रम से बाहर हो सकते हैं। सभी फाइलें आर्या बॉट द्वारा क्लीन और ब्रांडेड हैं।"
         refund_title = "• <b>कोई रिफंड नहीं</b>"
-        refund_desc = "भुगतान की पुष्टि होने और डिलीवरी शुरू होने के बाद कोई रिफंड नहीं दिया जाएगा।"
+        refund_desc = "एक बार भुगतान हो जाने और डिलीवरी शुरू होने के बाद कोई रिफंड नहीं दिया जाएगा। यदि आपका टेलीग्राम अकाउंट सस्पेंड या डिलीट हो जाता है, तो पूर्ण विवरण और प्रमाण के साथ एडमिन से संपर्क करें, आपको पुनः जोड़ दिया जाएगा। यदि आप गलती से अतिरिक्त राशि का भुगतान कर देते हैं, तो तुरंत प्रमाण के साथ संपर्क करें, आपको रिफंड मिल जाएगा (Razorpay पर प्लेटफ़ॉर्म फीस काटी जाएगी)।"
         fake_title = "• <b>नकली स्क्रीनशॉट</b>"
         fake_desc = "नकली या अमान्य भुगतान प्रमाण भेजने पर स्थायी रूप से प्रतिबंध लगा दिया जाएगा।"
-        accept_btn = "सहमत हूँ"
-        reject_btn = "अस्वीकार"
+        iaadnsa_note = "<b>• IAADNSA (भविष्य में T&C छोड़ें)</b>\nयदि आप चाहते हैं कि अगली बार कहानी खरीदते समय आपको यह नियम और शर्तें (T&C) पेज न दिखाई दे, तो <b>IAADNSA (I Accept And Do Not Show Again)</b> बटन पर क्लिक करें। इससे भविष्य में यह पेज अपने आप बाईपास हो जाएगा।"
+        accept_btn = "I Accept"
+        reject_btn = "Reject"
+        iaadnsa_btn = "IAADNSA"
         back_btn = "‹ वापस"
     else:
         tc_title = "<b>⟦ 𝗧𝗘𝗥𝗠𝗦 & 𝗖𝗢𝗡𝗗𝗜𝗧𝗜𝗢𝗡𝗦 ⟧</b>"
         tc_subtitle = "𝖡𝖾𝖿𝗈𝗋𝖾 𝗉𝗎𝗋𝖼𝗁𝖺𝗌𝗂𝗇𝗀, 𝗉𝗅𝖾𝖺𝗌𝖾 𝗋𝖾𝖺𝖽 𝖺𝗇𝖽 𝖺𝗀𝗋𝖾𝖾 𝗍𝗈 𝗍𝗁𝖾 𝖿𝗈𝗅𝗅𝗈𝗐𝗂𝗇𝗀:"
         missing_title = "• <b>𝗠𝗶𝘀𝘀𝗶𝗻𝗴 𝗘𝗽𝗶𝘀𝗼𝗱𝗲𝘀</b>"
-        missing_desc = "𝟹–𝟻 𝖾𝗉𝗂𝗌𝗈𝖽𝖾𝗌 𝗆𝖺𝗒 𝖻𝖾 𝗎𝗇𝖺𝗏𝖺𝗂ʟ𝖺𝖻𝗅𝖾 𝗂𝖿 𝗇𝗈𝗍 𝗉𝗎𝖻𝗅𝗂𝖼𝗅𝗒 𝗋𝖾𝗅𝖾𝖺𝗌𝖾𝖽. 𝖨𝖿 𝖺𝗏𝖺𝗂ʟ𝖺𝖻𝗅𝖾 𝗅𝖺𝗍𝖾𝗋, 𝗍𝗁𝖾𝗒 𝗐𝗂𝗅𝗅 𝖻𝖾 𝖺𝖽𝖽𝖾𝖽 𝖺𝗎𝗍𝗈𝗆𝖺𝗍𝗂𝖼𝖺𝗅𝗅𝗒."
+        missing_desc = "3-4 episodes may be missing if not publicly released. In such cases, we keep the story price lower from our side. If we find those episodes later, they will be automatically added to your current episodes. If more than 4 episodes are missing, please contact support."
         quality_title = "• <b>𝗤𝘂𝗮𝗹𝗶𝘁𝘆</b>"
         quality_desc = "𝖲𝗈𝗆𝖾 𝗈𝗅𝖽𝖾𝗋 𝖾𝗉𝗂𝗌𝗈𝖽𝖾𝗌 𝗆𝖺𝗒 𝗁𝖺𝗏𝖾 𝗋𝖾𝖽𝗎𝖼𝖾𝖽 𝗊𝗎𝖺𝗅𝗂𝗍𝗒. 𝖶𝖾 𝖼𝖺𝗇𝗇𝗈𝗍 𝗀𝗎𝖺𝗋𝖺𝗇𝗍𝖾𝖾 𝟣𝟢𝟢% 𝗊𝗎𝖺𝗅𝗂𝗍𝗒, 𝖻𝗎𝗍 𝖺𝗅𝗐𝖺𝗒𝗌 𝗉𝗋𝗈𝗏𝗂𝖽𝖾 𝖻𝖾𝗌𝗍 𝗏𝖾𝗋𝗌𝗂𝗈𝗇."
-        order_title = "• <b>𝗘𝗽𝗶𝘀𝗼𝗱𝗲 𝗢𝗿𝗱𝗲𝗿</b>"
-        order_desc = "𝖤𝗉𝗂𝗌𝗈𝖽𝖾𝗌 𝗆𝖺𝗒 𝗋𝖺𝗋𝖾𝗅𝗒 𝖻𝖾 𝗈𝗎𝗍 𝗈𝖿 𝗌𝖾𝗊𝗎𝖾𝗇𝖼𝖾. 𝖠𝗅𝗅 𝖿𝗂𝗅𝖾𝗌 𝖺𝗋𝖾 𝖼𝗅𝖾𝖺𝗇𝖾𝖽 𝖺𝗇𝖽 𝖻𝗋𝖺𝗇𝖽𝖾𝖽 𝖻𝗒 𝖠𝗋𝗒𝖺 𝖡𝗈𝗍."
         refund_title = "• <b>𝗡𝗼 𝗥𝗲𝗳𝘂𝗻𝗱𝘀</b>"
-        refund_desc = "𝖭𝗈 𝗋𝖾𝖿𝗎𝗇𝖽𝗌 𝗈𝗇𝖼𝖾 𝗉𝖺𝗒𝗆𝖾𝗇𝗍 𝗂𝗌 𝖼𝗈𝗇𝖿𝗂𝗋𝗆𝖾𝖽 𝖺𝗇𝖽 𝖽𝖾𝗅𝗂𝗏𝖾𝗋𝗒 𝗌𝗍𝖺𝗋𝗍𝗌."
+        refund_desc = "No refunds once payment is confirmed and delivery starts. If your Telegram account gets suspended or deleted, contact the admin with complete details and proof to be added again. If you accidentally pay an extra amount, contact us immediately with proof for a refund (Razorpay platform fees will be deducted)."
         fake_title = "• <b>𝗙𝗮𝗸𝗲 𝗦𝗰𝗿𝗲𝗲𝗻𝘀𝗵𝗼𝘁𝘀</b>"
         fake_desc = "𝖥𝖺𝗄𝖾 𝗈𝗋 𝗂𝗇𝗏𝖺𝗅𝗂𝖽 𝗉𝖺𝗒𝗆𝖾𝗇𝗍 𝗉𝗋𝗈𝗈𝖿𝗌 𝗐𝗂𝗅𝗅 𝗅𝖾𝖺𝖽 𝗍𝗈 𝗉𝖾𝗋𝗆𝖺𝗇𝖾𝗇𝗍 𝖻𝖺𝗇."
+        iaadnsa_note = "<b>• IAADNSA (Skip Future T&C)</b>\nIf you don't want to see this Terms & Conditions page for future purchases, click the <b>IAADNSA (I Accept And Do Not Show Again)</b> button. This will automatically accept the T&C and skip this page in the future."
         accept_btn = "𝗜 𝗔𝗰𝗰𝗲𝗽𝘁"
         reject_btn = "𝗥𝗲𝗷𝗲𝗰𝘁"
+        iaadnsa_btn = "𝗜𝗔𝗔𝗗𝗡𝗦𝗔"
         back_btn = "‹ Back"
 
     tc_text = (
@@ -844,14 +844,15 @@ async def _show_tc(client, user_id, story_id, lang='en'):
         f"{tc_subtitle}\n\n"
         f"<blockquote expandable>{missing_title}\n{missing_desc}</blockquote>\n"
         f"<blockquote expandable>{quality_title}\n{quality_desc}</blockquote>\n"
-        f"<blockquote expandable>{order_title}\n{order_desc}</blockquote>\n"
         f"<blockquote expandable>{refund_title}\n{refund_desc}</blockquote>\n"
-        f"<blockquote expandable>{fake_title}\n{fake_desc}</blockquote>"
+        f"<blockquote expandable>{fake_title}\n{fake_desc}</blockquote>\n"
+        f"<blockquote expandable>{iaadnsa_note}</blockquote>"
     )
     
     kb = [
-        [InlineKeyboardButton(accept_btn, callback_data=f"mb#tc_accept_{story_id}")],
-        [InlineKeyboardButton(reject_btn, callback_data="mb#tc_reject"),
+        [InlineKeyboardButton(accept_btn, callback_data=f"mb#tc_accept_{story_id}"),
+         InlineKeyboardButton(reject_btn, callback_data="mb#tc_reject")],
+        [InlineKeyboardButton(iaadnsa_btn, callback_data=f"mb#tc_iaadnsa_{story_id}"),
          InlineKeyboardButton(back_btn, callback_data=f"mb#view_{story_id}")]
     ]
     from pyrogram import enums
@@ -2160,6 +2161,28 @@ async def _process_callback(client, query):
 
     elif cmd == "show_tc":
         s_id = data[2]
+        
+        u = await db.get_user(user_id)
+        if u.get("tc_bypassed", False):
+            from bson.objectid import ObjectId
+            story = await db.db.premium_stories.find_one({"_id": ObjectId(s_id)})
+            if story:
+                _bt = await db.db.premium_bots.find_one({"id": client.me.id})
+                _bt_cfg = (_bt or {}).get("config", {})
+                await query.answer()
+                
+                from utils import log_arya_event
+                user_obj = query.from_user
+                s_name = story.get(f'story_name_{lang}', story.get('story_name_en', 'Unknown'))
+                asyncio.create_task(log_arya_event(
+                    event_type="T&C BYPASSED",
+                    user_id=user_id,
+                    user_info={"first_name": user_obj.first_name or "Unknown", "last_name": user_obj.last_name or "", "username": user_obj.username or ""},
+                    details=f"User bypassed the Terms & Conditions page using IAADNSA flag while purchasing '{s_name}'."
+                ))
+                
+                return await _show_story_details(client, query, story, lang, bot_cfg=_bt_cfg)
+                
         try:
             await query.message.delete()
         except:
@@ -2359,6 +2382,29 @@ async def _process_callback(client, query):
         return await _show_tc(client, user_id, s_id, lang)
 
     # ── T&C Accept ──
+    elif cmd.startswith("tc_iaadnsa_"):
+        s_id = cmd.replace("tc_iaadnsa_", "")
+        await db.update_user(user_id, {"tc_accepted": True, "tc_bypassed": True})
+        await query.answer("Terms Accepted & Bypassed for Future!")
+        
+        from utils import log_arya_event
+        user_obj = query.from_user
+        from bson.objectid import ObjectId
+        story = await db.db.premium_stories.find_one({"_id": ObjectId(s_id)})
+        s_name = story.get(f'story_name_{lang}', story.get('story_name_en', 'Unknown')) if story else 'Unknown'
+
+        asyncio.create_task(log_arya_event(
+            event_type="T&C ACCEPTED (IAADNSA)",
+            user_id=user_id,
+            user_info={"first_name": user_obj.first_name or "Unknown", "last_name": user_obj.last_name or "", "username": user_obj.username or ""},
+            details=f"User accepted the Terms & Conditions and selected IAADNSA to skip it for future purchases (Story: {s_name})."
+        ))
+
+        if story:
+            _bt = await db.db.premium_bots.find_one({"id": client.me.id})
+            _bt_cfg = (_bt or {}).get("config", {})
+            return await _show_story_details(client, query, story, lang, bot_cfg=_bt_cfg)
+
     elif cmd.startswith("tc_accept_"):
         s_id = cmd.replace("tc_accept_", "")
         await db.update_user(user_id, {"tc_accepted": True})
@@ -2401,34 +2447,49 @@ async def _process_callback(client, query):
     elif cmd == "help_tc":
         await query.answer()
         # Synchronized with updated T&C from purchase flow
-        tc_text = (
-            f"<b>⟦ 𝗧𝗘𝗥𝗠𝗦 & 𝗖𝗢𝗡𝗗𝗜𝗧𝗜𝗢𝗡𝗦 ⟧</b>\n\n"
-            f"𝖡𝖾𝖿𝗈𝗋𝖾 𝗉𝗎𝗋𝖼𝗁𝖺𝗌𝗂𝗇𝗀, 𝗉𝗅𝖾𝖺𝗌𝖾 𝗋𝖾𝖺𝖽 𝖺𝗇𝖽 𝖺𝗀𝗋𝖾𝖾 𝗍𝗈 𝗍𝗁𝖾 𝖿𝗈𝗅𝗅𝗈𝗐𝗂ɴ𝗀:\n\n"
-            f"<blockquote expandable>"
-            f"• <b>𝗠𝗶𝘀𝘀𝗶𝗻𝗴 𝗘𝗽𝗶𝘀𝗼𝗱𝗲𝘀</b>\n"
-            f"𝟹–𝟻 𝖾𝗉𝗂𝗌𝗈𝖽𝖾𝗌 𝗆𝖺𝗒 𝖻𝖾 𝗎𝗇𝖺𝗏𝖺𝗂ʟ𝖺𝖻𝗅𝖾 𝗂𝖿 𝗇𝗈𝗍 𝗉𝗎𝖻𝗅𝗂𝖼𝗅𝗒 𝗋𝖾𝗅𝖾𝖺𝗌𝖾𝖽.\n"
-            f"𝖨𝖿 𝖺𝗏𝖺𝗂ʟ𝖺𝖻𝗅𝖾 𝗅𝖺𝗍𝖾𝗋, 𝗍𝗁𝖾𝗒 𝗐𝗂𝗅𝗅 𝖻𝖾 𝖺𝖽𝖽𝖾𝖽 𝖺𝗎𝗍𝗈𝗆𝖺𝗍𝗂𝖼𝖺𝗅𝗅𝗒.\n"
-            f"𝖬𝗈𝗋𝖾 𝗍𝗁𝖺𝗇 𝟧 𝗆𝗂𝗌𝗌𝗂𝗇𝗀? 𝖢𝗈𝗇𝗍𝖺𝖼𝗍 𝗌𝗎𝗉𝗉𝗈𝗋𝗍.\n"
-            f"</blockquote>\n"
-            f"<blockquote expandable>"
-            f"• <b>𝗤𝘂𝗮𝗹𝗶𝘁𝘆</b>\n"
-            f"𝖲𝗈𝗆𝖾 𝗈𝗅𝖽𝖾𝗋 𝖾𝗉𝗂𝗌𝗈𝖽𝖾𝗌 𝗆𝖺𝗒 𝗁𝖺𝗏𝖾 𝗋𝖾𝖽𝗎𝖼𝖾𝖽 𝗊𝗎𝖺𝗅𝗂𝘁𝗒.\n"
-            f"𝖶𝖾 𝖼𝖺𝗇𝗇𝗈𝗍 𝗀𝗎𝖺𝗋𝖺𝗇𝗍𝖾𝖾 𝟣𝟢𝟢% 𝗊𝗎𝖺𝗅𝗂𝗍𝗒, 𝖻𝗎𝗍 𝖺𝗅𝗐𝖺𝗒𝗌 𝗉𝗋𝗈𝗏𝗂𝖽𝖾 𝖻𝖾𝗌𝗍 𝗏𝖾𝗋𝗌𝗂𝗈𝗻.\n"
-            f"</blockquote>\n"
-            f"<blockquote expandable>"
-            f"• <b>𝗘𝗽𝗶𝘀𝗼𝗱𝗲 𝗢𝗿𝗱𝗲𝗿</b>\n"
-            f"𝖤𝗉𝗂𝗌𝗈ᴅ𝖾𝗌 𝗆𝖺𝗒 𝗋𝖺𝗋𝖾𝗅𝗒 𝖻𝖾 𝗈𝗎𝗍 𝗈𝖿 𝗌𝖾𝗊𝗎𝖾𝗇𝖼𝖾.\n"
-            f"𝖠𝗅𝗅 𝖿𝗂𝗅𝖾𝗌 𝖺𝗋𝖾 𝖼𝗅𝖾𝖺𝗇𝖾𝖽 𝖺𝗇𝖽 𝖻𝗋𝖺𝗇𝖽𝖾𝖽 𝖻𝗒 𝖠𝗋𝗒𝖺 𝖡𝗈𝗍.\n"
-            f"</blockquote>\n"
-            f"<blockquote expandable>"
-            f"• <b>𝗡𝗼 𝗥𝗲𝗳𝘂𝗻𝗱𝘀</b>\n"
-            f"𝖭𝗈 𝗋𝖾𝖿𝗎𝗇𝖽𝗌 𝗈𝗇𝼄𝖾 𝗉𝖺𝗒𝗆𝖾𝗇𝗍 𝗂𝗌 𝖼𝗈𝗇𝖿𝗂𝗋𝗆𝖾𝖽 𝖺𝗇𝖽 𝖽𝖾𝗅𝗂𝗏𝖾𝗋𝗒 𝗌𝗍𝖺𝗋𝗍𝗌.\n"
-            f"</blockquote>\n"
-            f"<blockquote expandable>"
-            f"• <b>𝗙𝗮𝗸𝗲 𝗦𝗰𝗿𝗲𝗲𝗻𝘀𝗵𝗼𝘁𝘀</b>\n"
-            f"𝖥𝖺𝗄𝖾 𝗈𝗋 𝗂𝗇𝗏𝖺𝗅𝗂𝖽 𝗉𝖺𝗒𝗆𝖾𝗇𝗍 𝗉𝗋𝗈𝗈𝖿𝗌 𝗐𝗂𝗅𝗅 𝗅𝖾𝖺𝖽 𝗍𝗈 𝗉𝖾𝗋𝗆𝖺𝗇𝖾𝗇𝗍 𝖻𝖺𝗇.\n"
-            f"</blockquote>"
-        )
+        if lang == 'hi':
+            tc_text = (
+                f"<b>⟦ नियम और शर्तें ⟧</b>\n\n"
+                f"खरीदने से पहले, कृपया निम्नलिखित पढ़ें और सहमत हों:\n\n"
+                f"<blockquote expandable>"
+                f"• <b>गायब एपिसोड</b>\n"
+                f"सार्वजनिक रूप से जारी न होने पर 3-4 एपिसोड अनुपलब्ध हो सकते हैं। ऐसा होने पर हम अपनी तरफ से कहानी की कीमत कम रखते हैं। यदि वे एपिसोड हमें बाद में मिलते हैं, तो उन्हें आपके वर्तमान एपिसोड्स में जोड़ दिया जाएगा। यदि 4 से अधिक एपिसोड गायब हैं, तो कृपया सपोर्ट से संपर्क करें।\n"
+                f"</blockquote>\n"
+                f"<blockquote expandable>"
+                f"• <b>क्वालिटी</b>\n"
+                f"पुराने एपिसोड्स की क्वालिटी कम हो सकती है। हम 100% क्वालिटी की गारंटी नहीं दे सकते, लेकिन हमेशा सर्वश्रेष्ठ वर्जन प्रदान करेंगे।\n"
+                f"</blockquote>\n"
+                f"<blockquote expandable>"
+                f"• <b>कोई रिफंड नहीं</b>\n"
+                f"एक बार भुगतान हो जाने और डिलीवरी शुरू होने के बाद कोई रिफंड नहीं दिया जाएगा। यदि आपका टेलीग्राम अकाउंट सस्पेंड या डिलीट हो जाता है, तो पूर्ण विवरण और प्रमाण के साथ एडमिन से संपर्क करें, आपको पुनः जोड़ दिया जाएगा। यदि आप गलती से अतिरिक्त राशि का भुगतान कर देते हैं, तो तुरंत प्रमाण के साथ संपर्क करें, आपको रिफंड मिल जाएगा (Razorpay पर प्लेटफ़ॉर्म फीस काटी जाएगी)।\n"
+                f"</blockquote>\n"
+                f"<blockquote expandable>"
+                f"• <b>नकली स्क्रीनशॉट</b>\n"
+                f"नकली या अमान्य भुगतान प्रमाण भेजने पर स्थायी रूप से प्रतिबंध लगा दिया जाएगा।\n"
+                f"</blockquote>"
+            )
+        else:
+            tc_text = (
+                f"<b>⟦ 𝗧𝗘𝗥𝗠𝗦 & 𝗖𝗢𝗡𝗗𝗜𝗧𝗜𝗢𝗡𝗦 ⟧</b>\n\n"
+                f"𝖡𝖾𝖿𝗈𝗋𝖾 𝗉𝗎𝗋𝖼𝗁𝖺𝗌𝗂𝗇𝗀, 𝗉𝗅𝖾𝖺𝗌𝖾 𝗋𝖾𝖺𝖽 𝖺𝗇𝖽 𝖺𝗀𝗋𝖾𝖾 𝗍𝗈 𝗍𝗁𝖾 𝖿𝗈𝗅𝗅𝗈𝗐𝗂𝗇𝗀:\n\n"
+                f"<blockquote expandable>"
+                f"• <b>𝗠𝗶𝘀𝘀𝗶𝗻𝗴 𝗘𝗽𝗶𝘀𝗼𝗱𝗲𝘀</b>\n"
+                f"3-4 episodes may be missing if not publicly released. In such cases, we keep the story price lower from our side. If we find those episodes later, they will be automatically added to your current episodes. If more than 4 episodes are missing, please contact support.\n"
+                f"</blockquote>\n"
+                f"<blockquote expandable>"
+                f"• <b>𝗤𝘂𝗮𝗹𝗶𝘁𝘆</b>\n"
+                f"𝖲𝗈𝗆𝖾 𝗈𝗅𝖽𝖾𝗋 𝖾𝗉𝗂𝗌𝗈𝖽𝖾𝗌 𝗆𝖺𝗒 𝗁𝖺𝗏𝖾 𝗋𝖾𝖽𝗎𝖼𝖾𝖽 𝗊𝗎𝖺𝗅𝗂𝗍𝗒.\n"
+                f"𝖶𝖾 𝖼𝖺𝗇𝗇𝗈𝗍 𝗀𝗎𝖺𝗋𝖺𝗇𝗍𝖾𝖾 𝟣𝟢𝟢% 𝗊𝗎𝖺𝗅𝗂𝗍𝗒, 𝖻𝗎𝗍 𝖺𝗅𝗐𝖺𝗒𝗌 𝗉𝗋𝗈𝗏𝗂𝖽𝖾 𝖻𝖾𝗌𝗍 𝗏𝖾𝗋𝗌𝗂𝗈𝗇.\n"
+                f"</blockquote>\n"
+                f"<blockquote expandable>"
+                f"• <b>𝗡𝗼 𝗥𝗲𝗳𝘂𝗻𝗱𝘀</b>\n"
+                f"No refunds once payment is confirmed and delivery starts. If your Telegram account gets suspended or deleted, contact the admin with complete details and proof to be added again. If you accidentally pay an extra amount, contact us immediately with proof for a refund (Razorpay platform fees will be deducted).\n"
+                f"</blockquote>\n"
+                f"<blockquote expandable>"
+                f"• <b>𝗙𝗮𝗸𝗲 𝗦𝗰𝗿𝗲𝗲𝗻𝘀𝗵𝗼𝘁𝘀</b>\n"
+                f"𝖥𝖺𝗄𝖾 𝗈𝗋 𝗂𝗇𝗏𝖺𝗅𝗂𝖽 𝗉𝖺𝗒𝗆𝖾𝗇𝗍 𝗉𝗋𝗈𝗈𝖿𝗌 𝗐𝗂𝗅𝗅 𝗅𝖾𝖺𝖽 𝗍𝗈 𝗉𝖾𝗋𝗆𝖺𝗇𝖾𝗇𝗍 𝖻𝖺𝗇.\n"
+                f"</blockquote>"
+            )
         kb = [[InlineKeyboardButton(f"« ❮ {_sc('BACK')}", callback_data="mb#main_help")]]
         await query.message.edit_text(tc_text, reply_markup=InlineKeyboardMarkup(kb))
     elif cmd == "help_refund":
@@ -2466,6 +2527,28 @@ async def _process_callback(client, query):
     # ── Back (inline) ──
     elif cmd.startswith("show_tc#"):
         s_id = cmd.split("#")[1]
+        
+        u = await db.get_user(user_id)
+        if u.get("tc_bypassed", False):
+            from bson.objectid import ObjectId
+            story = await db.db.premium_stories.find_one({"_id": ObjectId(s_id)})
+            if story:
+                _bt = await db.db.premium_bots.find_one({"id": client.me.id})
+                _bt_cfg = (_bt or {}).get("config", {})
+                await query.answer()
+
+                from utils import log_arya_event
+                user_obj = query.from_user
+                s_name = story.get(f'story_name_{lang}', story.get('story_name_en', 'Unknown'))
+                asyncio.create_task(log_arya_event(
+                    event_type="T&C BYPASSED",
+                    user_id=user_id,
+                    user_info={"first_name": user_obj.first_name or "Unknown", "last_name": user_obj.last_name or "", "username": user_obj.username or ""},
+                    details=f"User bypassed the Terms & Conditions page using IAADNSA flag while purchasing '{s_name}'."
+                ))
+
+                return await _show_story_details(client, query, story, lang, bot_cfg=_bt_cfg)
+
         try:
             await query.message.delete()
         except:
