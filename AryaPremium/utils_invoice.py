@@ -14,23 +14,23 @@ except IOError:
     FONT_LARGE = ImageFont.load_default()
 
 COORDS = {
-    "order_id": (400, 200),
-    "order_date": (400, 250),
-    "name": (400, 300),
-    "user_id": (400, 350),
-    "username": (400, 400),
-    "story_name": (400, 500),
-    "episode_range": (400, 550),
-    "duration": (400, 600),
-    "start_date": (400, 650),
-    "end_date": (400, 700),
-    "payment_method": (400, 750),
-    "status": (400, 800),
-    "subtotal": (800, 900),
-    "discount": (800, 950),
-    "tax_charges": (800, 1000),
-    "total": (800, 1050),
-    "more_stories": (400, 1150),
+    "order_id": (330, 320),
+    "order_date": (330, 360),
+    "name": (330, 400),
+    "user_id": (330, 440),
+    "username": (330, 480),
+    "story_name": (330, 540),
+    "episode_range": (330, 580),
+    "duration": (330, 640),
+    "start_date": (330, 680),
+    "end_date": (330, 720),
+    "payment_method": (330, 780),
+    "status": (330, 820),
+    "subtotal": (330, 940),
+    "discount": (330, 980),
+    "tax_charges": (330, 1020),
+    "total": (330, 1080),
+    "more_stories": (150, 1160),
     "bottom": (400, 1250)
 }
 
@@ -91,6 +91,23 @@ def generate_invoice_image(
         
     tax_line = "₹0.00 / ₹0.00"
     
+    # Hide the background {placeholders} with light rectangles
+    bg_color = (253, 245, 250)
+    # Order section
+    draw.rectangle([320, 310, 550, 500], fill=bg_color)
+    # Story section
+    draw.rectangle([320, 530, 550, 600], fill=bg_color)
+    # Date section
+    draw.rectangle([320, 630, 550, 740], fill=bg_color)
+    # Payment section
+    draw.rectangle([320, 770, 550, 850], fill=bg_color)
+    # Bill summary section
+    draw.rectangle([320, 930, 550, 1040], fill=bg_color)
+    # Total section
+    draw.rectangle([320, 1070, 550, 1120], fill=bg_color)
+    # Right side "Thank you" box price cover
+    draw.rectangle([700, 630, 900, 750], fill=(255, 255, 255))
+    
     def write_text(key, text, font=FONT_NORMAL, color=COLORS["default"]):
         if key in COORDS and text:
             draw.text(COORDS[key], str(text), fill=color, font=font)
@@ -131,14 +148,19 @@ def generate_invoice_image(
 
 async def send_invoice_to_user(client, user_id: int, order_id: str, amount: int, method: str, story: dict, checkout: dict = None):
     from database import db
-    user_info = await db.db.users.find_one({"id": user_id}) or {}
     total_stories = await db.db.premium_stories.count_documents({})
     
     if not checkout: checkout = {}
     
-    first_name = limit_name(user_info.get("first_name", "User"))
-    username = user_info.get("username", "")
-    
+    # Fetch user data from Telegram directly
+    try:
+        user_obj = await client.get_users(user_id)
+        first_name = limit_name(user_obj.first_name or user_obj.title or "User")
+        username = user_obj.username or ""
+    except Exception:
+        first_name = "User"
+        username = ""
+        
     raw_uname = username.strip() if username else ""
     if raw_uname and raw_uname.lower() != "none":
         uname_display = f"@{raw_uname}" if not raw_uname.startswith("@") else raw_uname
@@ -157,18 +179,12 @@ async def send_invoice_to_user(client, user_id: int, order_id: str, amount: int,
     
     # 4. DATE + DURATION SYSTEM
     order_date = datetime.utcnow().strftime("%d %b %Y, %H:%M")
-    start_date = checkout.get("start_date")
-    end_date = checkout.get("end_date")
+    start_date = checkout.get("start_date") or datetime.utcnow().strftime("%d %b %Y")
+    end_date = checkout.get("end_date") or "Lifetime"
 
-    if not start_date:
-        start_date = datetime.utcnow().strftime("%d %b %Y")
-
-    if not end_date:
-        end_date = "N/A"
-
-    duration = "N/A"
+    duration = "Lifetime"
     try:
-        if start_date != "N/A" and end_date != "N/A":
+        if end_date != "Lifetime" and start_date:
             d1 = datetime.strptime(start_date, "%d %b %Y")
             d2 = datetime.strptime(end_date, "%d %b %Y")
             duration = f"{(d2 - d1).days} Days"
