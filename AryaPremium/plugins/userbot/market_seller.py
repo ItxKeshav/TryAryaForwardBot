@@ -1449,6 +1449,31 @@ async def _process_text(client, message):
     _nav_prev = "❬ " + _sc("PREV")
     _nav_next_hi = "अगला ❭"
     _nav_prev_hi = "❬ पिछला"
+    _view_all = "📑 " + _sc("VIEW ALL")
+    _view_all_hi = "📑 सभी देखें"
+    
+    if txt in (_view_all, _view_all_hi):
+        plat = user.get("_mkt_plat")
+        if plat:
+            q_find = {"bot_id": client.me.id}
+            if plat != "Other": q_find["platform"] = plat
+            all_stories = await db.db.premium_stories.find(q_find).sort("_id", -1).to_list(length=None)
+            kb = []
+            MNL = 22
+            for idx, s in enumerate(all_stories, start=1):
+                sn = s.get(f'story_name_{lang}', s.get('story_name_en'))
+                if len(sn) > MNL: sn = sn[:MNL - 1] + "…"
+                badge = " ɴᴇᴡ" if idx <= 5 else ""
+                kb.append([f"{idx}. {sn} [ ₹ {s.get('price', 0)} ]{badge}"])
+            kb.append(["« " + ("𝗕𝗮𝗰𝗸 𝘁𝗼 𝗠𝗲𝗻𝘂" if lang == 'en' else "वापस मेनू")])
+            title = "ALL STORIES" if lang == 'en' else "सभी स्टोरिज"
+            return await message.reply_text(
+                f"<b>⟦ {title} — {to_mathbold(plat)} ⟧</b>",
+                reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True),
+                parse_mode=enums.ParseMode.HTML
+            )
+        return
+
     if txt in (_nav_next, _nav_prev, _nav_next_hi, _nav_prev_hi):
         plat = user.get("_mkt_plat")
         cur_page = int(user.get("_mkt_page", 0))
@@ -1458,7 +1483,7 @@ async def _process_text(client, message):
             STORY_PAGE_SIZE = 8
             q_find = {"bot_id": client.me.id}
             if plat != "Other": q_find["platform"] = plat
-            all_stories = await db.db.premium_stories.find(q_find).to_list(length=None)
+            all_stories = await db.db.premium_stories.find(q_find).sort("_id", -1).to_list(length=None)
             total_pg = max(1, (len(all_stories) + STORY_PAGE_SIZE - 1) // STORY_PAGE_SIZE)
             new_page = max(0, min(new_page, total_pg - 1))
             await db.db.users.update_one({"id": user_id}, {"$set": {"_mkt_page": new_page}})
@@ -1468,9 +1493,11 @@ async def _process_text(client, message):
             for idx, s in enumerate(pg_stories, start=new_page * STORY_PAGE_SIZE + 1):
                 sn = s.get(f'story_name_{lang}', s.get('story_name_en'))
                 if len(sn) > MNL: sn = sn[:MNL - 1] + "…"
-                kb.append([f"{idx}. {sn} [ ₹ {s.get('price', 0)} ]"])
+                badge = " ɴᴇᴡ" if idx <= 5 else ""
+                kb.append([f"{idx}. {sn} [ ₹ {s.get('price', 0)} ]{badge}"])
             nav_row = []
             if new_page > 0: nav_row.append("❬ " + (_sc("PREV") if lang == 'en' else "पिछला"))
+            nav_row.append("📑 " + (_sc("VIEW ALL") if lang == 'en' else "सभी देखें"))
             if new_page < total_pg - 1: nav_row.append(_sc("NEXT") + " ❭" if lang == 'en' else "अगला ❭")
             if nav_row: kb.append(nav_row)
             kb.append(["🔍 " + ("SEARCH" if lang == 'en' else "खोजें")])
@@ -1486,7 +1513,7 @@ async def _process_text(client, message):
         return
 
     # Check if it's a story selection e.g. "1. STORY NAME [ ₹ 49 ]"
-    if " [ ₹ " in txt and txt.endswith(" ]"):
+    if " [ ₹ " in txt and (txt.endswith(" ]") or txt.endswith(" ɴᴇᴡ")):
         parts = txt.split(". ", 1)
         raw = parts[1] if len(parts) > 1 else txt
         sName = raw.split(" [ ₹ ")[0].strip()
@@ -1525,7 +1552,7 @@ async def _process_text(client, message):
             s_page = 0
         query_find = {"bot_id": client.me.id}
         if txt != "Other": query_find["platform"] = txt
-        stories = await db.db.premium_stories.find(query_find).to_list(length=None)
+        stories = await db.db.premium_stories.find(query_find).sort("_id", -1).to_list(length=None)
         if not stories:
             return await message.reply_text("<i>No stories found for this platform.</i>", parse_mode=enums.ParseMode.HTML)
 
@@ -1539,9 +1566,11 @@ async def _process_text(client, message):
         for idx, s in enumerate(page_stories, start=s_page * STORY_PAGE_SIZE + 1):
             s_name = s.get(f'story_name_{lang}', s.get('story_name_en'))
             if len(s_name) > MNL: s_name = s_name[:MNL - 1] + "…"
-            kb.append([f"{idx}. {s_name} [ ₹ {s.get('price', 0)} ]"])
+            badge = " ɴᴇᴡ" if idx <= 5 else ""
+            kb.append([f"{idx}. {s_name} [ ₹ {s.get('price', 0)} ]{badge}"])
         nav_row = []
         if s_page > 0: nav_row.append("❬ " + (_sc("PREV") if lang == 'en' else "पिछला"))
+        nav_row.append("📑 " + (_sc("VIEW ALL") if lang == 'en' else "सभी देखें"))
         if s_page < total_pages_s - 1: nav_row.append(_sc("NEXT") + " ❭" if lang == 'en' else "अगला ❭")
         if nav_row: kb.append(nav_row)
         kb.append(["🔍 " + ("SEARCH" if lang == 'en' else "खोजें")])
@@ -1877,13 +1906,31 @@ async def _process_callback(client, query):
 
         if action == "marketplace":
             platforms = await db.db.premium_stories.distinct('platform', {"bot_id": client.me.id})
+            
+            # Remove "Other" to place it at the end
+            if "Other" in platforms:
+                platforms.remove("Other")
+                
+            sorted_plats = []
+            if "Pocket FM" in platforms:
+                sorted_plats.append("Pocket FM")
+                platforms.remove("Pocket FM")
+            if "Kuku FM" in platforms:
+                sorted_plats.append("Kuku FM")
+                platforms.remove("Kuku FM")
+            
+            sorted_plats.extend(sorted(platforms))
+            platforms = sorted_plats
+
+            # Reset pagination to start when opening marketplace
+            await db.db.users.update_one({"id": user_id}, {"$set": {"_mkt_page": 0}})
+
             t = T[lang]
             kb = []
             for i in range(0, len(platforms), 2):
                 row = platforms[i:i+2]
                 kb.append(row)
-            if "Other" not in platforms:
-                kb.append(["Other"])
+            kb.append(["Other"])
             kb.append(["« " + ("𝗕𝗮𝗰𝗸 𝘁𝗼 𝗠𝗲𝗻𝘂" if lang=='en' else "वापस मेनू")])
             
             p_title = "🎧 Platform Selection" if lang == 'en' else "🎧 प्लेटफॉर्म चयन"
