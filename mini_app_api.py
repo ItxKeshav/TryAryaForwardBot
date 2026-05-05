@@ -17,10 +17,11 @@ db = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global client, db
-    if not Config.MONGO_URI:
-        raise ValueError("MONGO_URI not set in config!")
+    mongo_uri = Config.DATABASE_URI
+    if not mongo_uri:
+        raise ValueError("DATABASE_URI not set in config/env!")
     
-    client = AsyncIOMotorClient(Config.MONGO_URI)
+    client = AsyncIOMotorClient(mongo_uri)
     db = client[Config.DATABASE_NAME]
     logger.info("Connected to MongoDB for Mini App API")
     yield
@@ -106,7 +107,8 @@ async def checkout(payload: dict):
     logger.info(f"Order {order_id} created for user {telegram_id}")
 
     # 3. RETURN SECURE BOT LINK
-    bot_username = Config.BOT_USERNAME if hasattr(Config, 'BOT_USERNAME') else "AryaPremiumBot"
+    import os
+    bot_username = os.environ.get("BOT_USERNAME", "AryaPremiumBot")
     bot_deep_link = f"https://t.me/{bot_username}?start=order_{order_id}"
     
     return {
