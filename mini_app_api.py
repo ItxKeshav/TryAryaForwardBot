@@ -92,14 +92,18 @@ async def get_stories():
                 "id": story_id,
                 "title": title,
                 "description": description,
-                "cover": cover,
+                "poster": cover,      # frontend Story type uses 'poster'
+                "banner": cover,      # frontend Story type uses 'banner'
+                "cover": cover,       # keep for backward compat
                 "price": float(s.get("price", 0) or 0),
                 "language": s.get("language", "Hindi"),
                 "platform": s.get("platform", "Pocket FM"),
                 "genre": s.get("genre", "Romance"),
-                "status": status,
+                "status": "available",  # frontend expects: "available" | "coming_soon"
+                "episodes": int(s.get("ep_count") or s.get("total_eps") or 0),
                 "totalEpisodes": s.get("total_eps") or s.get("ep_count") or "?",
                 "size": s.get("total_size") or s.get("size") or "Unknown",
+                "isCompleted": bool(s.get("is_completed") or s.get("completed")),
             })
 
         return {"success": True, "data": formatted_stories}
