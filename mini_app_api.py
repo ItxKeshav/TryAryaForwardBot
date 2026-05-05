@@ -43,30 +43,70 @@ app.add_middleware(
 async def get_stories():
     """Fetch all premium stories from the database"""
     try:
-        cursor = db.premium_stories.find({}, {"_id": 0})
+        cursor = db.premium_stories.find({})
         stories = await cursor.to_list(length=None)
-        
-        # Format the data for the frontend
+
         formatted_stories = []
         for s in stories:
+            # --- ID: always use string of _id ---
+            story_id = str(s.get("_id", ""))
+            if not story_id:
+                continue
+
+            # --- TITLE: use story_name_en, fallback to story_name_hi ---
+            title = (
+                s.get("story_name_en")
+                or s.get("story_name_hi")
+                or s.get("name_en")
+                or s.get("name")
+                or s.get("title")
+                or ""
+            ).strip()
+            if not title:
+                continue  # Skip entries with no valid title
+
+            # --- DESCRIPTION: clean and safe ---
+            description = (
+                s.get("description")
+                or s.get("description_hi")
+                or "No description available."
+            )
+            try:
+                description = description.encode("utf-8", errors="ignore").decode("utf-8").strip()
+            except Exception:
+                description = "No description available."
+
+            # --- COVER IMAGE ---
+            cover = (
+                s.get("poster_url")
+                or s.get("cover")
+                or s.get("image_url")
+                or "https://images.unsplash.com/photo-1614729939124-032f0b56c9ce"
+            )
+
+            # --- STATUS ---
+            is_completed = s.get("is_completed") or s.get("completed") or False
+            status = "Completed" if is_completed else "Ongoing"
+
             formatted_stories.append({
-                "id": s.get("story_id"),
-                "title": s.get("name", "Unknown"),
-                "description": s.get("description", "No description available."),
-                "cover": s.get("poster_url", "https://images.unsplash.com/photo-1614729939124-032f0b56c9ce"), # Default cover
-                "price": float(s.get("price", 0)),
+                "id": story_id,
+                "title": title,
+                "description": description,
+                "cover": cover,
+                "price": float(s.get("price", 0) or 0),
                 "language": s.get("language", "Hindi"),
                 "platform": s.get("platform", "Pocket FM"),
                 "genre": s.get("genre", "Romance"),
-                "status": "Completed" if s.get("is_completed") else "Ongoing",
-                "totalEpisodes": s.get("total_eps", "?"),
-                "size": s.get("total_size", "Unknown")
+                "status": status,
+                "totalEpisodes": s.get("total_eps") or s.get("ep_count") or "?",
+                "size": s.get("total_size") or s.get("size") or "Unknown",
             })
-            
+
         return {"success": True, "data": formatted_stories}
     except Exception as e:
         logger.error(f"Error fetching stories: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
+
 
 @app.post("/checkout")
 async def checkout(payload: dict):
