@@ -146,7 +146,10 @@ async def checkout(payload: dict):
         raise HTTPException(status_code=400, detail="No valid stories found")
 
     total_price = sum(float(s.get("price") or 0) for s in valid_stories)
-    order_id    = f"OD_{uuid.uuid4().hex[:8].upper()}"
+    # Use same order ID format as Arya Premium bot: OD-USERID-XXXXXX
+    import random, string
+    suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    order_id = f"OD-{telegram_id}-{suffix}"
 
     await arya_db.db.orders.insert_one({
         "order_id":     order_id,
@@ -159,7 +162,7 @@ async def checkout(payload: dict):
     })
     logger.info(f"Order {order_id} created for {telegram_id}")
 
-    bot_username = os.environ.get("BOT_USERNAME", "AryaPremiumBot")
+    bot_username = os.environ.get("BOT_USERNAME", "UseAaryaBot")
     return {
         "success":      True,
         "checkout_url": f"https://t.me/{bot_username}?start=order_{order_id}",
